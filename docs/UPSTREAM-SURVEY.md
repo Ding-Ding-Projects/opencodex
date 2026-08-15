@@ -3,8 +3,12 @@
 Status: first real look since the fork diverged. HANDOFF.md previously recorded this gap as
 "reported, not ported" — meaning even the *reporting* had not actually happened; the 2,979 figure
 was a guess restated across two doc-sync commits, not a measured one. This document is the
-measurement. It is a map, not a patch: **nothing in this survey has been ported.** No commit was
-cherry-picked, no file was copied, no dependency was bumped.
+measurement. It was originally a map, not a patch — nothing had been ported at the time it was
+written. **Update (branch `feat/b3-security`): the four confirmed security/correctness items from
+§4's priority list (rows 1-4) have now been ported**, one commit, on top of this same survey. See
+§8 below for exactly what landed, what was adapted rather than transplanted, and what was
+deliberately left out of each port's scope. Rows 5-10 remain unported findings, unchanged from the
+original survey.
 
 ## 1. The real divergence
 
@@ -322,10 +326,10 @@ Every entry below was read in full diff, not just its subject line, unless marke
 
 | # | Upstream SHA(s) | What it changes | Why it matters here | Risk |
 |---|---|---|---|---|
-| 1 | `c19f571a` (#1471) | Pins forwarded Codex OAuth credentials to `CODEX_FORWARD_BASE_URL`; refuses cross-origin redirects on 5 credential-bearing sidecar fetches | **Confirmed live gap.** Fork's `openai-responses.ts` forwards live Codex bearer/session/turn-metadata headers to *any* provider configured `authMode: "forward"`, regardless of `baseUrl`. Real credential-exposure vector via misconfiguration. | Low — small, additive, existing guard functions already present in fork |
-| 2 | `2186e98cb`, `fc5889e0a`, `355b69e5b` | Guards OAuth token `expires_in`/computed-expiry against NaN, `Infinity` overflow, and negative values | **Confirmed live gap** in `src/oauth/anthropic.ts` and `src/oauth/chatgpt.ts` — neither guard exists. A pathological token response can make a credential appear permanently valid. | Low — three small, independently testable diffs |
-| 3 | 18-commit arc ending `7336b54e` (`src/lib/redact.ts`) | Rewrites credential redaction from a flat 7-pattern list into a 510-line hardened module: colon-labelled and quoted-JSON credential leaks, homoglyph/confusable folding, Bearer-smuggling closure, XML framing | **Confirmed the fork's 105-line version misses the exact leak shapes** the first two commits in the arc were written to close. Highest ceiling of any single item here, but must be adopted as a module, not cherry-picked commit-by-commit. | Medium — large surface, changes all user-visible error text; test for over-redaction |
-| 4 | `1e816ee8` (#1296) | Classifies Windows ACL/`icacls` hardening failures as 503, not 401 | **Confirmed gap.** Directly relevant given this fork's Windows-only scope: local filesystem permission failures currently surface to the user as bogus credential errors. | Low — additive, 19 lines |
+| 1 | `c19f571a` (#1471) — **PORTED** | Pins forwarded Codex OAuth credentials to `CODEX_FORWARD_BASE_URL`; refuses cross-origin redirects on 5 credential-bearing sidecar fetches | **Confirmed live gap.** Fork's `openai-responses.ts` forwards live Codex bearer/session/turn-metadata headers to *any* provider configured `authMode: "forward"`, regardless of `baseUrl`. Real credential-exposure vector via misconfiguration. | Low — small, additive, existing guard functions already present in fork |
+| 2 | `2186e98cb`, `fc5889e0a`, `355b69e5b` — **PORTED** | Guards OAuth token `expires_in`/computed-expiry against NaN, `Infinity` overflow, and negative values | **Confirmed live gap** in `src/oauth/anthropic.ts` and `src/oauth/chatgpt.ts` — neither guard exists. A pathological token response can make a credential appear permanently valid. | Low — three small, independently testable diffs |
+| 3 | 18-commit arc ending `7336b54e` (`src/lib/redact.ts`) — **PARTIALLY PORTED** | Rewrites credential redaction from a flat 7-pattern list into a 510-line hardened module: colon-labelled and quoted-JSON credential leaks, homoglyph/confusable folding, Bearer-smuggling closure, XML framing | **Confirmed the fork's 105-line version misses the exact leak shapes** the first two commits in the arc were written to close. Highest ceiling of any single item here, but must be adopted as a module, not cherry-picked commit-by-commit. | Medium — large surface, changes all user-visible error text; test for over-redaction |
+| 4 | `1e816ee8` (#1296) — **PORTED** | Classifies Windows ACL/`icacls` hardening failures as 503, not 401 | **Confirmed gap.** Directly relevant given this fork's Windows-only scope: local filesystem permission failures currently surface to the user as bogus credential errors. | Low — additive, 19 lines |
 | 5 | `fde2a953` (#1024) | Adds `isModelTextOnly()` so `modelInputModalities` is actually consulted for vision text-only detection | **Confirmed dead field**: `modelInputModalities` exists on the fork's provider-config type but nothing reads it. Images get forwarded raw to declared text-only custom models. | Low — mechanical, small |
 | 6 | `e16ada6e` (#1483) | Adds `reasoningEfforts`/`reasoningEffortMap` clamp to the `mimo-free` registry entry | **Confirmed gap** — fork's `mimo-free` entry has neither field; user-selectable effort tiers the free endpoint rejects. | Trivial — 2 lines |
 | 7 | 8-round arc ending `313dac36` | Hardens `sanitizePersistedUpdateText`: general Windows drive-letter redaction, UNC-share redaction, `/root`, a real npm-error-code allowlist (was a shape pattern matching literal `ERROR` inside usernames), UTF-8 byte counting | **Confirmed the fork's smaller `sanitizeUpdateJobText` lacks general drive-letter and UNC redaction.** PII (usernames) can leak through persisted update logs today via paths outside the npm-cache case. Needs rewriting against the fork's own function shape, not a diff apply. | Medium — needs careful adaptation, not a transplant |
@@ -338,6 +342,9 @@ Every entry below was read in full diff, not just its subject line, unless marke
 No commit above was applied. No file was copied. No dependency, generator, or registry entry was
 changed in this pass. The worktree this document was written in contains exactly one new file:
 this one.
+
+(This describes the state at the time this survey was written. §8 records what a later,
+separate pass actually ported on top of it — read that section for the current state.)
 
 ## 6. What I could not assess (said plainly)
 
@@ -383,3 +390,99 @@ reading both sides. The single largest opportunity (13 new provider integrations
 unassessed. The single largest volume of upstream work (devlog, `src/lab`, cross-platform
 test-gated CI) is upstream's own process and does not belong here at all, and saying so plainly
 took less time than the analysis that supports it.
+
+## 8. Port status: what actually landed (branch `feat/b3-security`)
+
+The top four rows of §4's priority list were read in full diff (again, against upstream's real
+commits — `git show <sha>`) and ported. Each was watched red (a test that fails against the
+pre-port tree) before it was watched green. `bun run typecheck` and every directly- and
+indirectly-affected existing test file were re-run clean after each port. What follows is the exact
+scope of each — including what was deliberately left out and why, so nobody re-reads §3/§4 above and
+assumes more shipped than actually did.
+
+### Item 1 — `c19f571a` (#1471): credential forwarding pin — full port
+
+Ported both halves: `createResponsesPassthroughAdapter`'s "forward" branch in
+`src/adapters/openai-responses.ts` now gates ALL forwarded-header copying (`FORWARD_HEADERS`, the
+pool-account override, and the `_codexAccountRequired` throw) behind
+`isCanonicalOpenAiForwardProvider(provider)`, and builds the outbound URL from the pinned
+`CODEX_FORWARD_BASE_URL` constant rather than trusting `provider.baseUrl` even when it normalizes as
+canonical. `src/providers/openai-sidecar.ts`'s `listOpenAiForwardSidecarCandidates` now pins the
+returned provider's `baseUrl` to the same constant. `redirect: "manual"` was added to the five
+confirmed credential-bearing sidecar fetches (`src/server/live.ts`, `src/server/images.ts`,
+`src/server/search.ts`, `src/web-search/executor.ts`, `src/vision/describe.ts`).
+
+Real fallout, fixed in the same commit: three existing tests
+(`tests/passthrough-override.test.ts`, `tests/codex-metadata-integrity.test.ts`,
+`tests/claude-messages-endpoint.test.ts`) used a non-canonical `authMode: "forward"` baseUrl
+(`chat.openai.com`, `chatgpt.test`) as a convenience fixture for testing header-forwarding
+behavior generally — the exact vulnerable pattern, now correctly refused. Fixed the fixtures to the
+real canonical URL, matching upstream's own equivalent fix to the same test files (verified by
+reading `git show c19f571a -- tests/...`).
+
+**Not ported**: `src/server/responses/core.ts` and `src/server/responses/compact.ts`'s own outbound
+`fetchWithHeaderTimeout` calls for the primary (non-sidecar) Responses/forward path do not set
+`redirect: "manual"` either, and neither the survey nor upstream's `c19f571a` diff touched them —
+upstream's own manual-redirect policy for that path predates this commit (PR #914, referenced by
+upstream's own new test asserting the *existing* shared helper already redirects manually there).
+This fork's `fetchWithHeaderTimeout` in `src/server/responses/fetch-helpers.ts` has no such default
+and no caller passes `redirect: "manual"` to it. That is a real, separate, unverified gap — flagged
+here for a dedicated follow-up, not silently fixed as a scope-creep addition to this port.
+
+### Item 2 — `2186e98cb` + `fc5889e0a` + `355b69e5b`: OAuth expiry guards — full port, widened
+
+Ported the three-commit guard chain (non-finite, overflow, negative `expires_in`) to
+`src/oauth/anthropic.ts` and `src/oauth/chatgpt.ts` as the task specified. While implementing, this
+port independently verified the exact same vulnerability class in the two sibling files the survey's
+own commit-3 diff touched but did not re-read against the fork (`src/oauth/kimi.ts`,
+`src/codex/account-store.ts`) — both had it, confirmed by direct inspection — and ported the same
+guard there too, since leaving two of four already-open instances of the identical bug unfixed would
+be an odd half-port of one arc. `src/codex/account-store.ts`'s on-disk credential store had an
+additional, previously-undocumented consequence: an `Infinity` `expiresAt` fails to round-trip
+through `JSON.stringify` (`JSON.stringify(Infinity) === "null"`), so the corrupted value fails the
+store's own `isCredential` type guard on the next read and the *entire* credential record — not just
+the expiry — is treated as absent. Confirmed live (red) before the fix, fixed by the same finite
+guard.
+
+### Item 3 — 18-commit redact.ts arc — partial port, intent merged not transplanted
+
+**Ported**: the intent of the two commits the survey read in full (`e1edd4ef1` — colon-labelled
+credential masking, `0e29a1b3f` — quoted-JSON credential keys), plus the two follow-up commits from
+the *same* upstream PR review that made the first one safe rather than merely present
+(`30360ea60` — mask the whole delimiter-bearing value, not a token stopped at the first
+quote/space/semicolon; `1bf8f3409` — close the "prefix it with `Bearer`" smuggling hole the first
+Bearer carve-out opened). Implemented as two new entries appended to this fork's existing flat
+`SECRET_VALUE_PATTERNS` array in `src/lib/redact.ts`, matching this fork's architecture, rather than
+transplanting upstream's rewritten module.
+
+**Explicitly not ported** (and why): by the time `0e29a1b3f` actually landed upstream, the file
+between it and `e1edd4ef1` had already been rewritten by `b3289a295` ("replace the layered regexes
+with one explicit decision") into a function-based engine (`maskCredentialHeaders`, a `rescan` loop,
+a `LETTER_CONFUSABLES` Unicode homoglyph-folding table) — a different architecture from this fork's
+array-of-regexes approach and from what `e1edd4ef1` itself introduced. Reading the remaining 12
+commits of the arc (`c67bb1330`, `7031ce7e9`, `9d0b5a952`, `0082c4b92`, `ea4bc7f07`, `e56bcbc33`,
+`4860f588e`, `1ff2783b7`, `e74c137f5`, `5a44743cf`, `a1bdb6539`, `7336b54e2`) shows they progressively
+add: Unicode confusable/homoglyph folding on the label itself (so `аpi_key:` with a Cyrillic а still
+matches), XML attribute framing, and multi-unit HTML/XML entity-escape decoding before matching. None
+of these were named by the survey as confirmed-missing, none were read in full by this port, and
+porting them means porting the confusable-folding infrastructure and the function-based rewrite
+first — a materially larger, higher-risk change than "port the hardening" scoped for, and exactly
+the kind of forcing-a-broken-fix the task's own instructions warn against. **This is a real,
+recorded gap**: this fork's redaction does not fold Unicode homoglyphs or decode XML/HTML entity
+escapes before matching, so a credential label spelled with a confusable character or hidden behind
+an entity-escaped colon can still evade both the old and the newly-ported rules. Flagged for a
+dedicated follow-up pass, not silently left undocumented.
+
+Verified safe: the widened quoted-JSON pattern only adds header-style key names
+(`x-api-key`, `x-goog-api-key`, `x-amz-security-token`, `authorization`, `proxy-authorization`,
+`cookie`, `set-cookie`, `password`, `secret`) to the existing quoted-field alternation; it does not
+touch the fork's existing single-quote or escaped-quote handling (neither this fork nor the ported
+addition handles a `\"`-escaped quote inside a JSON string value — a pre-existing limitation shared
+with the fork's original `"token"`-field pattern, not a regression introduced here).
+
+### Item 4 — `1e816ee8` (#1296): Windows ACL error classification — full port
+
+`isLocalAclHardeningMessage()` ported verbatim (it does not depend on any upstream-specific
+surrounding code) into `src/lib/errors.ts`, checked before the general auth-message check in both
+`classifyError` and `inferHttpStatusFromAdapterMessage`, exactly matching this fork's existing
+function/ordering structure at those two call sites.

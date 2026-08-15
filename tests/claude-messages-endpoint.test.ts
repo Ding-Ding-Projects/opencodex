@@ -568,11 +568,25 @@ test("native openai-responses route carries prompt_cache_key + synthesized sessi
       return new Response(frames.join(""), { headers: { "Content-Type": "text/event-stream" } });
     },
   });
+  // B3 security port (upstream c19f571a, #1471): the adapter's "forward" branch now only
+  // relays the caller's headers (including the synthesized session_id this test checks) to
+  // the exact canonical ChatGPT backend, and builds its outbound URL from that pinned
+  // constant rather than the configured provider.baseUrl. Point the provider at the real
+  // canonical URL and redirect that one host to this test's local upstream, the same way the
+  // web-search/vision sidecar tests above do.
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = new URL(requestUrl);
+    if (url.hostname === "chatgpt.com" && url.pathname === "/backend-api/codex/responses") {
+      return originalFetch(new URL("/responses", upstream.url), init);
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
   saveConfig({
     port: 0,
     defaultProvider: "native",
     providers: {
-      native: { adapter: "openai-responses", baseUrl: `${upstream.url.toString().replace(/\/$/, "")}/v1`, authMode: "forward", allowPrivateNetwork: true },
+      native: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" },
     },
   } as OcxConfig);
   const server = startServer(0);
@@ -600,6 +614,7 @@ test("native openai-responses route carries prompt_cache_key + synthesized sessi
     expect(capture.body?.reasoning?.effort).toBe("high");
     expect(capture.headers?.["session_id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
   } finally {
+    globalThis.fetch = originalFetch;
     server.stop(true);
     upstream.stop(true);
   }
