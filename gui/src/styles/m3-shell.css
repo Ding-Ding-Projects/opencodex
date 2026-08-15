@@ -488,7 +488,26 @@ html[data-viewport-preview] .m3-app {
 .m3-icon-btn[aria-expanded="true"] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
 .m3-icon-btn svg { width: var(--el-iconButton-size, 22px); height: var(--el-iconButton-size, 22px); }
 
-.m3-badge {
+/* The unread-count dot that sits ON the notification bell -- absolutely
+   positioned inside AppBar's `position: relative` wrapper.
+
+   This used to be called `.m3-badge`, the same name the shared `Badge`
+   component in `shell/m3-ui.tsx` uses for an inline status pill, and the two
+   rules sat ~570 lines apart in this one file. Nothing warned, and both
+   components rendered wrongly in opposite directions: the later pill rule won
+   `display`, `height`, `padding` and `font-*`, so this dot came out as a 24px
+   pill instead of a 16px dot -- while the pill rule declares no `position`,
+   `top` or `right`, so those cascaded down from HERE and every status Badge in
+   the app was absolutely positioned. With no positioned ancestor a Badge
+   anchors to the initial containing block, which put the Downloads page's
+   "Completed" pill in the window's top-right corner, on top of the maximize and
+   close buttons. `assets/shots/download-history.png` shows it.
+
+   Two rules for one class name is decided by source order, not by intent, so
+   the fix is two names. `tests/badge-class-single-owner.test.ts` fails if
+   `.m3-badge` is ever declared twice again, or if its one rule gains a
+   `position`. */
+.m3-badge-count {
   position: absolute;
   top: 6px;
   right: 6px;

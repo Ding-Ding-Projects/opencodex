@@ -121,7 +121,12 @@ test("the notification bell popover shows a notice's tone, timestamp and source 
     root.render(<App />);
   });
 
-  await waitFor(() => !!container.querySelector(".m3-badge"));
+  // `.m3-badge-count` is the bell's unread-count dot. It was `.m3-badge` until
+  // that name turned out to be shared with the inline status pill rendered by
+  // `Badge` (shell/m3-ui.tsx) -- one class, two rules, and the pill inherited
+  // the dot's `position: absolute` and rendered in the window corner. This
+  // wait wants the DOT specifically, so it takes the dot's own name.
+  await waitFor(() => !!container.querySelector(".m3-badge-count"));
 
   const bell = container.querySelector('button[aria-label="Notifications"]') as HTMLButtonElement;
   expect(bell).toBeTruthy();

@@ -159,7 +159,10 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
         <button ref={notifTriggerRef} type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}
           aria-haspopup="dialog" aria-expanded={notifOpen} aria-label={t("notif.centre")} title={t("notif.centre")}>
           <IconBell aria-hidden />
-          {unreadCount > 0 && <span className="m3-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+          {/* `m3-badge-count`, not `m3-badge` -- the latter is the shared inline
+              status pill (`Badge` in shell/m3-ui.tsx). They were one class name
+              until the collision put every status pill in the window corner. */}
+          {unreadCount > 0 && <span className="m3-badge-count">{unreadCount > 99 ? "99+" : unreadCount}</span>}
         </button>
         {notifOpen && (
           <div
