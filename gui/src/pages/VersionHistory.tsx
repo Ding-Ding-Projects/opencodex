@@ -571,7 +571,17 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
         duplication (out of scope for the Badge sweep itself, since this is a
         banner, not a pill).
       */}
-      {serverFailed && <Banner tone="error">{t("network.historyFailed")}</Banner>}
+      {serverFailed && (
+        // The wrapper carries the bottom margin the hand-rolled `<p>` used to set
+        // on itself. `.m3-banner` declares none, and `.m3-page-inner` is a plain
+        // block container with no `gap`, so without this the banner sits flush
+        // against the timeline below it. Same shape as the conversion in
+        // `codex-account-pool-main-card.tsx`, kept identical so the two sites do
+        // not drift into two answers for one question.
+        <div style={{ marginBottom: "var(--sp-2)" }}>
+          <Banner tone="error">{t("network.historyFailed")}</Banner>
+        </div>
+      )}
 
       {!selected ? emptyState : (
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "var(--sp-3)" }}>
