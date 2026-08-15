@@ -109,4 +109,108 @@ describe("ocx convert", () => {
     expect(code).not.toBe(0);
     expect(runtime.requests).toHaveLength(0);
   });
+
+  test("extract-zip sends path and destination to POST /api/converter/extract-zip", async () => {
+    const runtime = fakeRuntime(() => ({
+      body: { ok: true, destination: "C:\\out\\extracted", entryCount: 3, bytesWritten: 4096 },
+    }));
+    const out = captureConsole();
+    let code: number;
+    try {
+      code = await handleConvertCommand(
+        ["extract-zip", "C:\\docs\\archive.zip", "--destination", "C:\\out\\extracted", "--json"],
+        runtime.deps,
+      );
+    } finally { out.restore(); }
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{
+      path: "/api/converter/extract-zip",
+      method: "POST",
+      body: { path: "C:\\docs\\archive.zip", destination: "C:\\out\\extracted" },
+    }]);
+  });
+
+  test("extract-zip's human-readable output names the entry count and destination", async () => {
+    const runtime = fakeRuntime(() => ({ body: { ok: true, destination: "C:\\out", entryCount: 5, bytesWritten: 1 } }));
+    const out = captureConsole();
+    try { await handleConvertCommand(["extract-zip", "C:\\docs\\archive.zip", "--destination", "C:\\out"], runtime.deps); }
+    finally { out.restore(); }
+    expect(out.lines.join("\n")).toContain("Extracted 5 item(s) to C:\\out");
+  });
+
+  test("extract-zip with no --destination is a usage error, not a request", async () => {
+    const runtime = fakeRuntime();
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["extract-zip", "C:\\docs\\archive.zip"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  test("extract-zip surfaces a refused conversion's boundary rather than a raw 422", async () => {
+    const runtime = fakeRuntime(() => ({ status: 422, body: { error: "the archive is malformed", boundary: "malformed" } }));
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["extract-zip", "C:\\docs\\bad.zip", "--destination", "C:\\out"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(out.lines.join("\n")).toContain("Refused (malformed): the archive is malformed");
+  });
+
+  test("structured sends path, --from, --to and --destination to POST /api/converter/convert-structured", async () => {
+    const runtime = fakeRuntime(() => ({ body: { ok: true, path: "C:\\out\\a.csv", bytesWritten: 10, lossy: true, notes: ["numbers become plain text"] } }));
+    const out = captureConsole();
+    let code: number;
+    try {
+      code = await handleConvertCommand(
+        ["structured", "C:\\docs\\a.json", "--from", "json", "--to", "csv", "--destination", "C:\\out\\a.csv", "--json"],
+        runtime.deps,
+      );
+    } finally { out.restore(); }
+    expect(code).toBe(0);
+    expect(runtime.requests).toEqual([{
+      path: "/api/converter/convert-structured",
+      method: "POST",
+      body: { path: "C:\\docs\\a.json", sourceFormat: "json", destination: "C:\\out\\a.csv", destFormat: "csv" },
+    }]);
+  });
+
+  test("structured's human-readable output names the conversion and echoes lossy notes", async () => {
+    const runtime = fakeRuntime(() => ({ body: { ok: true, path: "C:\\out\\a.csv", bytesWritten: 10, lossy: true, notes: ["numbers become plain text"] } }));
+    const out = captureConsole();
+    try {
+      await handleConvertCommand(
+        ["structured", "C:\\docs\\a.json", "--from", "json", "--to", "csv", "--destination", "C:\\out\\a.csv"],
+        runtime.deps,
+      );
+    } finally { out.restore(); }
+    const printed = out.lines.join("\n");
+    expect(printed).toContain("Converted json -> csv, wrote C:\\out\\a.csv");
+    expect(printed).toContain("Note: numbers become plain text");
+  });
+
+  test("structured rejects an unknown --from before making a request", async () => {
+    const runtime = fakeRuntime();
+    const out = captureConsole();
+    let code: number;
+    try {
+      code = await handleConvertCommand(
+        ["structured", "C:\\docs\\a.yaml", "--from", "yaml", "--to", "json", "--destination", "C:\\out\\a.json"],
+        runtime.deps,
+      );
+    } finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  test("structured with missing --destination is a usage error, not a request", async () => {
+    const runtime = fakeRuntime();
+    const out = captureConsole();
+    let code: number;
+    try { code = await handleConvertCommand(["structured", "C:\\docs\\a.json", "--from", "json", "--to", "csv"], runtime.deps); }
+    finally { out.restore(); }
+    expect(code).not.toBe(0);
+    expect(runtime.requests).toHaveLength(0);
+  });
 });
