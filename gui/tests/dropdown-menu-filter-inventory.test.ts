@@ -66,6 +66,11 @@ const CONVERTED: FilterSurface[] = [
   { name: "Right-click \"Edit appearance…\" chain menu", file: "shell/ElementAppearanceHost.tsx", anchor: "<MenuFilterField" },
   { name: "Provider workspace status/pricing/type filter dropdown", file: "components/provider-workspace/ProviderWorkspaceShell.tsx", anchor: "<MenuFilterField" },
   { name: "Claude Code RichSelect combobox (context window, small-fast-model)", file: "pages/claude-code-settings.tsx", anchor: "<MenuFilterField" },
+  // The picker "Move… into group…" opens. It is the one surface here that
+  // exists *because* of this contract's sibling rule — a context menu must
+  // never inline one entry per group — so it was built carrying the shared
+  // filter rather than converted afterwards.
+  { name: "Tab strip \"Move… into group…\" picker", file: "shell/TabGroupPicker.tsx", anchor: "<MenuFilterField" },
 ];
 
 /**
@@ -103,7 +108,7 @@ test("every already-compliant dropdown still carries its own builder", async () 
  * opposed to "never looked".
  */
 const EXEMPT: Record<string, string> = {
-  "shell/TabStrip.tsx — right-click tab context menu (10 actions)":
+  "shell/TabStrip.tsx — right-click tab context menu (11 actions)":
     "A fixed action list, not an enumerable data set, sharing one 1400-line file "
     + "and a two-column (item/close) roving-tabindex model with the overflow menu "
     + "and the group menu below. tab-context-menu.test.tsx pins ~15 precise "

@@ -2,6 +2,12 @@
 
 Generated from release tags by `bun scripts/generate-changelog.ts`.
 Preview tags are omitted. The dashboard reads this file through `/api/changelog`.
+An `## Unreleased` section, if one is present, is hand-written and carried across a regeneration.
+
+## Unreleased
+
+- feat(gui): move a tab into a group from an anchored picker
+- docs(gui): document tab groups and the four tab searches
 
 ## Unreleased
 

@@ -100,7 +100,7 @@ proxy and can reach the same management routes as any other client. See
 | **Export** | Export dashboard datasets as supported formats/archives. Password-protected 7z is unavailable until a protected password transport exists. |
 | **Stop** | Gracefully stop the proxy and installed background service, restore native Codex, and exit (`POST /api/stop`). |
 | **Quick restore** | Two app-bar actions that hand Codex or Claude its own configuration back and then stop the proxy. The restore runs first and is not conditional on the stop, so it still completes when a normal stop is stuck. See below. |
-| **Tabs** | Browser-style tabs with pinning, drag reordering, an overflow menu, per-tab appearance, named and collapsible **groups**, and four searches that find a tab across this strip, inside a group, by group name, or across every window. See [Tab Groups & Tab Search](/guides/tab-groups-and-search/). |
+| **Tabs** | Browser-style tabs with pinning, drag reordering, an overflow menu, per-tab appearance, named and collapsible **groups** with an anchored "Move… into group…" picker, and four searches that find a tab across this strip, inside a group, by group name, or across every window. See [Tab Groups & Tab Search](/guides/tab-groups-and-search/). |
 
 ### Linking to a section
 

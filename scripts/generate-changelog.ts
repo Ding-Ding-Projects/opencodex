@@ -10,7 +10,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,6 +48,40 @@ function normalizeSubject(subject: string): string | null {
   return trimmed;
 }
 
+/**
+ * The hand-written `## Unreleased` block, carried across a regeneration.
+ *
+ * Everything below this line comes from annotated tags, which means work that
+ * has landed but not shipped had nowhere to be recorded: the whole file is
+ * rewritten from scratch, so a section added by hand was destroyed by the next
+ * run with nothing said about it. That is worse than having no place to write
+ * it, because the writing looks like it worked.
+ *
+ * So exactly one section survives regeneration, by name. It is parsed as an
+ * ordinary release with a null date (`changelog-routes.ts`'s heading pattern
+ * already makes the date optional), so the CLI, the dashboard's Changelog
+ * screen and the documentation site all show it without changes of their own.
+ * When the next tag is cut its commits appear under that version and the
+ * section should be emptied by hand — this preserves what is there, it does not
+ * decide when the work has shipped.
+ */
+function unreleasedSection(path: string): string[] {
+  if (!existsSync(path)) return [];
+  const lines = readFileSync(path, "utf8").split(/\r?\n/);
+  const start = lines.findIndex(line => /^##\s+Unreleased\s*$/i.test(line));
+  if (start < 0) return [];
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex(line => line.startsWith("## "));
+  const body = (end < 0 ? rest : rest.slice(0, end));
+  // A heading with no bullets under it is an empty promise, and the real
+  // CHANGELOG's own guard requires every release to carry at least one entry.
+  if (!body.some(line => /^[-*]\s+\S/.test(line))) return [];
+  // Trailing blank lines are re-added below, so the join cannot grow a gap
+  // every time this runs.
+  while (body.length && !body[body.length - 1].trim()) body.pop();
+  return [lines[start], ...body, ""];
+}
+
 function main(): void {
   const tags = releaseTags();
   const releases: Release[] = [];
@@ -62,12 +96,15 @@ function main(): void {
     releases.push({ tag, version: tag.replace(/^v/, ""), date, entries });
   }
 
+  const target = join(ROOT, "CHANGELOG.md");
   const lines: string[] = [
     "# Changelog",
     "",
     "Generated from release tags by `bun scripts/generate-changelog.ts`.",
     "Preview tags are omitted. The dashboard reads this file through `/api/changelog`.",
+    "An `## Unreleased` section, if one is present, is hand-written and carried across a regeneration.",
     "",
+    ...unreleasedSection(target),
   ];
 
   for (const release of releases) {
@@ -79,7 +116,7 @@ function main(): void {
     }
   }
 
-  writeFileSync(join(ROOT, "CHANGELOG.md"), lines.join("\n"), "utf8");
+  writeFileSync(target, lines.join("\n"), "utf8");
   console.log(`Wrote CHANGELOG.md — ${releases.length} releases.`);
 }
 
