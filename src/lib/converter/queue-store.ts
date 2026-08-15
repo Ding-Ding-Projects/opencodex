@@ -42,8 +42,9 @@ export function setConvertQueueStorePathForTests(path: string | null): void {
 }
 
 const VALID_STATUSES: ConvertQueueItemStatus[] = ["queued", "converting", "converted", "skipped", "cancelled", "failed"];
-const VALID_KINDS: ConvertJobKind[] = ["structured"];
+const VALID_KINDS: ConvertJobKind[] = ["structured", "zip-extract", "pdf-rotate"];
 const VALID_FORMATS: StructuredFormat[] = ["json", "csv", "tsv", "xml"];
+const VALID_ROTATIONS = [0, 90, 180, 270] as const;
 
 function emptyState(): ConvertQueueState {
   return { version: 1, paused: false, items: [] };
@@ -53,24 +54,56 @@ function isStructuredFormat(value: unknown): value is StructuredFormat {
   return typeof value === "string" && (VALID_FORMATS as readonly string[]).includes(value);
 }
 
-/** Defensive re-validation of every field — a hand-edited or truncated file degrades to "drop the bad item", never a thrown exception. */
+function isRotationDegrees(value: unknown): value is 0 | 90 | 180 | 270 {
+  return typeof value === "number" && (VALID_ROTATIONS as readonly number[]).includes(value);
+}
+
+/**
+ * Defensive re-validation of every field — a hand-edited or truncated file
+ * degrades to "drop the bad item", never a thrown exception. `sourceFormat`/
+ * `destFormat` are required and validated only for `kind === "structured"`;
+ * every other kind must carry `null` there (a stray format on a `zip-extract`
+ * or `pdf-rotate` item is itself invalid, dropped rather than silently
+ * kept). `rotateDegrees` is required and validated only for `pdf-rotate`.
+ */
 function sanitizeItem(raw: unknown): ConvertQueueItem | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || !r.id) return null;
   if (typeof r.kind !== "string" || !VALID_KINDS.includes(r.kind as ConvertJobKind)) return null;
+  const kind = r.kind as ConvertJobKind;
   if (typeof r.sourcePath !== "string" || !r.sourcePath) return null;
-  if (!isStructuredFormat(r.sourceFormat)) return null;
   if (typeof r.destPath !== "string" || !r.destPath) return null;
-  if (!isStructuredFormat(r.destFormat)) return null;
   if (typeof r.status !== "string" || !VALID_STATUSES.includes(r.status as ConvertQueueItemStatus)) return null;
-  return {
+
+  let sourceFormat: StructuredFormat | null = null;
+  let destFormat: StructuredFormat | null = null;
+  if (kind === "structured") {
+    if (!isStructuredFormat(r.sourceFormat)) return null;
+    if (!isStructuredFormat(r.destFormat)) return null;
+    sourceFormat = r.sourceFormat;
+    destFormat = r.destFormat;
+  } else if (r.sourceFormat !== null && r.sourceFormat !== undefined) {
+    return null; // a non-structured item carrying a stray format is malformed, not "extra data to ignore"
+  } else if (r.destFormat !== null && r.destFormat !== undefined) {
+    return null;
+  }
+
+  let rotateDegrees: 0 | 90 | 180 | 270 | undefined;
+  if (kind === "pdf-rotate") {
+    if (!isRotationDegrees(r.rotateDegrees)) return null;
+    rotateDegrees = r.rotateDegrees;
+  } else if (r.rotateDegrees !== null && r.rotateDegrees !== undefined) {
+    return null; // same defensive symmetry as the format fields above
+  }
+
+  const item: ConvertQueueItem = {
     id: r.id,
-    kind: r.kind as ConvertJobKind,
+    kind,
     sourcePath: r.sourcePath,
-    sourceFormat: r.sourceFormat,
+    sourceFormat,
     destPath: r.destPath,
-    destFormat: r.destFormat,
+    destFormat,
     acknowledgeLossy: r.acknowledgeLossy === true,
     status: r.status as ConvertQueueItemStatus,
     requestedAt: typeof r.requestedAt === "number" && Number.isFinite(r.requestedAt) ? r.requestedAt : Date.now(),
@@ -83,6 +116,8 @@ function sanitizeItem(raw: unknown): ConvertQueueItem | null {
     boundary: typeof r.boundary === "string" ? r.boundary : null,
     error: typeof r.error === "string" ? r.error : null,
   };
+  if (rotateDegrees !== undefined) item.rotateDegrees = rotateDegrees;
+  return item;
 }
 
 function readFromDisk(): ConvertQueueState {

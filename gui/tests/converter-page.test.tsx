@@ -64,10 +64,53 @@ let extractZipResult: unknown = { ok: true, destination: "C:\\out\\extracted", e
 let convertStructuredResult: unknown = { ok: true, path: "C:\\out\\a.json", bytesWritten: 42 };
 const runRequests: { path: string; body: unknown }[] = [];
 
+/* ---------------------------------------------------------- batch queue mock */
+
+interface QueueItemFixture {
+  id: string; kind: string; sourcePath: string; sourceFormat: string | null; destPath: string; destFormat: string | null;
+  acknowledgeLossy: boolean; rotateDegrees?: number; status: string;
+  requestedAt: number; startedAt: number | null; finishedAt: number | null;
+  sourceBytes: number | null; bytesWritten: number | null; lossy: boolean | null;
+  notes: string[] | null; boundary: string | null; error: string | null;
+}
+
+let queueItems: QueueItemFixture[] = [];
+let queuePaused = false;
+let queuePreflightResult: unknown = {
+  items: [], aggregateEstimatedBytes: 2048, aggregateSizeFullyKnown: true,
+  groups: [{ directory: "C:\\out", freeDiskBytes: 500_000_000, estimatedBytesNeeded: 2048, sufficient: true }],
+  insufficientDiskSpace: false, disclosure: "each item's estimate is its source file's size times a conservative margin",
+};
+let enqueueResult: unknown = null; // set per-test when a non-default response is needed
+const queueRequests: { path: string; method: string; body: unknown }[] = [];
+
+function outcomeFor(items: QueueItemFixture[], paused: boolean): string {
+  if (items.length === 0) return "empty";
+  if (items.some(i => i.status === "converting")) return "in-progress";
+  if (items.some(i => i.status === "queued")) return paused ? "paused" : "in-progress";
+  if (items.some(i => i.status === "failed" || i.status === "cancelled")) return "complete-partial";
+  return "complete-success";
+}
+
+function queueSummaryFor(items: QueueItemFixture[]): Record<string, number | string> {
+  const count = (s: string) => items.filter(i => i.status === s).length;
+  return {
+    total: items.length, queued: count("queued"), converting: count("converting"), converted: count("converted"),
+    skipped: count("skipped"), cancelled: count("cancelled"), failed: count("failed"), outcome: outcomeFor(items, queuePaused),
+  };
+}
+
+function queueStateBody(): unknown {
+  return { ok: true, state: { paused: queuePaused, items: queueItems }, summary: queueSummaryFor(queueItems), concurrency: 3 };
+}
+
 function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const req = input instanceof Request ? input : null;
   const url = new URL(String(req ? req.url : input), "http://localhost");
   const path = url.pathname;
+  const method = init?.method ?? "GET";
+  const body = init?.body ? JSON.parse(String(init.body)) as unknown : null;
+
   if (path === "/api/converter/catalog") return Promise.resolve(jsonResponse(CATALOG));
   if (path === "/api/converter/detect") return Promise.resolve(jsonResponse(detectResult));
   if (path === "/api/converter/extract-zip") {
@@ -80,6 +123,68 @@ function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> 
     const result = convertStructuredResult as { ok: boolean };
     return Promise.resolve(jsonResponse(convertStructuredResult, result.ok ? 200 : 422));
   }
+
+  if (path === "/api/converter/queue/resume" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    return Promise.resolve(jsonResponse(queueStateBody()));
+  }
+  if (path === "/api/converter/queue" && method === "GET") return Promise.resolve(jsonResponse(queueStateBody()));
+  if (path === "/api/converter/queue/preflight" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    return Promise.resolve(jsonResponse({ ok: true, preflight: queuePreflightResult }));
+  }
+  if (path === "/api/converter/queue/enqueue" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    if (enqueueResult) {
+      const result = enqueueResult as { ok: boolean };
+      return Promise.resolve(jsonResponse(enqueueResult, result.ok ? 200 : 422));
+    }
+    const jobs = (body as { jobs: Array<Record<string, unknown>> }).jobs;
+    const now = Date.now();
+    const added = jobs.map((j, i): QueueItemFixture => ({
+      id: `q-${now}-${i}`, kind: (j.kind as string) ?? "structured",
+      sourcePath: j.sourcePath as string, sourceFormat: (j.sourceFormat as string) ?? null,
+      destPath: j.destPath as string, destFormat: (j.destFormat as string) ?? null,
+      acknowledgeLossy: j.acknowledgeLossy === true, rotateDegrees: j.rotateDegrees as number | undefined,
+      status: "converted", requestedAt: now, startedAt: now, finishedAt: now,
+      sourceBytes: 100, bytesWritten: 100, lossy: false, notes: ["done"], boundary: null, error: null,
+    }));
+    queueItems = [...queueItems, ...added];
+    return Promise.resolve(jsonResponse({ ok: true, state: { paused: queuePaused, items: queueItems }, added: added.length, preflight: queuePreflightResult }));
+  }
+  if (path === "/api/converter/queue/pause" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    queuePaused = true;
+    return Promise.resolve(jsonResponse({ ok: true, summary: queueSummaryFor(queueItems) }));
+  }
+  if (path === "/api/converter/queue/resume-run" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    queuePaused = false;
+    return Promise.resolve(jsonResponse({ ok: true, summary: queueSummaryFor(queueItems) }));
+  }
+  if (path === "/api/converter/queue/cancel" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    const id = (body as { id?: string } | null)?.id;
+    for (const item of queueItems) {
+      if (id ? item.id === id : true) {
+        if (item.status === "queued") { item.status = "cancelled"; item.error = "cancelled before it started"; }
+      }
+    }
+    return Promise.resolve(jsonResponse({ ok: true, summary: queueSummaryFor(queueItems) }));
+  }
+  if (path === "/api/converter/queue/retry" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    const id = (body as { id?: string } | null)?.id;
+    const item = queueItems.find(i => i.id === id);
+    if (item) { item.status = "queued"; item.error = null; item.boundary = null; }
+    return Promise.resolve(jsonResponse({ ok: true, state: { paused: queuePaused, items: queueItems } }));
+  }
+  if (path === "/api/converter/queue/clear" && method === "POST") {
+    queueRequests.push({ path, method, body });
+    queueItems = queueItems.filter(i => i.status === "queued" || i.status === "converting");
+    return Promise.resolve(jsonResponse({ ok: true, summary: queueSummaryFor(queueItems) }));
+  }
+
   return Promise.resolve(jsonResponse({}));
 }
 
@@ -102,6 +207,10 @@ beforeEach(() => {
   extractZipResult = { ok: true, destination: "C:\\out\\extracted", entryCount: 3, bytesWritten: 4096 };
   convertStructuredResult = { ok: true, path: "C:\\out\\a.json", bytesWritten: 42 };
   runRequests.length = 0;
+  queueItems = [];
+  queuePaused = false;
+  enqueueResult = null;
+  queueRequests.length = 0;
 });
 
 afterEach(() => {
@@ -122,8 +231,10 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
       </TestProviders>,
     );
   });
-  // Let the catalog fetch's promise resolve and its state update flush.
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  // Let the catalog fetch settle, and the batch queue's own mount-time chain
+  // (POST .../resume, then GET the state) resolve too — two sequential
+  // fetches need more microtask turns than the catalog's single one.
+  await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); });
   return { container, root };
 }
 
@@ -139,6 +250,29 @@ async function setValue(win: Window, input: HTMLInputElement, value: string): Pr
     setter.call(input, value);
     input.dispatchEvent(new win.Event("input", { bubbles: true }));
   });
+}
+
+async function selectValue(win: Window, select: HTMLSelectElement, value: string): Promise<void> {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype, "value")!.set!;
+    setter.call(select, value);
+    select.dispatchEvent(new win.Event("change", { bubbles: true }));
+  });
+}
+
+async function flush(times = 6): Promise<void> {
+  await act(async () => { for (let i = 0; i < times; i++) await Promise.resolve(); });
+}
+
+function findButton(container: HTMLElement, text: string): HTMLButtonElement {
+  const found = [...container.querySelectorAll("button")].find(b => b.textContent?.trim() === text);
+  if (!found) throw new Error(`no button with text "${text}"`);
+  return found;
+}
+
+async function clickButton(container: HTMLElement, text: string): Promise<void> {
+  const button = findButton(container, text);
+  await act(async () => { button.click(); await Promise.resolve(); await Promise.resolve(); });
 }
 
 test("every one of the eight categories carries its own anchored regex-builder search", async () => {
@@ -361,6 +495,184 @@ test("a fresh detection resets the previous run's destination, target format and
   await detectAs(container, "C:\\Users\\me\\second.zip");
   expect(container.textContent).not.toContain("Extracted 3 item(s)");
   expect(inputWithId(container, "converter-destination-zip").value).toBe("");
+
+  await act(async () => { root.unmount(); });
+});
+
+/* ================================================================= batch queue */
+
+test("the batch queue is reachable at all: it resumes and reads the real queue on mount, not just a single ad-hoc conversion", async () => {
+  boot();
+  const { container, root } = await mount();
+
+  expect(container.textContent).toContain("Batch queue");
+  expect(queueRequests.some(r => r.path === "/api/converter/queue/resume")).toBe(true);
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a structured draft job can be built, previewed, and enqueued — the real preflight disclosure is shown before anything starts", async () => {
+  boot();
+  const { container, root } = await mount();
+
+  await setValue(testWindow, inputWithId(container, "converter-queue-source"), "C:\\Users\\me\\in.json");
+  await setValue(testWindow, inputWithId(container, "converter-queue-dest"), "C:\\Users\\me\\out.csv");
+  await selectValue(testWindow, container.querySelector<HTMLSelectElement>("#converter-queue-dest-format")!, "csv");
+
+  await clickButton(container, "Add to batch");
+  expect(container.textContent).toContain("C:\\Users\\me\\in.json");
+  expect(container.textContent).toContain("C:\\Users\\me\\out.csv");
+
+  // The preflight disclosure is a real request, and its own real numbers —
+  // never a client-side guess — are what render.
+  await clickButton(container, "Preview (storage estimate)");
+  expect(queueRequests.some(r => r.path === "/api/converter/queue/preflight")).toBe(true);
+  expect(container.textContent).toContain("each item's estimate is its source file's size times a conservative margin");
+  expect(container.textContent).toContain("C:\\out");
+
+  await clickButton(container, "Enqueue batch");
+  const enqueueReq = queueRequests.find(r => r.path === "/api/converter/queue/enqueue");
+  expect(enqueueReq).toBeTruthy();
+  expect((enqueueReq!.body as { jobs: unknown[] }).jobs).toEqual([{
+    kind: "structured", sourcePath: "C:\\Users\\me\\in.json", destPath: "C:\\Users\\me\\out.csv",
+    sourceFormat: "json", destFormat: "csv", acknowledgeLossy: false, overwrite: false,
+  }]);
+
+  // The draft is cleared and the real live queue table now shows the job.
+  expect(container.querySelector("#converter-queue-source")).toHaveProperty("value", "");
+  expect(container.textContent).toContain("Queue");
+  expect(container.textContent).toContain("C:\\Users\\me\\in.json");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("switching job kind swaps the fields: zip-extract needs no format picker, pdf-rotate offers a rotation degree", async () => {
+  boot();
+  const { container, root } = await mount();
+
+  const zipOption = [...container.querySelectorAll('button[role="radio"]')].find(b => b.textContent?.trim() === "ZIP extract")!;
+  await act(async () => { zipOption.click(); });
+  expect(container.querySelector("#converter-queue-dest-format")).toBeNull();
+  expect(container.querySelector("#converter-queue-rotate")).toBeNull();
+
+  const pdfOption = [...container.querySelectorAll('button[role="radio"]')].find(b => b.textContent?.trim() === "PDF rotate pages")!;
+  await act(async () => { pdfOption.click(); });
+  expect(container.querySelector("#converter-queue-dest-format")).toBeNull();
+  const rotateSelect = container.querySelector<HTMLSelectElement>("#converter-queue-rotate");
+  expect(rotateSelect).toBeTruthy();
+  expect([...rotateSelect!.options].map(o => o.value)).toEqual(["0", "90", "180", "270"]);
+  // `Toggle`'s label is an `aria-label`, not rendered text (see the lossy-ack
+  // toggle test above for the same pattern) — query it the same way.
+  expect(container.querySelector('button[role="switch"][aria-label="I understand rotating a signed PDF invalidates its signature"]')).toBeTruthy();
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a pdf-rotate job is drafted and enqueued with its real rotateDegrees and acknowledgement", async () => {
+  boot();
+  const { container, root } = await mount();
+
+  const pdfOption = [...container.querySelectorAll('button[role="radio"]')].find(b => b.textContent?.trim() === "PDF rotate pages")!;
+  await act(async () => { pdfOption.click(); });
+
+  await setValue(testWindow, inputWithId(container, "converter-queue-source"), "C:\\Users\\me\\doc.pdf");
+  await setValue(testWindow, inputWithId(container, "converter-queue-dest"), "C:\\Users\\me\\doc-rotated.pdf");
+  await selectValue(testWindow, container.querySelector<HTMLSelectElement>("#converter-queue-rotate")!, "180");
+
+  const ack = container.querySelector<HTMLButtonElement>(
+    'button[role="switch"][aria-label="I understand rotating a signed PDF invalidates its signature"]',
+  )!;
+  await act(async () => { ack.click(); });
+
+  await clickButton(container, "Add to batch");
+  await clickButton(container, "Enqueue batch");
+
+  const enqueueReq = queueRequests.find(r => r.path === "/api/converter/queue/enqueue");
+  expect((enqueueReq!.body as { jobs: unknown[] }).jobs).toEqual([{
+    kind: "pdf-rotate", sourcePath: "C:\\Users\\me\\doc.pdf", destPath: "C:\\Users\\me\\doc-rotated.pdf",
+    rotateDegrees: 180, acknowledgeLossy: true, overwrite: false,
+  }]);
+
+  await act(async () => { root.unmount(); });
+});
+
+const nowFixture = 1_700_000_000_000;
+
+function queueItemFixture(overrides: Partial<QueueItemFixture>): QueueItemFixture {
+  return {
+    id: "fixture-1", kind: "structured", sourcePath: "C:\\a.json", sourceFormat: "json",
+    destPath: "C:\\a.csv", destFormat: "csv", acknowledgeLossy: true, status: "queued",
+    requestedAt: nowFixture, startedAt: null, finishedAt: null,
+    sourceBytes: 10, bytesWritten: null, lossy: null, notes: null, boundary: null, error: null,
+    ...overrides,
+  };
+}
+
+test("the live queue table renders real per-item status/details and wires pause, cancel, retry and clear to the real routes", async () => {
+  boot();
+  queueItems = [
+    queueItemFixture({ id: "running", status: "converting" }),
+    queueItemFixture({ id: "done", status: "converted", bytesWritten: 55, notes: ["wrote 55 bytes"], destPath: "C:\\done.csv" }),
+    queueItemFixture({
+      id: "broke", status: "failed", boundary: "lossy-not-acknowledged", error: "acknowledgeLossy: true is required",
+      destPath: "C:\\broke.csv",
+    }),
+  ];
+  const { container, root } = await mount();
+
+  expect(container.textContent).toContain("Converting…");
+  expect(container.textContent).toContain("wrote 55 bytes");
+  expect(container.textContent).toContain("lossy-not-acknowledged");
+  expect(container.textContent).toContain("acknowledgeLossy: true is required");
+
+  // Pause: the "converting" item is still active, so Pause is enabled.
+  await clickButton(container, "Pause");
+  expect(queueRequests.some(r => r.path === "/api/converter/queue/pause")).toBe(true);
+
+  // Retry the failed item, by its own id — never a generic "retry everything".
+  await clickButton(container, "Retry");
+  const retryReq = queueRequests.find(r => r.path === "/api/converter/queue/retry");
+  expect(retryReq?.body).toEqual({ id: "broke" });
+
+  await clickButton(container, "Clear finished");
+  expect(queueRequests.some(r => r.path === "/api/converter/queue/clear")).toBe(true);
+
+  await act(async () => { root.unmount(); });
+});
+
+test("cancelling one queued item sends its own id, not a blanket cancel-everything call", async () => {
+  boot();
+  queueItems = [queueItemFixture({ id: "solo", status: "queued" })];
+  const { container, root } = await mount();
+
+  await clickButton(container, "Cancel");
+  const cancelReq = queueRequests.find(r => r.path === "/api/converter/queue/cancel");
+  expect(cancelReq?.body).toEqual({ id: "solo" });
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a batch refused for insufficient disk space reports the real error and never clears the draft", async () => {
+  boot();
+  enqueueResult = { ok: false, error: "the destination does not have enough free space for this batch, by the conservative estimate below" };
+  const { container, root } = await mount();
+
+  await setValue(testWindow, inputWithId(container, "converter-queue-source"), "C:\\Users\\me\\big.json");
+  await setValue(testWindow, inputWithId(container, "converter-queue-dest"), "C:\\Users\\me\\big.csv");
+  await clickButton(container, "Add to batch");
+  await clickButton(container, "Enqueue batch");
+
+  // The failure notice itself is a toast (`SnackbarHost`, mounted by `App.tsx`
+  // rather than this bare page harness — see the lossy-conversion failure
+  // test's own inline-banner pattern above for the same boundary). What this
+  // proves instead: the enqueue request really carried the drafted job, and
+  // a refusal never silently clears it — nothing was thrown away.
+  const enqueueReq = queueRequests.find(r => r.path === "/api/converter/queue/enqueue");
+  expect((enqueueReq!.body as { jobs: unknown[] }).jobs).toEqual([{
+    kind: "structured", sourcePath: "C:\\Users\\me\\big.json", destPath: "C:\\Users\\me\\big.csv",
+    sourceFormat: "json", destFormat: "csv", acknowledgeLossy: false, overwrite: false,
+  }]);
+  expect(container.textContent).toContain("C:\\Users\\me\\big.json");
 
   await act(async () => { root.unmount(); });
 });

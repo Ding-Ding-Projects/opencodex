@@ -26,17 +26,16 @@ Three of the eight required categories carry a real, working, bundled adapter:
   dependency. `delimited.ts` converts CSV/TSV to and from JSON; `xml-convert.ts` converts JSON to and
   from XML.
 
-**"Bundled" here is a narrower claim than "you can convert this file today," and the catalogue is
-honest about the gap rather than blurring it.** PDF is the one family with the full chain: a route,
-a CLI command, and a GUI action that actually performs the conversion — detect a PDF on the
-Converter page and an **Open in PDF Tools** button appears, handing the file straight to the seven
-real operations documented there. ZIP extraction and the four structured-data formats are genuinely
-bundled and genuinely proven to work at catalogue-build time (see the next section), and the catalogue
-lists them as `bundled: true` — searchable, correctly labelled, with their real operations named —
-but **no HTTP route, CLI command, or GUI button exists yet that actually runs one.** Detecting a ZIP
-or a CSV file today tells you accurately that opencodex has a working extractor or converter for it
-in the codebase; it does not yet let you click anything to use it. That is real, scoped, unfinished
-work, not a hidden capability.
+**"Bundled" here is a narrower claim than "you can convert this file today," though today every
+bundled family has the full chain.** PDF hands off to the dedicated PDF Tools page — detect a PDF on
+the Converter page and an **Open in PDF Tools** button appears, carrying the file straight to the
+seven real operations documented there. ZIP extraction and the four structured-data formats each have
+a real route, a real CLI command, and a real GUI action that runs right on the Converter page —
+detecting a ZIP or a structured-data source offers a destination field and a working Extract/Convert
+button, not just a catalogue listing. All three families are also queueable in a batch (see
+[Batch queue](#batch-queue) below), and PDF additionally has one queueable operation of its own
+("rotate every page"), reached the same way. Every other catalogued format stays real and searchable
+but honestly disabled, naming its exact missing dependency, which is the gap the next section covers.
 
 Every other format the contract's eight categories name — Images, Audio, Video, Code/Text, and
 Binary Encodings, plus 7-Zip/TAR/gzip within Archives and YAML/TOML within Structured Data — is real
@@ -153,19 +152,68 @@ whitespace are not guaranteed through a round trip.
 ## Reached from the dashboard, the CLI, and one shared module underneath both
 
 - **Dashboard:** the File Converter page, reachable from the nav. A source path field runs detection;
-  the catalogue below it is searchable per category, each with its own regex-capable search field.
-  Only a detected PDF shows a working action button today.
+  a detected PDF hands off to PDF Tools, a detected ZIP or structured-data source runs a real one-shot
+  conversion right on the page, and the catalogue below it is searchable per category, each with its
+  own regex-capable search field. Below that, a **Batch queue** card lets several conversions — any
+  mix of structured-data, ZIP-extract, or PDF-rotate jobs — be staged, previewed against a real
+  storage-capacity estimate, and enqueued with a chosen concurrency, and a **Queue** card shows every
+  item's real status with pause/resume/cancel/retry/clear.
 - **CLI:** `ocx convert catalog` lists every format's status; `ocx convert detect <path>` runs the
-  same byte-level detection headlessly. Neither has an `ocx convert run`-style execution command yet.
-- **Underneath both:** `src/lib/converter/{types,bounds,detect,registry,service}.ts`. The dashboard's
-  catalog fetch and the CLI's `catalog` subcommand call the exact same `buildConverterCatalog()`; the
-  dashboard's detect action and `ocx convert detect` call the exact same `detectSourceAtPath()`. The
-  CLI and the dashboard cannot disagree about what the catalogue says or what a detection pass found,
-  because there is only one implementation for either question to be answered by.
+  same byte-level detection headlessly; `ocx convert extract-zip`/`ocx convert structured` run a
+  one-shot conversion; `ocx convert queue {enqueue,preflight,status,pause,resume,cancel,retry,clear}`
+  drives the same batch queue the dashboard's cards do.
+- **Underneath both:** `src/lib/converter/{types,bounds,detect,registry,service}.ts` for the catalogue
+  and detection, `src/lib/converter/queue-{types,store,preflight,engine}.ts` for the batch queue. The
+  dashboard's catalog fetch and the CLI's `catalog` subcommand call the exact same
+  `buildConverterCatalog()`; the dashboard's detect action and `ocx convert detect` call the exact
+  same `detectSourceAtPath()`; the dashboard's Batch queue/Queue cards and `ocx convert queue` call
+  the exact same `/api/converter/queue/*` routes, themselves thin callers of `queue-engine.ts`. The
+  CLI and the dashboard cannot disagree about what the catalogue says, what a detection pass found, or
+  what the queue is doing, because there is only one implementation for any of those questions to be
+  answered by.
 
-Both surfaces are gated the same way PDF Tools and the export/VS Code handoff are: refused the
-instant the management proxy is reachable from the LAN, because detection and any future conversion
-both read arbitrary local files.
+Every mutating surface — a one-shot conversion or a queue action — is gated the same way PDF Tools and
+the export/VS Code handoff are: refused the instant the management proxy is reachable from the LAN,
+because both read and write arbitrary local files. The read-only catalog, detection, queue-state, and
+queue-preflight calls are not gated.
+
+## Batch queue
+
+A durable, resumable batch queue lives beneath both the dashboard and the CLI —
+`src/lib/converter/queue-{types,store,preflight,engine}.ts`, the same shape
+`src/lib/model-runtime/pull-queue-{types,store,engine}.ts` already proved for model pulls, adapted for
+a job that is synchronous and bounded rather than a long streamed download.
+
+Three job kinds are queueable today, each reusing the same real, bounded, atomic-write service a
+one-shot conversion uses — nothing about the queue weakens a bound or duplicates logic:
+
+- **Structured data** (JSON/CSV/TSV/XML) through `convertStructuredDataAtPath` — the original kind,
+  including its lossy-target `acknowledgeLossy` disclosure.
+- **ZIP extract** through `extractZipAtPath` — the same bounded read, path-traversal refusal, and
+  staging-directory-then-atomic-rename write the standalone Extract action uses. One limitation the
+  queue does not paper over: the service itself refuses to extract into an already-existing
+  directory, so a job admitted with "overwrite" against an existing destination is not skipped at
+  admission but honestly fails when it runs.
+- **PDF rotate pages** — every page of a source PDF rotated by the same amount (0/90/180/270). The
+  real page count is learned by inspecting the source when the job runs, never guessed up front, then
+  every page is rotated through the same `rotatePagesAtPath` every other PDF operation uses. A signed
+  source still needs its disclosure acknowledged, carried on the same `acknowledgeLossy` field
+  structured data uses for its own lossy-target disclosure. The other six PDF operations (split,
+  merge, extract, reorder, metadata) are not queue job kinds — see [PDF tools](/guides/pdf-tools) for
+  those, reachable through that page or `/api/pdf/*` directly.
+
+The queue persists to its own file (atomic temp-file-then-rename), pages admission in bounded batches
+with a real storage-capacity preflight (a definite shortfall refuses the whole batch, an indeterminate
+reading never blocks it), processes with bounded concurrency, and survives a restart: an item still
+mid-conversion when the process stopped is requeued and safely re-run, because every job kind here is
+a pure, idempotent function of its source. Pause stops new items from being *claimed* without
+interrupting one already running; cancelling a queued item is immediate; a failed item never turns the
+batch's summary green.
+
+Both the dashboard's Batch queue/Queue cards and `ocx convert queue` are thin clients over the same
+`/api/converter/queue/*` routes — `enqueue`/`preflight` take a JSON array of jobs (`--jobs-file` on
+the CLI), each carrying an optional `kind` (defaulting to `"structured"`), so a caller from before
+this feature existed keeps working unchanged.
 
 ## Verification
 
@@ -179,21 +227,28 @@ both read arbitrary local files.
 - `tests/converter-delimited.test.ts` — **20 tests**; `tests/converter-xml.test.ts` — **31 tests**;
   `tests/converter-structured-service.test.ts` — **12 tests**. Both independent XML entity-expansion
   defenses, the JSON depth bound, and the atomic single-file write are covered the same way.
-- `gui/tests/converter-handoff.test.ts` and `gui/tests/converter-page.test.tsx` — **10 tests**
-  together, covering the one-shot PDF hand-off (read-and-strip, read-once, no-param, the built hash
-  itself) and the dashboard page's own wiring.
+- `tests/converter-queue-store.test.ts`, `-preflight.test.ts`, `-engine.test.ts`, `-routes.test.ts`,
+  and `tests/cli-converter.test.ts` — the durable round-trip, bounded concurrency, pause/cancel/retry/
+  resume semantics, and — for the zip-extract and pdf-rotate kinds specifically — dispatch proof that
+  the wrong kind's executor is never called, plus real end-to-end runs with no injected executor at
+  all.
+- `gui/tests/converter-handoff.test.ts` and `gui/tests/converter-page.test.tsx` — covering the
+  one-shot PDF hand-off (read-and-strip, read-once, no-param, the built hash itself), the dashboard
+  page's one-shot conversion wiring, and the batch queue card: drafting/previewing/enqueuing a job of
+  each kind, the live table's per-item actions, and a refused batch leaving the draft intact.
 
 All of the above pass with `bun test`; `bun run typecheck` and `bun x tsc -b` inside `gui/` are both
 clean.
 
 ## What is not built yet
 
-The full contract also asks for real conversion **execution** for ZIP and structured data (a route, a
-CLI command, and a GUI action — today only PDF has this, via the hand-off), batch selection with the
-project's bulk-action rules, progress and cancellation, a result history, an unlimited resumable
-queue with crash recovery, YAML and TOML support, and Images/Audio/Video/Code-Text/Binary-Encodings
-adapters generally. `docs/FEATURE-INVENTORY.md` records the whole of this as real, scoped, future
-work rather than implying it is done.
+The other six PDF operations (split, merge, extract, reorder, metadata read/write) are not queue job
+kinds — each needs parameters (page ranges, multiple sources, a metadata-fields object) this queue's
+one-source/one-destination item shape does not carry without reshaping it per operation. YAML and
+TOML support, and Images/Audio/Video/Code-Text/Binary-Encodings adapters generally, also remain
+unbuilt. No page in the app has a native file/folder browse dialog yet, including the queue's own
+source/destination fields. `docs/FEATURE-INVENTORY.md` records the whole of this as real, scoped,
+future work rather than implying it is done.
 
 ## Suggested articles
 

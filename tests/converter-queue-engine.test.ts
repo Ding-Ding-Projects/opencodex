@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PDFDocument } from "pdf-lib";
 import {
   cancelAllPending,
   cancelItem,
@@ -33,10 +34,14 @@ import {
   setConcurrencyLimit,
   setConvertExecutorForTests,
   setConvertQueueDiskProbeForTests,
+  setPdfRotateExecutorForTests,
+  setZipExtractExecutorForTests,
   type ConvertJobInput,
 } from "../src/lib/converter/queue-engine";
 import { setConvertQueueStorePathForTests, updateAndFlushQueueState } from "../src/lib/converter/queue-store";
 import type { StructuredConversionOutcome, StructuredFormat } from "../src/lib/converter/structured-service";
+import { buildZip } from "../src/lib/export-archive";
+import { makePdf } from "./helpers/pdf-fixtures";
 
 type Behavior = (sourcePath: string, destPath: string) => StructuredConversionOutcome | Promise<StructuredConversionOutcome>;
 
@@ -592,5 +597,161 @@ describe("the real converter, wired end to end — no injected executor at all",
     expect(item.boundary).toBe("lossy-not-acknowledged");
     expect(item.error).toContain("acknowledgeLossy: true");
     expect(existsSync(dest)).toBe(false);
+  });
+});
+
+describe("enqueueConvertJobs — kind validation", () => {
+  test("an unknown kind is refused before anything is admitted", async () => {
+    const result = await enqueueConvertJobs([{ ...job(), kind: "not-a-real-kind" as never }]);
+    expect(result.ok).toBe(false);
+    expect(getQueueSnapshot().state.items).toHaveLength(0);
+  });
+
+  test("a structured job (kind omitted, the default) still requires sourceFormat and destFormat", async () => {
+    const result = await enqueueConvertJobs([{ sourcePath: join(dir, "in.json"), destPath: join(dir, "out.csv") } as ConvertJobInput]);
+    expect(result.ok).toBe(false);
+    expect(getQueueSnapshot().state.items).toHaveLength(0);
+  });
+
+  test("a pdf-rotate job without a valid rotateDegrees is refused", async () => {
+    const result = await enqueueConvertJobs([{
+      kind: "pdf-rotate", sourcePath: join(dir, "in.pdf"), destPath: join(dir, "out.pdf"),
+    } as ConvertJobInput]);
+    expect(result.ok).toBe(false);
+    expect(getQueueSnapshot().state.items).toHaveLength(0);
+  });
+
+  test("a zip-extract job needs neither sourceFormat/destFormat nor rotateDegrees", async () => {
+    const { executor } = makeExecutor({});
+    setConvertExecutorForTests(executor); // proves the structured path is never touched
+    setZipExtractExecutorForTests(() => ({ ok: true, bytesWritten: 0, lossy: false, notes: ["extracted 0 entries"] }));
+    const result = await enqueueConvertJobs([{
+      kind: "zip-extract", sourcePath: join(dir, "in.zip"), destPath: join(dir, "out-dir"),
+    } as ConvertJobInput]);
+    expect(result.ok).toBe(true);
+    await processQueue();
+    expect(getQueueSnapshot().state.items[0].status).toBe("converted");
+  });
+});
+
+describe("kind: zip-extract", () => {
+  test("dispatches to the zip-extract executor, not the structured one, and carries kind/notes through", async () => {
+    const structured = makeExecutor({});
+    setConvertExecutorForTests(structured.executor);
+    const zipCalls: Array<{ sourcePath: string; destPath: string }> = [];
+    setZipExtractExecutorForTests((sourcePath, destPath) => {
+      zipCalls.push({ sourcePath, destPath });
+      return { ok: true, bytesWritten: 42, lossy: false, notes: ["extracted 3 entries"] };
+    });
+
+    const src = join(dir, "archive.zip");
+    const destDir = join(dir, "extracted");
+    writeFileSync(src, "not a real zip — the executor is stubbed, so its bytes are never read");
+    const result = await enqueueConvertJobs([{ kind: "zip-extract", sourcePath: src, destPath: destDir } as ConvertJobInput]);
+    expect(result.ok).toBe(true);
+    await processQueue();
+
+    expect(zipCalls).toEqual([{ sourcePath: src, destPath: destDir }]);
+    expect(structured.calls).toEqual([]); // the wrong executor was never invoked
+    const item = getQueueSnapshot().state.items[0];
+    expect(item.kind).toBe("zip-extract");
+    expect(item.status).toBe("converted");
+    expect(item.bytesWritten).toBe(42);
+    expect(item.notes).toEqual(["extracted 3 entries"]);
+    expect(item.sourceFormat).toBeNull();
+    expect(item.destFormat).toBeNull();
+  });
+
+  test("a failing zip-extract reports the real service's boundary/error and never turns the batch green", async () => {
+    setZipExtractExecutorForTests(() => ({ ok: false, boundary: "bomb-suspected", error: "the archive expands far beyond its compressed size" }));
+    const result = await enqueueConvertJobs([{
+      kind: "zip-extract", sourcePath: join(dir, "bad.zip"), destPath: join(dir, "bad-out"),
+    } as ConvertJobInput]);
+    expect(result.ok).toBe(true);
+    await processQueue();
+    const item = getQueueSnapshot().state.items[0];
+    expect(item.status).toBe("failed");
+    expect(item.boundary).toBe("bomb-suspected");
+    expect(getQueueSnapshot().summary.outcome).toBe("complete-partial");
+  });
+
+  test("a real ZIP is really extracted to real files on disk — no injected executor at all", async () => {
+    const zipBytes = buildZip([
+      { path: "hello.txt", data: new TextEncoder().encode("hello from the queue") },
+      { path: "nested/inner.txt", data: new TextEncoder().encode("nested file") },
+    ]);
+    const src = join(dir, "real.zip");
+    writeFileSync(src, zipBytes);
+    const destDir = join(dir, "real-extracted");
+
+    const result = await enqueueConvertJobs([{ kind: "zip-extract", sourcePath: src, destPath: destDir } as ConvertJobInput]);
+    expect(result.ok).toBe(true);
+    await processQueue();
+
+    const item = getQueueSnapshot().state.items[0];
+    expect(item.status).toBe("converted");
+    expect(readFileSync(join(destDir, "hello.txt"), "utf-8")).toBe("hello from the queue");
+    expect(readFileSync(join(destDir, "nested", "inner.txt"), "utf-8")).toBe("nested file");
+  });
+});
+
+describe("kind: pdf-rotate", () => {
+  test("dispatches to the pdf-rotate executor with the item's own rotateDegrees and acknowledgeLossy (as acknowledgeSigned)", async () => {
+    const structured = makeExecutor({});
+    setConvertExecutorForTests(structured.executor);
+    const rotateCalls: Array<{ sourcePath: string; destPath: string; degrees: number; ack: boolean | undefined }> = [];
+    setPdfRotateExecutorForTests((sourcePath, destPath, degrees, ack) => {
+      rotateCalls.push({ sourcePath, destPath, degrees, ack });
+      return { ok: true, bytesWritten: 99, lossy: false, notes: ["rotated every page (2) by 90 degree(s)"] };
+    });
+
+    const src = join(dir, "doc.pdf");
+    const dest = join(dir, "doc-rotated.pdf");
+    writeFileSync(src, "not real pdf bytes — the executor is stubbed");
+    const result = await enqueueConvertJobs([{
+      kind: "pdf-rotate", sourcePath: src, destPath: dest, rotateDegrees: 90, acknowledgeLossy: true,
+    } as ConvertJobInput]);
+    expect(result.ok).toBe(true);
+    await processQueue();
+
+    expect(rotateCalls).toEqual([{ sourcePath: src, destPath: dest, degrees: 90, ack: true }]);
+    expect(structured.calls).toEqual([]);
+    const item = getQueueSnapshot().state.items[0];
+    expect(item.kind).toBe("pdf-rotate");
+    expect(item.rotateDegrees).toBe(90);
+    expect(item.status).toBe("converted");
+    expect(item.bytesWritten).toBe(99);
+  });
+
+  test("a failing pdf-rotate (e.g. a signed source refused without acknowledgement) reports the real boundary/error", async () => {
+    setPdfRotateExecutorForTests(() => ({ ok: false, error: "the source carries a digital signature; this edit will invalidate it — retry with acknowledgeSigned: true once you have shown the user that disclosure" }));
+    const result = await enqueueConvertJobs([{
+      kind: "pdf-rotate", sourcePath: join(dir, "signed.pdf"), destPath: join(dir, "signed-out.pdf"), rotateDegrees: 180,
+    } as ConvertJobInput]);
+    expect(result.ok).toBe(true);
+    await processQueue();
+    const item = getQueueSnapshot().state.items[0];
+    expect(item.status).toBe("failed");
+    expect(item.error).toContain("acknowledgeSigned: true");
+  });
+
+  test("a real PDF has every page really rotated on disk — no injected executor at all, and the page count is learned by inspecting, never guessed", async () => {
+    const src = join(dir, "real.pdf");
+    const dest = join(dir, "real-rotated.pdf");
+    writeFileSync(src, await makePdf([[150, 200], [150, 200], [150, 200]])); // 3 pages, all rotation 0
+
+    const result = await enqueueConvertJobs([{
+      kind: "pdf-rotate", sourcePath: src, destPath: dest, rotateDegrees: 90,
+    } as ConvertJobInput]);
+    expect(result.ok).toBe(true);
+    await processQueue();
+
+    const item = getQueueSnapshot().state.items[0];
+    expect(item.status).toBe("converted");
+    expect(item.notes?.[0]).toContain("every page (3)");
+
+    const written = await PDFDocument.load(readFileSync(dest));
+    expect(written.getPageCount()).toBe(3);
+    for (const page of written.getPages()) expect(page.getRotation().angle).toBe(90);
   });
 });

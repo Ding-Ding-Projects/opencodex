@@ -43,15 +43,18 @@
  * reason.
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { Badge, Banner, Button, Card, Empty, Field, SelectField, TextInput, Toggle } from "../shell/m3-ui";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Badge, Banner, Button, Card, Empty, Field, Segmented, SelectField, Slider, TextInput, Toggle } from "../shell/m3-ui";
+import type { BadgeTone } from "../shell/badge-tone";
 import { SearchField } from "../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { useT, type TKey } from "../i18n/shared";
+import { useI18n, type TFn, type TKey } from "../i18n/shared";
 import { navigateWithSource } from "../lib/converter-handoff";
 import { useNotifications } from "../shell/notifications-context";
+import { formatBytes } from "../format-bytes";
 import {
-  IconAudioFile, IconCode, IconDataObject, IconFolderZip, IconImage, IconPictureAsPdf, IconTableChart, IconVideoFile,
+  IconAudioFile, IconCode, IconDataObject, IconFolderZip, IconImage, IconPause, IconPictureAsPdf, IconPlay,
+  IconPlus, IconRestartAlt, IconSweep, IconTableChart, IconTrash, IconVideoFile, IconX,
 } from "../icons";
 
 type AdapterCategoryId =
@@ -139,6 +142,139 @@ interface StructuredConversionOutcome {
 }
 
 type StructuredFormatId = "json" | "csv" | "tsv" | "xml";
+const ALL_STRUCTURED_FORMATS: StructuredFormatId[] = ["json", "csv", "tsv", "xml"];
+
+/* --------------------------------------------------------------- batch queue */
+
+type ConvertJobKindId = "structured" | "zip-extract" | "pdf-rotate";
+type RotateDegreesId = 0 | 90 | 180 | 270;
+type ConvertQueueItemStatus = "queued" | "converting" | "converted" | "skipped" | "cancelled" | "failed";
+type ConvertQueueOutcome = "empty" | "in-progress" | "paused" | "complete-success" | "complete-partial";
+
+interface ConvertQueueItemDto {
+  id: string;
+  kind: ConvertJobKindId;
+  sourcePath: string;
+  sourceFormat: StructuredFormatId | null;
+  destPath: string;
+  destFormat: StructuredFormatId | null;
+  acknowledgeLossy: boolean;
+  rotateDegrees?: RotateDegreesId;
+  status: ConvertQueueItemStatus;
+  requestedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  sourceBytes: number | null;
+  bytesWritten: number | null;
+  lossy: boolean | null;
+  notes: string[] | null;
+  boundary: string | null;
+  error: string | null;
+}
+
+interface ConvertQueueStateDto { paused: boolean; items: ConvertQueueItemDto[] }
+
+interface ConvertQueueSummaryDto {
+  total: number; queued: number; converting: number; converted: number;
+  skipped: number; cancelled: number; failed: number; outcome: ConvertQueueOutcome;
+}
+
+interface ConvertPreflightItemDto { destPath: string; sourceBytes: number | null; estimatedOutputBytes: number | null }
+interface ConvertDiskGroupDto { directory: string; freeDiskBytes: number | null; estimatedBytesNeeded: number; sufficient: boolean | null }
+
+interface ConvertQueuePreflightDto {
+  items: ConvertPreflightItemDto[];
+  aggregateEstimatedBytes: number;
+  aggregateSizeFullyKnown: boolean;
+  groups: ConvertDiskGroupDto[];
+  insufficientDiskSpace: boolean;
+  disclosure: string;
+}
+
+/** A job the user has staged but not yet enqueued — client-only, never sent as-is (see `draftToApiJob`). */
+interface DraftJob {
+  clientId: string;
+  kind: ConvertJobKindId;
+  sourcePath: string;
+  destPath: string;
+  sourceFormat?: StructuredFormatId;
+  destFormat?: StructuredFormatId;
+  acknowledgeLossy: boolean;
+  rotateDegrees?: RotateDegreesId;
+  overwrite: boolean;
+}
+
+function draftToApiJob(draft: DraftJob): Omit<DraftJob, "clientId"> {
+  return {
+    kind: draft.kind,
+    sourcePath: draft.sourcePath,
+    destPath: draft.destPath,
+    sourceFormat: draft.sourceFormat,
+    destFormat: draft.destFormat,
+    acknowledgeLossy: draft.acknowledgeLossy,
+    rotateDegrees: draft.rotateDegrees,
+    overwrite: draft.overwrite,
+  };
+}
+
+const JOB_KIND_ORDER: ConvertJobKindId[] = ["structured", "zip-extract", "pdf-rotate"];
+const JOB_KIND_LABEL_KEY: Record<ConvertJobKindId, TKey> = {
+  structured: "converter.queue.kind.structured",
+  "zip-extract": "converter.queue.kind.zipExtract",
+  "pdf-rotate": "converter.queue.kind.pdfRotate",
+};
+
+const ROTATE_DEGREES_OPTIONS: RotateDegreesId[] = [0, 90, 180, 270];
+
+const QUEUE_STATUS_LABEL_KEY: Record<ConvertQueueItemStatus, TKey> = {
+  queued: "converter.queue.status.queued",
+  converting: "converter.queue.status.converting",
+  converted: "converter.queue.status.converted",
+  skipped: "converter.queue.status.skipped",
+  cancelled: "converter.queue.status.cancelled",
+  failed: "converter.queue.status.failed",
+};
+const QUEUE_STATUS_TONE: Record<ConvertQueueItemStatus, BadgeTone> = {
+  queued: "neutral", converting: "accent", converted: "ok", skipped: "neutral", cancelled: "warn", failed: "error",
+};
+
+/** Polls only while the batch is actually moving — an idle or paused queue does not need a live poll. */
+const QUEUE_POLL_MS = 1_500;
+
+const TABLE_WRAP: CSSProperties = { overflowX: "auto", marginTop: "var(--sp-2)" };
+
+function jobKindDetail(
+  item: { kind: ConvertJobKindId; sourceFormat?: StructuredFormatId | null; destFormat?: StructuredFormatId | null; rotateDegrees?: RotateDegreesId },
+  t: TFn,
+): string {
+  if (item.kind === "structured") {
+    return t("converter.queue.kindDetail.structured", { from: item.sourceFormat ?? "?", to: item.destFormat ?? "?" });
+  }
+  if (item.kind === "pdf-rotate") return t("converter.queue.kindDetail.pdfRotate", { degrees: String(item.rotateDegrees ?? 0) });
+  return t("converter.queue.kindDetail.zipExtract");
+}
+
+function QueueJobDetail({ item, t }: { item: ConvertQueueItemDto; t: TFn }) {
+  if (item.status === "converting") return <Badge tone="accent">{t("converter.queue.running")}</Badge>;
+  if (item.status === "queued") return <span>—</span>;
+  if (item.status === "failed") {
+    return (
+      <div className="m3-stack">
+        {item.boundary && <Badge tone="error">{item.boundary}</Badge>}
+        {item.error && <p className="m3-field-hint">{item.error}</p>}
+      </div>
+    );
+  }
+  if (item.status === "skipped") return <p className="m3-field-hint">{item.notes?.[0] ?? t("converter.queue.skippedNote")}</p>;
+  if (item.status === "cancelled") return <p className="m3-field-hint">{item.error ?? t("converter.queue.cancelledNote")}</p>;
+  return (
+    <div className="m3-stack">
+      {item.notes?.map((n, i) => <p key={i} className="m3-field-hint">{n}</p>)}
+      {item.bytesWritten != null && <p className="m3-field-hint">{t("converter.queue.bytesWritten", { bytes: String(item.bytesWritten) })}</p>}
+      {item.lossy && <Badge tone="warn">{t("converter.queue.lossyBadge")}</Badge>}
+    </div>
+  );
+}
 
 interface CategorySearchState { query: string; regex: boolean; flags: string }
 
@@ -174,7 +310,7 @@ function openInPdfTools(path: string): void {
 }
 
 export default function Converter({ apiBase }: { apiBase: string }) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const { notify } = useNotifications();
 
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -197,6 +333,166 @@ export default function Converter({ apiBase }: { apiBase: string }) {
   const [runBusy, setRunBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [runSuccess, setRunSuccess] = useState<string | null>(null);
+
+  /* ---------------------------------------------------------- batch queue */
+
+  const [queueDraftKind, setQueueDraftKind] = useState<ConvertJobKindId>("structured");
+  const [queueDraftSource, setQueueDraftSource] = useState("");
+  const [queueDraftDest, setQueueDraftDest] = useState("");
+  const [queueDraftSourceFormat, setQueueDraftSourceFormat] = useState<StructuredFormatId>("json");
+  const [queueDraftDestFormat, setQueueDraftDestFormat] = useState<StructuredFormatId>("csv");
+  const [queueDraftAcknowledge, setQueueDraftAcknowledge] = useState(false);
+  const [queueDraftRotate, setQueueDraftRotate] = useState<RotateDegreesId>(90);
+  const [queueDraftOverwrite, setQueueDraftOverwrite] = useState(false);
+  const [draftJobs, setDraftJobs] = useState<DraftJob[]>([]);
+
+  const [queuePreflight, setQueuePreflight] = useState<ConvertQueuePreflightDto | null>(null);
+  const [queuePreflighting, setQueuePreflighting] = useState(false);
+  const [queueEnqueuing, setQueueEnqueuing] = useState(false);
+  const [queueConcurrency, setQueueConcurrency] = useState(3);
+
+  const [queueState, setQueueState] = useState<ConvertQueueStateDto | null>(null);
+  const [queueSummary, setQueueSummary] = useState<ConvertQueueSummaryDto | null>(null);
+
+  function addDraftJob(): void {
+    const src = queueDraftSource.trim();
+    const dest = queueDraftDest.trim();
+    if (!src || !dest) return;
+    const draft: DraftJob = {
+      clientId: `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      kind: queueDraftKind,
+      sourcePath: src,
+      destPath: dest,
+      acknowledgeLossy: queueDraftAcknowledge,
+      overwrite: queueDraftOverwrite,
+    };
+    if (queueDraftKind === "structured") {
+      draft.sourceFormat = queueDraftSourceFormat;
+      draft.destFormat = queueDraftDestFormat;
+    }
+    if (queueDraftKind === "pdf-rotate") draft.rotateDegrees = queueDraftRotate;
+    setDraftJobs(prev => [...prev, draft]);
+    setQueueDraftSource("");
+    setQueueDraftDest("");
+    setQueueDraftAcknowledge(false);
+    setQueuePreflight(null); // stale the instant the job list changes
+  }
+
+  function removeDraftJob(clientId: string): void {
+    setDraftJobs(prev => prev.filter(j => j.clientId !== clientId));
+    setQueuePreflight(null);
+  }
+
+  async function handleQueuePreflight(): Promise<void> {
+    if (draftJobs.length === 0) return;
+    setQueuePreflighting(true);
+    const result = await callConverterApi<{ preflight: ConvertQueuePreflightDto }>(apiBase, "/api/converter/queue/preflight", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobs: draftJobs.map(draftToApiJob) }),
+    });
+    setQueuePreflighting(false);
+    if (!result.ok) {
+      notify({ tone: "error", title: t("converter.queue.previewFailedTitle"), body: result.error });
+      return;
+    }
+    setQueuePreflight(result.data.preflight);
+  }
+
+  const loadQueueState = useCallback(async () => {
+    const result = await callConverterApi<{ state: ConvertQueueStateDto; summary: ConvertQueueSummaryDto; concurrency: number }>(
+      apiBase, "/api/converter/queue",
+    );
+    if (!result.ok) return;
+    setQueueState(result.data.state);
+    setQueueSummary(result.data.summary);
+  }, [apiBase]);
+
+  async function handleQueueEnqueue(): Promise<void> {
+    if (draftJobs.length === 0) return;
+    setQueueEnqueuing(true);
+    const result = await callConverterApi<{ state: ConvertQueueStateDto; added: number }>(apiBase, "/api/converter/queue/enqueue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobs: draftJobs.map(draftToApiJob), concurrency: queueConcurrency }),
+    });
+    setQueueEnqueuing(false);
+    if (!result.ok) {
+      const message = result.boundary ? t("converter.result.boundary", { boundary: result.boundary, error: result.error }) : result.error;
+      notify({ tone: "error", title: t("converter.queue.enqueueFailedTitle"), body: message });
+      return;
+    }
+    notify({ tone: "success", title: t("converter.queue.enqueuedTitle"), body: t("converter.queue.enqueuedBody", { count: String(result.data.added) }) });
+    setDraftJobs([]);
+    setQueuePreflight(null);
+    void loadQueueState();
+  }
+
+  // Resuming reconciles the persisted queue after a restart and continues
+  // anything still queued — loopback-gated, same as the pull queue's own
+  // resume. A LAN-connected session gets a plain 403 and simply falls back to
+  // the read-only GET below; it can still see the queue.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await callConverterApi(apiBase, "/api/converter/queue/resume", { method: "POST" });
+      if (cancelled) return;
+      await loadQueueState();
+    })();
+    return () => { cancelled = true; };
+  }, [apiBase, loadQueueState]);
+
+  useEffect(() => {
+    if (queueSummary?.outcome !== "in-progress") return;
+    const timer = setInterval(() => { void loadQueueState(); }, QUEUE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [queueSummary?.outcome, loadQueueState]);
+
+  async function handleQueuePause(): Promise<void> {
+    const result = await callConverterApi(apiBase, "/api/converter/queue/pause", { method: "POST" });
+    if (!result.ok) notify({ tone: "error", title: t("converter.queue.pauseFailedTitle"), body: result.error });
+    void loadQueueState();
+  }
+
+  async function handleQueueResumeRun(): Promise<void> {
+    const result = await callConverterApi(apiBase, "/api/converter/queue/resume-run", { method: "POST" });
+    if (!result.ok) notify({ tone: "error", title: t("converter.queue.resumeFailedTitle"), body: result.error });
+    void loadQueueState();
+  }
+
+  async function handleQueueCancelItem(id: string): Promise<void> {
+    const result = await callConverterApi(apiBase, "/api/converter/queue/cancel", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }),
+    });
+    if (!result.ok) notify({ tone: "error", title: t("converter.queue.cancelFailedTitle"), body: result.error });
+    void loadQueueState();
+  }
+
+  async function handleQueueCancelAll(): Promise<void> {
+    const result = await callConverterApi(apiBase, "/api/converter/queue/cancel", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+    });
+    if (!result.ok) notify({ tone: "error", title: t("converter.queue.cancelFailedTitle"), body: result.error });
+    void loadQueueState();
+  }
+
+  async function handleQueueRetryItem(id: string): Promise<void> {
+    const result = await callConverterApi(apiBase, "/api/converter/queue/retry", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }),
+    });
+    if (!result.ok) notify({ tone: "error", title: t("converter.queue.retryFailedTitle"), body: result.error });
+    void loadQueueState();
+  }
+
+  async function handleQueueClearFinished(): Promise<void> {
+    const result = await callConverterApi(apiBase, "/api/converter/queue/clear", { method: "POST" });
+    if (!result.ok) notify({ tone: "error", title: t("converter.queue.clearFailedTitle"), body: result.error });
+    void loadQueueState();
+  }
+
+  const queueItems = queueState?.items ?? [];
+  const hasActiveQueueItems = queueItems.some(i => i.status === "queued" || i.status === "converting");
+  const hasFinishedQueueItems = queueItems.some(i => i.status === "converted" || i.status === "skipped" || i.status === "cancelled" || i.status === "failed");
 
   useEffect(() => {
     let cancelled = false;
@@ -472,6 +768,279 @@ export default function Converter({ apiBase }: { apiBase: string }) {
           </div>
         )}
       </Card>
+
+      <Card title={t("converter.queue.title")} subtitle={t("converter.queue.subtitle")}>
+        <div className="m3-field">
+          {/* `Segmented` supplies its own `aria-label`/`role="radiogroup"` — a `Field` wrapper's `htmlFor` would target no real element, so the visible label sits beside it instead. */}
+          <span className="m3-field-label">{t("converter.queue.kindLabel")}</span>
+          <Segmented
+            label={t("converter.queue.kindLabel")}
+            value={queueDraftKind}
+            onChange={setQueueDraftKind}
+            options={JOB_KIND_ORDER.map(k => ({ value: k, label: t(JOB_KIND_LABEL_KEY[k]) }))}
+          />
+        </div>
+
+        <Field
+          label={t("converter.queue.sourceLabel")}
+          hint={t("converter.sourceHint")}
+          id="converter-queue-source"
+        >
+          <TextInput
+            id="converter-queue-source"
+            value={queueDraftSource}
+            onChange={e => setQueueDraftSource(e.target.value)}
+            placeholder={t("converter.sourcePlaceholder")}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </Field>
+
+        <Field
+          label={t("converter.destinationLabel")}
+          hint={queueDraftKind === "zip-extract" ? t("converter.destinationHintZip") : t("converter.queue.destinationHint")}
+          id="converter-queue-dest"
+        >
+          <TextInput
+            id="converter-queue-dest"
+            value={queueDraftDest}
+            onChange={e => setQueueDraftDest(e.target.value)}
+            placeholder={queueDraftKind === "zip-extract" ? t("converter.destinationPlaceholderZip") : t("converter.destinationPlaceholderStructured")}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </Field>
+
+        {queueDraftKind === "structured" && (
+          <div className="m3-row" style={{ flexWrap: "wrap", gap: 16 }}>
+            <Field label={t("converter.queue.sourceFormatLabel")} id="converter-queue-source-format">
+              <SelectField
+                id="converter-queue-source-format"
+                label={t("converter.queue.sourceFormatLabel")}
+                value={queueDraftSourceFormat}
+                onChange={v => setQueueDraftSourceFormat(v as StructuredFormatId)}
+                options={ALL_STRUCTURED_FORMATS.map(f => ({ value: f, label: f.toUpperCase() }))}
+              />
+            </Field>
+            <Field label={t("converter.targetFormatLabel")} id="converter-queue-dest-format">
+              <SelectField
+                id="converter-queue-dest-format"
+                label={t("converter.targetFormatLabel")}
+                value={queueDraftDestFormat}
+                onChange={v => setQueueDraftDestFormat(v as StructuredFormatId)}
+                options={ALL_STRUCTURED_FORMATS.map(f => ({ value: f, label: f.toUpperCase() }))}
+              />
+            </Field>
+          </div>
+        )}
+
+        {queueDraftKind === "pdf-rotate" && (
+          <Field label={t("converter.queue.rotateDegreesLabel")} hint={t("converter.queue.rotateDegreesHint")} id="converter-queue-rotate">
+            <SelectField
+              id="converter-queue-rotate"
+              label={t("converter.queue.rotateDegreesLabel")}
+              value={String(queueDraftRotate)}
+              onChange={v => setQueueDraftRotate(Number(v) as RotateDegreesId)}
+              options={ROTATE_DEGREES_OPTIONS.map(d => ({ value: String(d), label: `${d}°` }))}
+            />
+          </Field>
+        )}
+
+        {(queueDraftKind === "structured" || queueDraftKind === "pdf-rotate") && (
+          <Toggle
+            on={queueDraftAcknowledge}
+            onChange={setQueueDraftAcknowledge}
+            label={queueDraftKind === "structured" ? t("converter.queue.acknowledgeLossyLabel") : t("converter.queue.acknowledgeSignedLabel")}
+          />
+        )}
+
+        <Toggle on={queueDraftOverwrite} onChange={setQueueDraftOverwrite} label={t("converter.queue.overwriteLabel")} />
+        {queueDraftKind === "zip-extract" && queueDraftOverwrite && (
+          <p className="m3-field-hint">{t("converter.queue.zipOverwriteNote")}</p>
+        )}
+
+        <div className="m3-row" style={{ marginTop: 8 }}>
+          <Button variant="outlined" onClick={addDraftJob} disabled={!queueDraftSource.trim() || !queueDraftDest.trim()}>
+            <IconPlus width={16} height={16} /> {t("converter.queue.addToBatch")}
+          </Button>
+        </div>
+
+        {draftJobs.length > 0 && (
+          <div style={TABLE_WRAP}>
+            <table className="m3-table">
+              <thead>
+                <tr>
+                  <th>{t("converter.queue.col.kind")}</th>
+                  <th>{t("converter.queue.col.source")}</th>
+                  <th>{t("converter.queue.col.destination")}</th>
+                  <th><span className="sr-only">{t("converter.queue.col.actions")}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {draftJobs.map(j => (
+                  <tr key={j.clientId}>
+                    <td>
+                      <Badge>{t(JOB_KIND_LABEL_KEY[j.kind])}</Badge>
+                      <div className="m3-field-hint">{jobKindDetail(j, t)}</div>
+                    </td>
+                    <td>{j.sourcePath}</td>
+                    <td>{j.destPath}</td>
+                    <td>
+                      <Button variant="text" onClick={() => removeDraftJob(j.clientId)} aria-label={t("converter.queue.removeDraft")}>
+                        <IconTrash width={16} height={16} />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {draftJobs.length > 0 && (
+          <>
+            <Slider
+              id="converter-queue-concurrency"
+              label={t("converter.queue.concurrencyLabel")}
+              min={1}
+              max={8}
+              value={queueConcurrency}
+              onChange={setQueueConcurrency}
+              valueLabel={String(queueConcurrency)}
+            />
+
+            <div className="m3-row" style={{ gap: 8, marginTop: 8 }}>
+              <Button variant="outlined" onClick={() => void handleQueuePreflight()} disabled={queuePreflighting}>
+                {queuePreflighting ? t("converter.queue.previewing") : t("converter.queue.preview")}
+              </Button>
+              <Button variant="filled" onClick={() => void handleQueueEnqueue()} disabled={queueEnqueuing}>
+                {queueEnqueuing ? t("converter.queue.enqueuing") : t("converter.queue.enqueueAction")}
+              </Button>
+            </div>
+
+            {queuePreflight && (
+              <div className="m3-stack" style={{ marginTop: 8 }}>
+                <p className="m3-field-hint">{queuePreflight.disclosure}</p>
+                <div className="m3-row" style={{ flexWrap: "wrap", gap: 12 }}>
+                  <Badge tone={queuePreflight.aggregateSizeFullyKnown ? "neutral" : "warn"}>
+                    {queuePreflight.aggregateSizeFullyKnown
+                      ? t("converter.queue.aggregateKnown", { size: formatBytes(queuePreflight.aggregateEstimatedBytes, locale) })
+                      : t("converter.queue.aggregatePartial", { size: formatBytes(queuePreflight.aggregateEstimatedBytes, locale) })}
+                  </Badge>
+                  {queuePreflight.insufficientDiskSpace && (
+                    <Badge tone="error">{t("converter.queue.insufficientSpace")}</Badge>
+                  )}
+                </div>
+                <div style={TABLE_WRAP}>
+                  <table className="m3-table">
+                    <thead>
+                      <tr>
+                        <th>{t("converter.queue.col.directory")}</th>
+                        <th>{t("converter.queue.col.free")}</th>
+                        <th>{t("converter.queue.col.needed")}</th>
+                        <th>{t("converter.queue.col.sufficient")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {queuePreflight.groups.map(g => (
+                        <tr key={g.directory}>
+                          <td>{g.directory}</td>
+                          <td>{g.freeDiskBytes != null ? formatBytes(g.freeDiskBytes, locale) : t("converter.queue.unknown")}</td>
+                          <td>{formatBytes(g.estimatedBytesNeeded, locale)}</td>
+                          <td>
+                            {g.sufficient === null ? (
+                              <Badge tone="warn">{t("converter.queue.unknown")}</Badge>
+                            ) : g.sufficient ? (
+                              <Badge tone="ok">{t("converter.queue.sufficientYes")}</Badge>
+                            ) : (
+                              <Badge tone="error">{t("converter.queue.sufficientNo")}</Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+
+      {queueItems.length > 0 && queueSummary && (
+        <Card
+          title={t("converter.queue.liveTitle")}
+          subtitle={t("converter.queue.liveSummary", {
+            converted: String(queueSummary.converted),
+            skipped: String(queueSummary.skipped),
+            failed: String(queueSummary.failed),
+            cancelled: String(queueSummary.cancelled),
+            active: String(queueSummary.queued + queueSummary.converting),
+          })}
+          actions={
+            <div className="m3-row" style={{ gap: 8 }}>
+              {queueState?.paused ? (
+                <Button variant="text" onClick={() => void handleQueueResumeRun()}>
+                  <IconPlay width={16} height={16} /> {t("converter.queue.resumeAction")}
+                </Button>
+              ) : (
+                <Button variant="text" onClick={() => void handleQueuePause()} disabled={!hasActiveQueueItems}>
+                  <IconPause width={16} height={16} /> {t("converter.queue.pauseAction")}
+                </Button>
+              )}
+              <Button variant="text" onClick={() => void handleQueueCancelAll()} disabled={!hasActiveQueueItems}>
+                <IconX width={16} height={16} /> {t("converter.queue.cancelAll")}
+              </Button>
+              <Button variant="text" onClick={() => void handleQueueClearFinished()} disabled={!hasFinishedQueueItems}>
+                <IconSweep width={16} height={16} /> {t("converter.queue.clearFinished")}
+              </Button>
+            </div>
+          }
+        >
+          {queueState?.paused && <Banner tone="warn">{t("converter.queue.pausedBanner")}</Banner>}
+          {queueSummary.outcome === "complete-partial" && <Banner tone="warn">{t("converter.queue.partialBanner")}</Banner>}
+          <div style={TABLE_WRAP}>
+            <table className="m3-table">
+              <thead>
+                <tr>
+                  <th>{t("converter.queue.col.kind")}</th>
+                  <th>{t("converter.queue.col.source")}</th>
+                  <th>{t("converter.queue.col.destination")}</th>
+                  <th>{t("converter.queue.col.status")}</th>
+                  <th>{t("converter.queue.col.details")}</th>
+                  <th><span className="sr-only">{t("converter.queue.col.actions")}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {queueItems.map(item => (
+                  <tr key={item.id}>
+                    <td>
+                      <Badge>{t(JOB_KIND_LABEL_KEY[item.kind])}</Badge>
+                      <div className="m3-field-hint">{jobKindDetail(item, t)}</div>
+                    </td>
+                    <td>{item.sourcePath}</td>
+                    <td>{item.destPath}</td>
+                    <td><Badge tone={QUEUE_STATUS_TONE[item.status]}>{t(QUEUE_STATUS_LABEL_KEY[item.status])}</Badge></td>
+                    <td><QueueJobDetail item={item} t={t} /></td>
+                    <td>
+                      {(item.status === "queued" || item.status === "converting") && (
+                        <Button variant="text" onClick={() => void handleQueueCancelItem(item.id)}>
+                          <IconX width={16} height={16} /> {t("converter.queue.cancel")}
+                        </Button>
+                      )}
+                      {(item.status === "failed" || item.status === "cancelled") && (
+                        <Button variant="text" onClick={() => void handleQueueRetryItem(item.id)}>
+                          <IconRestartAlt width={16} height={16} /> {t("converter.queue.retry")}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       {catalogError && (
         <Card title={t("converter.catalogTitle")}>
