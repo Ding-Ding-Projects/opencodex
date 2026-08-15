@@ -21,7 +21,7 @@ export const en = {
   "common.edit": "Edit",
   "common.loading": "Loading…",
   "common.retry": "Retry",
-  "app.logoAria": "opencodex logo",
+  "app.logoAria": "{name} logo",
   "app.claudeOn": "Claude ON",
   "app.claudeOff": "Claude OFF",
   "theme.label": "Theme",

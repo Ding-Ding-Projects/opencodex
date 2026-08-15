@@ -17,6 +17,7 @@ import { FontPicker } from "../components/appearance/FontPicker";
 import { TypographyEditor } from "../components/appearance/TypographyEditor";
 import { TYPOGRAPHY_LABEL_KEYS } from "../components/appearance/typography-labels";
 import { AppLogoPicker } from "../components/appearance/AppLogoPicker";
+import { AppNameCard } from "../components/appearance/AppNameCard";
 import { IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { joinBilingual } from "../i18n/resolve";
@@ -28,6 +29,7 @@ import { elsewhereFor } from "./settings-elsewhere";
 import { useNotifications } from "../shell/notifications-context";
 import { CUSTOM_SOURCE_ID, findPreset, SHIPPED_LOGO_PRESET_ID } from "../theme/app-logo";
 import { useAppLogo } from "../theme/use-app-logo";
+import { useAppName } from "../theme/use-app-name";
 import type { TKey } from "../i18n/shared";
 
 /** Shown when a target carries no override of its own; mirrors the prototype. */
@@ -122,6 +124,10 @@ export default function Appearance() {
   const { prefs, setPrefs, setElementStyle, setElementTypography, resetElementStyle, resetAppearance } = usePrefs();
   const { notify } = useNotifications();
   const appLogo = useAppLogo();
+  // Read here only so the page's own settings index can report the *current*
+  // name beside the row. The editor itself is `AppNameCard`, which owns every
+  // write.
+  const appName = useAppName();
   const [target, setTarget] = useState<string>(ELEMENT_TARGETS[0].id);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
@@ -191,6 +197,15 @@ export default function Appearance() {
       value: appLogo.applied.sourceId === CUSTOM_SOURCE_ID
         ? "Custom"
         : t((findPreset(appLogo.applied.sourceId) ?? findPreset(SHIPPED_LOGO_PRESET_ID))!.tkey as TKey),
+    },
+    {
+      id: "appName",
+      label: t("appearance.appNameTitle"),
+      desc: t("appearance.appNameSub"),
+      // The name in force, which is the shipped one until somebody changes it.
+      // Searching for what the app is called should answer with what it is
+      // called, not with "shipped" or "custom".
+      value: appName.display,
     },
   ];
 
@@ -411,6 +426,8 @@ export default function Appearance() {
           />
         </div>
       </Card>
+
+      <AppNameCard />
 
       <AppLogoPicker />
 

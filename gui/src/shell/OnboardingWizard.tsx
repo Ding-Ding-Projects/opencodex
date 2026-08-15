@@ -43,6 +43,7 @@ import {
   deferOnboarding,
   isClosedForLaunch,
 } from "./onboarding-state";
+import { useAppDisplayName } from "../theme/use-app-name";
 
 const TOTAL_STEPS = 4;
 
@@ -56,6 +57,12 @@ type ExitReason = "finish" | "skip" | "provider";
 
 export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
   const t = useT();
+  // The wizard is the app literally introducing itself, so it introduces
+  // itself by the name the user has chosen. On a genuine first run that is the
+  // shipped name, since nothing has been renamed yet — but this surface also
+  // reopens from Help, and greeting a renamed app by its old name would be the
+  // one screen that had not been told.
+  const appName = useAppDisplayName();
   const { locale, setLocale } = useI18n();
   const { notify } = useNotifications();
 
@@ -145,7 +152,7 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
 
   return (
     <Dialog
-      title={t("onboard.title")}
+      title={t("onboard.title", { name: appName })}
       description={t("onboard.sub")}
       // Escape is the only key handled, and the native `<dialog>` raises it as
       // `cancel` — so it arrives here without a key listener of our own.

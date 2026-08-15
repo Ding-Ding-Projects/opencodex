@@ -3,6 +3,10 @@
 Generated from release tags by `bun scripts/generate-changelog.ts`.
 Preview tags are omitted. The dashboard reads this file through `/api/changelog`.
 
+## Unreleased
+
+- feat(gui): let the user rename the app's display name
+
 ## 2.7.42 — 2026-07-28
 
 - fix(ci): tighten issue-quality soft-pass structure gate

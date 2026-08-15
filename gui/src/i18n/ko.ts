@@ -931,7 +931,7 @@ export const ko: Record<TKey, string> = {
   "claude.none": "없음",
   "common.close": "닫기",
   "common.ok": "확인",
-  "app.logoAria": "opencodex 로고",
+  "app.logoAria": "{name} 로고",
   "app.claudeOn": "Claude ON",
   "app.claudeOff": "Claude OFF",
   "usage.dayMon": "월",

@@ -241,7 +241,9 @@ export const M3_EN = {
   "settings.historyNote": "Every change on this page writes a snapshot to the local git history in your config directory. Nothing is pushed anywhere.",
 
   // ---- onboarding ----
-  "onboard.title": "Welcome to opencodex",
+  // `{name}` is the app's display name, which the user can change on
+  // Appearance. On a genuine first run it is still the shipped name.
+  "onboard.title": "Welcome to {name}",
   "onboard.sub": "Three steps, and you can change any of it later.",
   "onboard.skip": "Skip setup",
   "onboard.back": "Back",
@@ -467,6 +469,33 @@ export const M3_EN = {
   "appearance.previewPrimary": "Primary",
   "appearance.previewTonal": "Tonal",
   "appearance.previewOutlined": "Outlined",
+  // ---- app name ----
+  // The two notes below are the disclosure this feature owes the user, and are
+  // rendered on the card rather than left as a comment: a rename that silently
+  // moved the data folder would be a data-loss bug, and a diagnostic carrying a
+  // private nickname is a report nobody can act on. Saying both is what makes
+  // the answer to "is this safe" readable without reading the source.
+  "appearance.appNameTitle": "App name",
+  "appearance.appNameSub": "Change the name this app shows you. It is a label — nothing about where your settings live, how the app updates, or what it is called on disk moves with it.",
+  "appearance.appNameLabel": "Display name",
+  "appearance.appNameHint": "Up to {max} characters. Type {shipped} to go back to the shipped name.",
+  "appearance.appNameSave": "Save name",
+  "appearance.appNameReset": "Reset to the shipped name",
+  "appearance.appNameStateShipped": "Showing the shipped name, {shipped}.",
+  "appearance.appNameStateCustom": "Showing {name}. The shipped name is {shipped}.",
+  "appearance.appNameEmpty": "Enter a name, or reset to the shipped name.",
+  "appearance.appNameTooLong": "Longer than {max} characters. It will be saved as “{name}”.",
+  "appearance.appNameUnchanged": "That is already the name being shown.",
+  "appearance.appNameSavedNotice": "App name changed",
+  "appearance.appNameSavedBody": "This app now calls itself {name}.",
+  "appearance.appNameResetNotice": "App name reset",
+  "appearance.appNameResetBody": "Back to the shipped name, {shipped}.",
+  "appearance.appNameAlreadyShipped": "Already showing {shipped}",
+  "appearance.appNameWhere": "The name appears in the navigation rail, as the logo's spoken label, in the window title shown in the taskbar and Alt+Tab, and in the first-run welcome.",
+  "appearance.appNameIdentityNote": "Renaming changes what you read and nothing else. The application id, the folder your settings, locks and history live in, the installer and the update feed all keep the shipped name, so a new name cannot lose track of your data.",
+  "appearance.appNameDiagnosticNote": "Diagnostics, crash logs and anything you file as an issue send the shipped name, {shipped}, so whoever reads them knows which software it is.",
+  "appearance.appNameRevisionSet": "Display name set to {name}",
+  "appearance.appNameRevisionReset": "Display name reset to {shipped}",
   // ---- app logo ----
   "appearance.logoTitle": "App logo",
   "appearance.logoSub": "Choose a shipped mark, one of a few built-in badges, or upload your own image.",

@@ -202,6 +202,7 @@ export default defineConfig({
             { label: "opencode", translations: { ko: "opencode", "zh-CN": "opencode", ru: "opencode", ja: "opencode" }, slug: "guides/opencode" },
             { label: "Sidecars: Web Search & Vision", translations: { ko: "사이드카: 웹 검색 & 비전", "zh-CN": "边车：网络搜索与视觉", ru: "Сайдкары: веб-поиск и зрение", ja: "サイドカー: ウェブ検索 & ビジョン" }, slug: "guides/sidecars" },
             { label: "Web Dashboard", translations: { ko: "웹 대시보드", "zh-CN": "网页控制台", ru: "Веб-дашборд", ja: "ウェブダッシュボード" }, slug: "guides/web-dashboard" },
+            { label: "Renaming the app", translations: { ko: "앱 이름 바꾸기", "zh-CN": "重命名应用", ru: "Переименование приложения", ja: "アプリ名の変更" }, slug: "guides/rename-the-app" },
             { label: "Launcher & Terminal", translations: { ko: "런처 & 터미널", "zh-CN": "启动器与终端", ru: "Лаунчер и терминал", ja: "ランチャー & ターミナル" }, slug: "guides/launcher-and-terminal" },
             { label: "Log Files", translations: { ko: "로그 파일", "zh-CN": "日志文件", ru: "Файлы логов", ja: "ログファイル" }, slug: "guides/log-files" },
             { label: "Debug Sandbox", translations: { ko: "디버그 샌드박스", "zh-CN": "调试沙盒", ru: "Отладочная песочница", ja: "デバッグサンドボックス" }, slug: "guides/debug-sandbox" },

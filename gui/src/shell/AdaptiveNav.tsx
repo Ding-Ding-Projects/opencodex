@@ -10,6 +10,7 @@ import { IconMoon, IconPower, IconSun, IconMonitor, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
 import { useAppLogoSrc } from "../theme/use-app-logo";
+import { useAppDisplayName } from "../theme/use-app-name";
 import { useAppearanceTarget } from "./use-appearance-target";
 import { Toggle } from "./m3-ui";
 import { BOTTOM_NAV_PAGES, PAGE_META, PAGE_META_BY_ID, type PageMeta } from "./page-meta";
@@ -114,6 +115,11 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
   const { windowClass, prefs, setPrefs } = usePrefs();
   const t = useT();
   const logoSrc = useAppLogoSrc();
+  // The name the user chose, or the shipped one. Live from the module store
+  // (`theme/app-name.ts`), so a rename repaints the plate without a reload —
+  // and deliberately *only* a name: nothing here can ask it where anything is
+  // stored, because it does not know.
+  const appName = useAppDisplayName();
   const drawerRef = useRef<HTMLElement>(null);
   // Right-click, press-and-hold or Shift+F10 anywhere on the rail restyles it.
   const navAppearance = useAppearanceTarget("navRail");
@@ -277,17 +283,24 @@ export default function AdaptiveNav(props: AdaptiveNavProps) {
           collapsed rail), this image is the *only* thing on the rail naming
           the app, so it carries the real accessible name instead of being
           hidden from assistive technology; the expanded drawer keeps it
-          decorative because the visible "opencodex" text already speaks for it.
+          decorative because the visible name beside it already speaks for it.
+
+          The accessible name takes the *chosen* display name rather than the
+          shipped one, so a rename reaches a screen-reader user at the same
+          moment it reaches everybody else — the collapsed rail is precisely
+          where this label is the only name of the app on screen.
         */}
         <img
           src={logoSrc}
           alt=""
           aria-hidden={showLabels ? "true" : undefined}
-          aria-label={showLabels ? undefined : t("app.logoAria")}
+          aria-label={showLabels ? undefined : t("app.logoAria", { name: appName })}
         />
         {showLabels && (
           <div className="m3-nav-brand-text">
-            <div className="m3-nav-brand-name">opencodex</div>
+            {/* Was the string `opencodex`, hard-coded. It is a label, and every
+                other label in this app is the user's to change. */}
+            <div className="m3-nav-brand-name">{appName}</div>
             <div className="m3-nav-brand-meta">v{version}{port ? ` · :${port}` : ""}</div>
           </div>
         )}

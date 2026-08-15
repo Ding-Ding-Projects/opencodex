@@ -234,6 +234,22 @@ export const APPEARANCE_SETTINGS = registerSettingsPage({
         "appearance.logoPresetOutline",
       ],
     },
+    // Renaming the app is the setting somebody looks for by the *word* rather
+    // than by the screen — "rename", "title", "call it something else" — and
+    // none of those words appear in the label. The keywords carry them, so the
+    // palette and every settings search bar in the app find the row from any
+    // of them rather than only from "App name".
+    {
+      id: "appName",
+      tkey: "appearance.appNameTitle",
+      descKey: "appearance.appNameSub",
+      keywordKeys: [
+        "appearance.appNameLabel",
+        "appearance.appNameSave",
+        "appearance.appNameReset",
+        "appearance.appNameWhere",
+      ],
+    },
   ],
 });
 
