@@ -1824,6 +1824,52 @@ export const M3_EN = {
   "auth.export.noEntries": "There is nothing to export yet.",
   "auth.export.count": "{count} account(s)",
   "auth.export.failed": "Export failed",
+
+  // ---- Secret & display-name history: docs/FEATURE-INVENTORY.md's
+  // "Secret and display-name mutation history" contract. Every TOTP-entry
+  // mutation and every display-name change lands here as a redacted,
+  // encrypted-where-sensitive commit in its own local git repository — see
+  // src/lib/secret-history.ts. ----
+  "secretHistory.openButton": "History…",
+  "secretHistory.title": "Secret & display-name history",
+  "secretHistory.sub": "Every account added, changed or removed, and every rename of this app, recorded in its own local, encrypted history. Opening it, restoring, exporting and changing how long it keeps history each need the password or code you set for it here.",
+  "secretHistory.opened": "Unlocked",
+  "secretHistory.search": "Search history",
+  "secretHistory.empty": "Nothing recorded yet",
+  "secretHistory.emptyBody": "The first account you add, change or remove — or the first time you rename this app — appears here.",
+  "secretHistory.diff": "What this entry recorded",
+  "secretHistory.noSnapshot": "This entry has no recoverable snapshot — the vault key was unavailable when it was written, so only its metadata was recorded.",
+  "secretHistory.restore": "Restore this revision",
+  "secretHistory.restored": "Restored",
+  "secretHistory.export": "Export redacted history",
+  "secretHistory.exportButton": "Export redacted history…",
+  "secretHistory.exported": "Exported",
+  "secretHistory.retention": "Keep history for",
+  "secretHistory.retentionForever": "Forever",
+  "secretHistory.retentionCurrent": "Currently keeping the last {days} day(s). Older entries are pruned the moment this changes.",
+  "secretHistory.retentionApply": "Apply",
+  "secretHistory.retentionApplied": "Retention applied — {pruned} old entr(y/ies) pruned.",
+  "secretHistory.reverifyPrompt": "Type your password or code again to {action}.",
+  "secretHistory.reverifyConfirm": "Confirm",
+  "secretHistory.recoveryNotice": "This change was made, but recording it in the history failed ({reason}). It will not appear in the list above.",
+  "secretHistory.action.created": "Account added",
+  "secretHistory.action.updated": "Account changed",
+  "secretHistory.action.removed": "Account removed",
+  "secretHistory.action.bulkRemoved": "Accounts removed",
+  "secretHistory.action.renamed": "App renamed",
+  "secretHistory.action.reset": "App name reset",
+  "secretHistory.action.restored": "Restored from history",
+  "secretHistory.action.retentionChanged": "Retention changed",
+  "secretHistory.summaryDisplayName": "{previous} → {next}",
+  "secretHistory.summaryRetentionDays": "Kept for {days} day(s)",
+  "secretHistory.summaryRetentionForever": "Kept forever",
+  "secretHistory.summaryEntryCount": "{count} account(s) in this snapshot",
+  "secretHistory.errors.loadFailed": "Could not load the history.",
+  "secretHistory.errors.restoreFailed": "Could not restore that revision.",
+  "secretHistory.errors.exportFailed": "Could not export the history.",
+  "secretHistory.errors.retentionFailed": "Could not change how long history is kept.",
+  "secretHistory.errors.retentionInvalid": "Enter a whole number of days, or leave it blank to keep history forever.",
+
   // ---- School Mode: the universal, cross-app, rename-able, English-forcing
   // toggle. Its own copy is subject to the same forced-English rendering as
   // everything else while it is active — see resolve.ts's translate(). ----

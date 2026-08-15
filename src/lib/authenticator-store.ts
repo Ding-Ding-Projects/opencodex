@@ -292,3 +292,20 @@ export function removeAuthenticatorGroup(id: string): boolean {
 export function resetAuthenticatorStoreForTests(): void {
   if (existsSync(getAuthenticatorStorePath())) persist({ ...EMPTY, entries: [], groups: [] });
 }
+
+/**
+ * Replaces the entire store — both entries (secrets included) and groups —
+ * in one write. The one legitimate caller is a secret-history restore
+ * (`secret-history.ts`'s encrypted snapshot decrypts back to exactly this
+ * shape): a mutation route, never a normal edit path, which is why this is
+ * named "replace" rather than "update" and takes the whole file rather than
+ * a patch. Defensively normalized exactly like `loadFile()`, so a snapshot
+ * decrypted from an older or hand-poked commit degrades safely per-field
+ * instead of writing back something this store could not have produced
+ * itself.
+ */
+export function replaceAuthenticatorState(entries: unknown, groups: unknown): { entries: AuthenticatorEntry[]; groups: AuthenticatorGroup[] } {
+  const file = normalizeFile({ version: 1, entries, groups });
+  persist(file);
+  return { entries: file.entries, groups: file.groups };
+}

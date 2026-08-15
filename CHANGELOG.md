@@ -6,6 +6,10 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- feat(auth): add a password/TOTP-protected, encrypted local history for TOTP-entry and display-name mutations
+
+## Unreleased
+
 - feat(gui): move a tab into a group from an anchored picker
 - docs(gui): document tab groups and the four tab searches
 

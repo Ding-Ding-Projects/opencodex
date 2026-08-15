@@ -158,6 +158,13 @@ export default function AuthenticatorAddDialog({ apiBase, groupId, onClose, onAd
     try {
       const entry = await confirmPendingRegistration(apiBase, pending.pendingId, code.trim());
       notify({ tone: "success", title: t("auth.confirm.added"), body: label });
+      // "Fail-safe and VISIBLE": the account itself is added regardless, but a
+      // history-recording failure gets its own, lower-severity notice rather
+      // than being silently dropped — see docs/FEATURE-INVENTORY.md's
+      // "Secret and display-name mutation history" contract.
+      if (!entry.historyRecorded) {
+        notify({ tone: "warn", title: t("secretHistory.recoveryNotice", { reason: entry.historyReason ?? "" }) });
+      }
       onAdded(entry);
       onClose();
     } catch (err) {

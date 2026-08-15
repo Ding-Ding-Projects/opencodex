@@ -38,6 +38,31 @@ import { useNotifications } from "../../shell/notifications-context";
 import { recordRevision } from "../../shell/revisions";
 import { APP_NAME_MAX_LENGTH, SHIPPED_APP_NAME, cleanAppNameText, sanitizeAppName } from "../../theme/app-name";
 import { useAppName } from "../../theme/use-app-name";
+import { recordDisplayNameHistory } from "../../pages/secret-history-api";
+
+/**
+ * Best-effort, fire-and-forget: the rename itself already committed to
+ * `theme/app-name.ts` before this is ever called, so a failed history commit
+ * must never look like a failed rename. `docs/FEATURE-INVENTORY.md`'s
+ * "Secret and display-name mutation history" row is what this satisfies —
+ * every display-name change lands in `secret-history.ts`'s own encrypted git
+ * repository, redacted (a display name is not a secret, so nothing here is
+ * ever encrypted) rather than silently going unrecorded.
+ */
+function recordRenameHistory(action: "renamed" | "reset", previous: string, next: string): void {
+  // Same fallback `VersionHistory.tsx` uses when it is not handed an
+  // `apiBase` prop either: the dashboard's own dev/build-time API origin.
+  const apiBase = import.meta.env.VITE_API_BASE || "";
+  void recordDisplayNameHistory(apiBase, { action, previous, next }).then(result => {
+    if (!result.historyRecorded) {
+      // A quiet console note only — the user-facing notification already sent
+      // by the caller (recordRevision + notify) is about the rename itself,
+      // which unambiguously succeeded; this is a secondary, lower-severity
+      // fact that does not deserve its own toast on top of that one.
+      console.warn(`opencodex: display-name change was not recorded in the secret history (${result.historyReason ?? "unknown reason"}).`);
+    }
+  });
+}
 
 const FIELD_ID = "ocx-app-name";
 const STATUS_ID = "ocx-app-name-state";
@@ -98,6 +123,7 @@ export function AppNameCard() {
         summary: t("appearance.appNameRevisionReset", { shipped: SHIPPED_APP_NAME }),
         before: result.previousDisplay,
       });
+      recordRenameHistory("reset", result.previousDisplay, result.display);
       notify({
         tone: "info",
         title: t("appearance.appNameResetNotice"),
@@ -111,6 +137,7 @@ export function AppNameCard() {
       summary: t("appearance.appNameRevisionSet", { name: result.display }),
       before: result.previousDisplay,
     });
+    recordRenameHistory("renamed", result.previousDisplay, result.display);
     notify({
       tone: "success",
       title: t("appearance.appNameSavedNotice"),
@@ -133,6 +160,7 @@ export function AppNameCard() {
       summary: t("appearance.appNameRevisionReset", { shipped: SHIPPED_APP_NAME }),
       before: result.previousDisplay,
     });
+    recordRenameHistory("reset", result.previousDisplay, result.display);
     notify({
       tone: "info",
       title: t("appearance.appNameResetNotice"),

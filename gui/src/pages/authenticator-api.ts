@@ -130,7 +130,19 @@ export function importPendingRegistration(
   return post(apiBase, "/api/host/authenticator/pending", { mode: "import", ...input }, "authenticator.errors.importFailed");
 }
 
-export async function confirmPendingRegistration(apiBase: string, pendingId: string, code: string): Promise<AuthenticatorEntryMeta> {
+/**
+ * Whether a mutation's secret-history commit actually landed — see
+ * `docs/FEATURE-INVENTORY.md`'s "Secret and display-name mutation history"
+ * contract's "fail-safe and VISIBLE" requirement. Every mutation route below
+ * carries this alongside its normal result so a caller can notify rather
+ * than silently claim the change was recorded when it was not.
+ */
+export interface HistoryOutcome {
+  historyRecorded: boolean;
+  historyReason?: string;
+}
+
+export async function confirmPendingRegistration(apiBase: string, pendingId: string, code: string): Promise<AuthenticatorEntryMeta & HistoryOutcome> {
   const res = await fetch(`${apiBase}/api/host/authenticator/pending/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -140,8 +152,8 @@ export async function confirmPendingRegistration(apiBase: string, pendingId: str
     const body = await res.json().catch(() => ({})) as { error?: string; reason?: ConfirmFailureReason; attemptsRemaining?: number };
     throw new ConfirmError(body.error ?? "authenticator.confirm.wrongCode", body.reason ?? "wrong-code", body.attemptsRemaining);
   }
-  const data = await res.json() as { entry: AuthenticatorEntryMeta };
-  return data.entry;
+  const data = await res.json() as { entry: AuthenticatorEntryMeta } & HistoryOutcome;
+  return { ...data.entry, historyRecorded: data.historyRecorded, historyReason: data.historyReason };
 }
 
 export async function discardPendingRegistration(apiBase: string, pendingId: string): Promise<void> {
@@ -155,22 +167,24 @@ export interface EntryPatch {
   order?: number;
 }
 
-export async function patchAuthenticatorEntry(apiBase: string, id: string, patch: EntryPatch): Promise<AuthenticatorEntryMeta> {
+export async function patchAuthenticatorEntry(apiBase: string, id: string, patch: EntryPatch): Promise<AuthenticatorEntryMeta & HistoryOutcome> {
   const res = await fetch(`${apiBase}/api/host/authenticator/entry?id=${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
-  const data = await readJsonOrThrow<{ entry: AuthenticatorEntryMeta }>(res, "authenticator.errors.saveFailed");
-  return data!.entry;
+  const data = await readJsonOrThrow<{ entry: AuthenticatorEntryMeta } & HistoryOutcome>(res, "authenticator.errors.saveFailed");
+  return { ...data!.entry, historyRecorded: data!.historyRecorded, historyReason: data!.historyReason };
 }
 
-export async function deleteAuthenticatorEntry(apiBase: string, id: string): Promise<boolean> {
+export async function deleteAuthenticatorEntry(apiBase: string, id: string): Promise<{ ok: boolean } & HistoryOutcome> {
   const res = await fetch(`${apiBase}/api/host/authenticator/entry?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-  return res.ok;
+  if (!res.ok) return { ok: false, historyRecorded: false };
+  const data = await res.json().catch(() => ({})) as HistoryOutcome;
+  return { ok: true, historyRecorded: data.historyRecorded ?? false, historyReason: data.historyReason };
 }
 
-export async function bulkDeleteAuthenticatorEntries(apiBase: string, ids: string[]): Promise<{ removed: string[]; skipped: string[] }> {
+export async function bulkDeleteAuthenticatorEntries(apiBase: string, ids: string[]): Promise<{ removed: string[]; skipped: string[] } & HistoryOutcome> {
   return post(apiBase, "/api/host/authenticator/bulk-delete", { ids }, "authenticator.errors.bulkDeleteFailed");
 }
 
