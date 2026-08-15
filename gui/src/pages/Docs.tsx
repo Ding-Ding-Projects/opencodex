@@ -32,7 +32,7 @@ import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { Chip, Empty, TextInput } from "../shell/m3-ui";
-import { IconSearch } from "../icons";
+import { IconAlert, IconMenuBook, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import type { TKey } from "../i18n/shared";
 
@@ -167,7 +167,7 @@ export default function Docs() {
           </p>
 
           {grouped.length === 0 ? (
-            <Empty title={t("docs.noResults")}>{t("docs.noResultsBody")}</Empty>
+            <Empty title={t("docs.noResults")} icon={IconSearch}>{t("docs.noResultsBody")}</Empty>
           ) : (
             grouped.map(({ category, articles }) => (
               <div key={category} className="m3-docs-group">
@@ -194,7 +194,7 @@ export default function Docs() {
 
         <div className="m3-docs-article">
           {notFoundHref ? (
-            <Empty title={t("docs.linkNotFound")}>{t("docs.linkNotFoundBody", { href: notFoundHref })}</Empty>
+            <Empty title={t("docs.linkNotFound")} icon={IconAlert}>{t("docs.linkNotFoundBody", { href: notFoundHref })}</Empty>
           ) : selected ? (
             <article aria-labelledby="m3-docs-article-title">
               <h1 id="m3-docs-article-title" className="m3-docs-title">{selected.title}</h1>
@@ -204,7 +204,7 @@ export default function Docs() {
               </div>
             </article>
           ) : (
-            <Empty title={t("docs.empty")}>{t("docs.emptyBody")}</Empty>
+            <Empty title={t("docs.empty")} icon={IconMenuBook}>{t("docs.emptyBody")}</Empty>
           )}
         </div>
       </div>

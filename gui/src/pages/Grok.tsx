@@ -3,7 +3,7 @@ import { Button, Card, Chip, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconSearch } from "../icons";
+import { IconBolt, IconSearch } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
 import { useT, type TKey } from "../i18n/shared";
@@ -316,7 +316,7 @@ export default function Grok({ apiBase }: { apiBase: string }) {
       {!status?.present && (
         // Absent is a normal state, not a failure: Grok simply is not wired up yet. Name the
         // action that wires it rather than leaving an empty panel.
-        <Empty title={t("grok.notConfiguredTitle")}>
+        <Empty title={t("grok.notConfiguredTitle")} icon={IconBolt}>
           {t("grok.notConfiguredHint")}
           <br />
           <code style={monoStyle}>{status?.configPath}</code>
@@ -370,7 +370,7 @@ export default function Grok({ apiBase }: { apiBase: string }) {
         </>
       )}
 
-      {candidates.length > 0 && !anyVisible && <Empty title={t("grok.noMatch")} />}
+      {candidates.length > 0 && !anyVisible && <Empty title={t("grok.noMatch")} icon={IconSearch} />}
 
       {candidates.length > 0 && groupViews.map(({ id: groupId, tkey, view }) => {
         if (view.total === 0) return null;

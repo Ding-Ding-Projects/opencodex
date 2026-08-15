@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Chip, Empty, Field, TextInput, Toggle } from "../shell/m3-ui";
+import { IconDevices, IconSearch } from "../icons";
 import { useKeyedClientResource } from "../client-resource";
 import { readJsonIfOk } from "../fetch-json";
 import { useT } from "../i18n/shared";
@@ -746,9 +747,9 @@ export default function Network({ apiBase }: { apiBase: string }) {
         ) : history.data === undefined ? (
           <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
         ) : history.data.length === 0 ? (
-          <Empty title={t("network.historyEmpty")}>{t("network.historyEmptyBody")}</Empty>
+          <Empty title={t("network.historyEmpty")} icon={IconDevices}>{t("network.historyEmptyBody")}</Empty>
         ) : historyRows && historyRows.length === 0 ? (
-          <Empty title={t("network.historyNoMatch")}>{t("network.historyNoMatchBody")}</Empty>
+          <Empty title={t("network.historyNoMatch")} icon={IconSearch}>{t("network.historyNoMatchBody")}</Empty>
         ) : (
           <ul className="m3-stack m3-history-list">
             {(historyRows ?? []).map(entry => (

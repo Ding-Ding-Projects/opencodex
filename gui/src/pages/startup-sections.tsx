@@ -10,7 +10,7 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n } from "../i18n/shared";
 import { IconAlert, IconCheck, IconDownload, IconPower, IconTerminal, IconX } from "../icons";
-import { Button, Card, Dialog } from "../shell/m3-ui";
+import { BADGE_TONE_STYLE, Button, Card, Dialog } from "../shell/m3-ui";
 import type {
   StartupHealthData,
   StartupInstallAction,
@@ -44,10 +44,16 @@ type Tone = "ok" | "warn" | "neutral";
  */
 type MatchFn = (id: string) => boolean;
 
+/**
+ * Sourced from the shared `BADGE_TONE_STYLE` map rather than declared here —
+ * this used to hand-roll its own `neutral` as `surface-container-low` /
+ * `on-surface`, a third colour pair for the one status Changelog's badge and
+ * ClaudeDesktop's badges also call "neutral". See `shell/m3-ui.tsx`.
+ */
 const TONE_SURFACE: Record<Tone, CSSProperties> = {
-  ok: { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
-  warn: { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" },
-  neutral: { background: "var(--m3-surface-container-low)", color: "var(--m3-on-surface)" },
+  ok: BADGE_TONE_STYLE.ok,
+  warn: BADGE_TONE_STYLE.warn,
+  neutral: BADGE_TONE_STYLE.neutral,
 };
 
 const heroStyle = (tone: Tone): CSSProperties => ({

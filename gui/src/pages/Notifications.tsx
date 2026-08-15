@@ -7,11 +7,12 @@
  */
 
 import { useMemo, useState } from "react";
-import { Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import type { CSSProperties } from "react";
+import { BADGE_TONE_STYLE, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconAlert, IconCheck, IconInfo, IconSearch } from "../icons";
+import { IconAlert, IconBell, IconCheck, IconInfo, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
 import { useNotifications, type NoticeTone } from "../shell/notifications-context";
 import type { TKey } from "../i18n/shared";
@@ -33,30 +34,21 @@ const TONES: { tone: NoticeTone | "all"; tkey: TKey }[] = [
 
 /**
  * Leading tonal chip per tone. Status colours are functional data colours, so
- * they keep their own roles instead of collapsing onto the primary palette.
+ * they keep their own roles instead of collapsing onto the primary palette —
+ * sourced from the shared `BADGE_TONE_STYLE` map, not declared here: this
+ * used to pair "info" with `surface-container-high` (not `-highest`), a third
+ * spelling of the "neutral" pair that not even matched the app's other two.
  *
  * `nameKey` is the singular tone name shown beside each row's timestamp. The
  * chip alone encoded the tone in colour and glyph only, which reads as nothing
  * at all to a screen reader and as very little to anyone who cannot separate
  * the error and warning containers — so the tone is now also plain text.
  */
-const TONE_CHIP: Record<NoticeTone, { bg: string; fg: string; nameKey: TKey; Icon: typeof IconInfo }> = {
-  error: {
-    bg: "var(--m3-error-container)", fg: "var(--m3-on-error-container)",
-    nameKey: "notif.toneErrorOne", Icon: IconAlert,
-  },
-  warn: {
-    bg: "var(--m3-warn-container)", fg: "var(--m3-on-warn-container)",
-    nameKey: "notif.toneWarnOne", Icon: IconAlert,
-  },
-  success: {
-    bg: "var(--m3-ok-container)", fg: "var(--m3-on-ok-container)",
-    nameKey: "notif.toneSuccessOne", Icon: IconCheck,
-  },
-  info: {
-    bg: "var(--m3-surface-container-high)", fg: "var(--m3-on-surface-variant)",
-    nameKey: "notif.toneInfoOne", Icon: IconInfo,
-  },
+const TONE_CHIP: Record<NoticeTone, { style: CSSProperties; nameKey: TKey; Icon: typeof IconInfo }> = {
+  error: { style: BADGE_TONE_STYLE.error, nameKey: "notif.toneErrorOne", Icon: IconAlert },
+  warn: { style: BADGE_TONE_STYLE.warn, nameKey: "notif.toneWarnOne", Icon: IconAlert },
+  success: { style: BADGE_TONE_STYLE.ok, nameKey: "notif.toneSuccessOne", Icon: IconCheck },
+  info: { style: BADGE_TONE_STYLE.neutral, nameKey: "notif.toneInfoOne", Icon: IconInfo },
 };
 
 export default function NotificationsPage() {
@@ -173,10 +165,10 @@ export default function NotificationsPage() {
       */}
       {error ? null : rows.length === 0 && history.length > 0 ? (
         <div role="status">
-          <Empty title={t("notif.noMatch")} />
+          <Empty title={t("notif.noMatch")} icon={IconSearch} />
         </div>
       ) : rows.length === 0 ? (
-        <Empty title={t("notif.empty")}>{t("notif.emptyBody")}</Empty>
+        <Empty title={t("notif.empty")} icon={IconBell}>{t("notif.emptyBody")}</Empty>
       ) : (
         <ul style={{ display: "grid", gap: 8, margin: 0, padding: 0, listStyle: "none" }}>
           {rows.map(n => {
@@ -189,7 +181,7 @@ export default function NotificationsPage() {
               }}>
                 <span style={{
                   flex: "0 0 auto", display: "grid", placeItems: "center", width: 40, height: 40,
-                  borderRadius: "var(--r-pill)", background: chip.bg, color: chip.fg,
+                  borderRadius: "var(--r-pill)", ...chip.style,
                 }} aria-hidden="true">
                   <chip.Icon width={22} height={22} />
                 </span>

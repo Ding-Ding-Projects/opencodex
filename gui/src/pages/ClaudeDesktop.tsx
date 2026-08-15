@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
 import { IconChevron, IconSearch } from "../icons";
-import { Banner, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { BADGE_TONE_STYLE, Banner, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
 import { useNotifications } from "../shell/notifications-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
@@ -75,7 +75,16 @@ interface DesktopResponse {
 
 type PendingAction = "save" | "apply" | null;
 
-/** Tonal badge containers for the model rows (M3 status vocabulary). */
+/**
+ * Tonal badge containers for the model rows. Layout is local to this dense
+ * row (the shared `Badge` component's own chrome is identical, but these
+ * spans also carry legacy `.claude-*`/`.badge-*` classNames the disclosure
+ * tests query directly, so they stay plain spans rather than `<Badge>`).
+ * Colour comes from the single shared map, not a local guess: this used to
+ * declare its own "neutral" as `secondary-container`, which is why the 1M
+ * chip and the effort-supported badge rendered a different colour than every
+ * other "neutral" pill in the app. See `shell/m3-ui.tsx`'s `BADGE_TONE_STYLE`.
+ */
 const BADGE_BASE = {
   display: "inline-flex",
   alignItems: "center",
@@ -89,12 +98,11 @@ const BADGE_BASE = {
 } as const;
 
 const TONAL_BADGE = {
-  ok: { ...BADGE_BASE, background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
-  muted: { ...BADGE_BASE, background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
-  neutral: { ...BADGE_BASE, background: "var(--m3-secondary-container)", color: "var(--m3-on-secondary-container)" },
+  ok: { ...BADGE_BASE, ...BADGE_TONE_STYLE.ok },
+  neutral: { ...BADGE_BASE, ...BADGE_TONE_STYLE.neutral },
   // Prototype's "accent" badge. A container pair, not primary-on-primary: the Default
   // badge sits inside a row of tonal chips and a filled one reads as a button.
-  accent: { ...BADGE_BASE, background: "var(--m3-primary-container)", color: "var(--m3-on-primary-container)" },
+  accent: { ...BADGE_BASE, ...BADGE_TONE_STYLE.accent },
 } as const;
 
 /** M3 tonal status container; the tone-specific colours are applied per render. */
@@ -890,12 +898,12 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       {/* Tonal containers per the M3 status vocabulary. The legacy class names
                           stay: they are the row's a11y/test contract, only the paint changes. */}
                       {model.supports1m === true && <span className="claude-1m-chip" style={TONAL_BADGE.neutral}>{t("claudeDesktop.supports1m")}</span>}
-                      {model.effortSupported === false && <span className="claude-effort-badge off" style={TONAL_BADGE.muted}>{t("claudeDesktop.effort.displayOnly")}</span>}
+                      {model.effortSupported === false && <span className="claude-effort-badge off" style={TONAL_BADGE.neutral}>{t("claudeDesktop.effort.displayOnly")}</span>}
                       {model.effortSupported === true && <span className="claude-effort-badge on" style={TONAL_BADGE.neutral}>{t("claudeDesktop.effort.supported")}</span>}
                       {profile.defaults[family] === model.route && (
                         <span className="claude-row-default" style={TONAL_BADGE.accent}>{t("claudeDesktop.defaultBadge")}</span>
                       )}
-                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`} style={model.available ? TONAL_BADGE.ok : TONAL_BADGE.muted}>
+                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`} style={model.available ? TONAL_BADGE.ok : TONAL_BADGE.neutral}>
                         {model.available ? t("claudeDesktop.available") : t("claudeDesktop.unavailable")}
                       </span>
                     </button>

@@ -4,7 +4,7 @@ import { Button, Card, Chip, Empty, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconArrowUp, IconArrowDown, IconX, IconCheck, IconPlus, IconSearch, IconInfo } from "../icons";
+import { IconArrowUp, IconArrowDown, IconBot, IconBoxes, IconX, IconCheck, IconPlus, IconSearch, IconInfo } from "../icons";
 import { useT } from "../i18n/shared";
 import { Trans } from "../i18n/provider";
 import { modelLabel } from "../model-display";
@@ -242,7 +242,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
         </div>
 
         {chosen.length === 0 ? (
-          <Empty title={t("sub.noneSelected")} />
+          <Empty title={t("sub.noneSelected")} icon={IconBot} />
         ) : (
           <div style={TABLE_SURFACE}>
             {chosen.map((m, i) => (
@@ -370,7 +370,10 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
           {filtered.length === 0 && (
             /* An empty catalog and a query that matched nothing are different facts — saying
                "log into a provider" while 300 models sit behind the filter is simply wrong. */
-            <Empty title={available.length === 0 ? t("sub.noModels") : t("models.noMatch")} />
+            <Empty
+              title={available.length === 0 ? t("sub.noModels") : t("models.noMatch")}
+              icon={available.length === 0 ? IconBoxes : IconSearch}
+            />
           )}
         </div>
       </Card>

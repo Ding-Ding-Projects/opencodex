@@ -4,7 +4,7 @@ import { Button, Chip, Dialog, Empty, Field, Segmented, TextInput, Toggle } from
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
-import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh } from "../icons";
+import { IconAlert, IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh, IconTrash } from "../icons";
 import { formatBytes } from "../format-bytes";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
@@ -926,7 +926,7 @@ function QuarantineTrashPanel({
       {loading ? (
         <p className="m3-card-sub" style={CARD_BODY}>{t("storage.trash.loading")}</p>
       ) : entries.length === 0 ? (
-        <div style={CARD_BODY}><Empty title={t("storage.trash.empty")} /></div>
+        <div style={CARD_BODY}><Empty title={t("storage.trash.empty")} icon={IconTrash} /></div>
       ) : (
         <div style={TABLE_WRAP}>
           <table className="m3-table">
@@ -1662,10 +1662,10 @@ export default function Storage({ apiBase }: { apiBase: string }) {
       {loading && !data ? (
         <Empty title={t("storage.loading")} />
       ) : failed ? (
-        <Empty title={t("storage.error")} />
+        <Empty title={t("storage.error")} icon={IconAlert} />
       ) : empty ? (
         <>
-          <Empty title={t("storage.empty")} />
+          <Empty title={t("storage.empty")} icon={IconHardDrive} />
           <AutoCleanupPolicyPanel
             apiBase={apiBase}
             locale={locale}
