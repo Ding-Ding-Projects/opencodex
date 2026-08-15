@@ -669,6 +669,7 @@ const ROUTE_HEADINGS: Record<string, string> = {
   pdf: "PDF tools",
   converter: "File converter",
   ollama: "Ollama",
+  "ollama-chat": "Ollama Chat",
   downloads: "Downloads",
   "codex-auth": "Codex Auth",
   api: "API",
