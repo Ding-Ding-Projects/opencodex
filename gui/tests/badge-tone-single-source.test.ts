@@ -36,6 +36,33 @@ import { fileURLToPath } from "node:url";
  * module" on purpose, per its own header comment) for no visual change. It
  * gets its own parity check instead of a free pass — if it and the canonical
  * map are ever edited out of sync, that check fails.
+ *
+ * A follow-up pass swept every other screen for `background: "var(--m3-*-container…)"`
+ * (LanguageVoice, Usage, history-payload, VersionHistory, AppLogoPicker,
+ * SecretHistoryDialog, api-keys-panels, Storage, claude-code-sections,
+ * Subagents) looking for the same drift shape, then ran this file's own
+ * `handRolledPairSpan` proximity detector against all ten by hand. It found
+ * four spans that technically pair a canonical tone's two role tokens —
+ * a ternary'd "neutral" pair in LanguageVoice's funny-level ladder, a hand-rolled
+ * "error" pair in VersionHistory's server-failure alert, and hand-rolled
+ * "error"/"accent" pairs in api-keys-panels' delete-dialog medallion and
+ * reveal-once-key card — and rejected every one, because none of them is a
+ * small pill-shaped status label: they are a selected/unselected list row, a
+ * full-width `role="alert"` banner, a 56px icon medallion, and a whole
+ * `<Card>` background. None belongs behind `Badge`, so `CALL_SITES` above
+ * gains no new entries from this pass. The rest of those ten files' container
+ * backgrounds are stat tiles, progress-bar tracks, code/JSON panels, crop
+ * previews, preset-selection tiles and list panels — none of them tone-keyed
+ * at all. One further finding, `claude-code-sections.tsx`'s alias pill, *is*
+ * a pill but is styled on `--m3-secondary-container`, which is not one of
+ * `BADGE_TONE_STYLE`'s five tones — it is the prototype's "tonal chip" look,
+ * a different, deliberate design decision rather than drift from this map.
+ *
+ * The VersionHistory.tsx banner is worth a second look under a different
+ * task: it hand-rolls exactly the same role-token pair `Banner tone="error"`
+ * already renders via CSS classes in `m3-ui.tsx`, so it is real duplication —
+ * just not of `BADGE_TONE_STYLE`, and not in badge shape, so it sits outside
+ * this guard's scope.
  */
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
