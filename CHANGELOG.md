@@ -3,6 +3,10 @@
 Generated from release tags by `bun scripts/generate-changelog.ts`.
 Preview tags are omitted. The dashboard reads this file through `/api/changelog`.
 
+## Unreleased
+
+- fix(test): read GUI endpoints from call sites, not documentation prose
+
 ## 2.7.42 — 2026-07-28
 
 - fix(ci): tighten issue-quality soft-pass structure gate
