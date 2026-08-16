@@ -246,8 +246,9 @@ The other six PDF operations (split, merge, extract, reorder, metadata read/writ
 kinds — each needs parameters (page ranges, multiple sources, a metadata-fields object) this queue's
 one-source/one-destination item shape does not carry without reshaping it per operation. YAML and
 TOML support, and Images/Audio/Video/Code-Text/Binary-Encodings adapters generally, also remain
-unbuilt. No page in the app has a native file/folder browse dialog yet, including the queue's own
-source/destination fields. `docs/FEATURE-INVENTORY.md` records the whole of this as real, scoped,
+unbuilt. Every single-path field — including the queue's own source and destination — now carries
+a native Browse control beside its text box; the two comma-separated multi-path fields on the PDF
+page do not, since a single-file picker does not fit a list. `docs/FEATURE-INVENTORY.md` records the whole of this as real, scoped,
 future work rather than implying it is done.
 
 ## Suggested articles

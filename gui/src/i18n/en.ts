@@ -124,6 +124,11 @@ export const en = {
   "dash.providers": "Providers",
   "dash.tokens30d": "Tokens (30d)",
   "dash.coverage": "{pct} coverage",
+  // Native file/folder picker beside every path text box (components/PathInput.tsx).
+  "path.browseFile": "Browse…",
+  "path.browseFolder": "Browse folder…",
+  "path.browsing": "Opening…",
+  "path.browseFailed": "Could not open the file picker.",
   // memory observability card (read-only /api/system/memory)
   "dash.mem.title": "Memory observability",
   "dash.mem.hint": "Read-only runtime diagnostics. Observed memory is max(RSS, external, ArrayBuffers) so Windows working-set trimming does not hide committed retention.",

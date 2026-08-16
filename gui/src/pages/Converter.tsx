@@ -35,17 +35,25 @@
  * hidden. See `src/lib/converter/registry.ts` for the reasoning behind each
  * one.
  *
- * ## The missing native browse control is not specific to this page
+ * ## Path fields carry a native browse control
  *
- * Same pre-existing, cross-cutting gap `PdfTools.tsx` already documents: no
- * page in this app has a native file/folder browse dialog yet. The source and
- * destination fields here are plain absolute-path text inputs for the same
- * reason.
+ * All five of them, via `components/PathInput.tsx` over the main process's
+ * `dialog:open-path` channel. The mode is picked from what the field actually
+ * holds rather than applied uniformly: an open-file picker for the two source
+ * fields, a save picker for a single-file destination, and a folder picker for
+ * a ZIP extract, which writes into a directory. The queue's destination
+ * switches between the last two on the same condition its hint and placeholder
+ * already switch on, so the three cannot disagree about what the field means.
+ *
+ * A typed path and a browsed one are the same value and get the same
+ * validation — free text stays available for whatever a picker cannot
+ * anticipate.
  */
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Badge, Banner, Button, Card, Empty, Field, Segmented, SelectField, Slider, TextInput, Toggle } from "../shell/m3-ui";
+import { Badge, Banner, Button, Card, Empty, Field, Segmented, SelectField, Slider, Toggle } from "../shell/m3-ui";
 import type { BadgeTone } from "../shell/badge-tone";
+import { PathInput } from "../components/PathInput";
 import { SearchField } from "../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { useI18n, type TFn, type TKey } from "../i18n/shared";
@@ -648,13 +656,12 @@ export default function Converter({ apiBase }: { apiBase: string }) {
     <div className="m3-stack">
       <Card title={t("converter.title")} subtitle={t("converter.subtitle")}>
         <Field label={t("converter.sourceLabel")} hint={t("converter.sourceHint")} id="converter-source">
-          <TextInput
+          <PathInput
             id="converter-source"
             value={sourcePath}
-            onChange={e => setSourcePath(e.target.value)}
+            onChange={setSourcePath}
+            mode="file"
             placeholder={t("converter.sourcePlaceholder")}
-            spellCheck={false}
-            autoComplete="off"
           />
         </Field>
         <div className="m3-row">
@@ -700,13 +707,12 @@ export default function Converter({ apiBase }: { apiBase: string }) {
                 {detectedFormat?.id === "zip" && detectedFormat.bundled && (
                   <div className="m3-stack">
                     <Field label={t("converter.destinationLabel")} hint={t("converter.destinationHintZip")} id="converter-destination-zip">
-                      <TextInput
+                      <PathInput
                         id="converter-destination-zip"
                         value={destinationPath}
-                        onChange={e => setDestinationPath(e.target.value)}
+                        onChange={setDestinationPath}
+                        mode="directory"
                         placeholder={t("converter.destinationPlaceholderZip")}
-                        spellCheck={false}
-                        autoComplete="off"
                       />
                     </Field>
                     <div className="m3-row">
@@ -733,13 +739,12 @@ export default function Converter({ apiBase }: { apiBase: string }) {
                           />
                         </Field>
                         <Field label={t("converter.destinationLabel")} hint={t("converter.destinationHintStructured")} id="converter-destination-structured">
-                          <TextInput
+                          <PathInput
                             id="converter-destination-structured"
                             value={destinationPath}
-                            onChange={e => setDestinationPath(e.target.value)}
+                            onChange={setDestinationPath}
+                            mode="save"
                             placeholder={t("converter.destinationPlaceholderStructured")}
-                            spellCheck={false}
-                            autoComplete="off"
                           />
                         </Field>
                         {targetFormatEntry?.lossy && (
@@ -786,13 +791,12 @@ export default function Converter({ apiBase }: { apiBase: string }) {
           hint={t("converter.sourceHint")}
           id="converter-queue-source"
         >
-          <TextInput
+          <PathInput
             id="converter-queue-source"
             value={queueDraftSource}
-            onChange={e => setQueueDraftSource(e.target.value)}
+            onChange={setQueueDraftSource}
+            mode="file"
             placeholder={t("converter.sourcePlaceholder")}
-            spellCheck={false}
-            autoComplete="off"
           />
         </Field>
 
@@ -801,13 +805,16 @@ export default function Converter({ apiBase }: { apiBase: string }) {
           hint={queueDraftKind === "zip-extract" ? t("converter.destinationHintZip") : t("converter.queue.destinationHint")}
           id="converter-queue-dest"
         >
-          <TextInput
+          {/* A ZIP extract writes into a FOLDER; every other job kind writes one
+              file. Picking the mode off the same condition the hint and the
+              placeholder already switch on keeps the three from disagreeing
+              about what this field holds. */}
+          <PathInput
             id="converter-queue-dest"
             value={queueDraftDest}
-            onChange={e => setQueueDraftDest(e.target.value)}
+            onChange={setQueueDraftDest}
+            mode={queueDraftKind === "zip-extract" ? "directory" : "save"}
             placeholder={queueDraftKind === "zip-extract" ? t("converter.destinationPlaceholderZip") : t("converter.destinationPlaceholderStructured")}
-            spellCheck={false}
-            autoComplete="off"
           />
         </Field>
 

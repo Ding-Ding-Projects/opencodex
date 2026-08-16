@@ -318,6 +318,50 @@ function registerWindowIpc() {
    * "where does this app's data actually live on this machine", which is what
    * lets the recovery copy name the real folder instead of a guessed one.
    */
+  /**
+   * The native file/folder picker, for every path text box in the app.
+   *
+   * Until this existed there was no `showOpenDialog` anywhere in the tree, and
+   * the converter and PDF screens said so to the user's face: "No page in this
+   * app has a native file-browse dialog yet." Honest, and still a text box
+   * asking somebody to type `C:\Users\...\Documents\file` by hand.
+   *
+   * Modal to the window that asked, so it cannot end up behind the app, and
+   * always resolves — a cancelled dialog is `{ ok: true, canceled: true }`
+   * rather than a rejection, because "the user changed their mind" is a normal
+   * outcome and a renderer should not have to tell it apart from a failure by
+   * catching.
+   *
+   * The renderer chooses `mode`, never a raw Electron properties array: this
+   * side decides what the modes mean, so a compromised or simply buggy renderer
+   * cannot ask for a picker this app never intended to offer.
+   */
+  ipcMain.handle("dialog:open-path", async (event, payload) => {
+    const window = windowFor(event);
+    if (!window) return { ok: false, canceled: false, error: "no window" };
+    const mode = payload?.mode === "directory" ? "directory" : payload?.mode === "save" ? "save" : "file";
+    const title = typeof payload?.title === "string" ? payload.title : undefined;
+    // Only ever used as a starting directory. A defaultPath the renderer made
+    // up cannot read anything on its own; the user still has to choose.
+    const defaultPath = typeof payload?.defaultPath === "string" && payload.defaultPath
+      ? payload.defaultPath
+      : undefined;
+    try {
+      if (mode === "save") {
+        const res = await dialog.showSaveDialog(window, { title, defaultPath });
+        return { ok: true, canceled: res.canceled, path: res.canceled ? undefined : res.filePath };
+      }
+      const res = await dialog.showOpenDialog(window, {
+        title,
+        defaultPath,
+        properties: [mode === "directory" ? "openDirectory" : "openFile"],
+      });
+      return { ok: true, canceled: res.canceled, path: res.canceled ? undefined : res.filePaths[0] };
+    } catch (err) {
+      return { ok: false, canceled: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle("appData:path", () => app.getPath("userData"));
   ipcMain.handle("appData:open", async () => {
     const dir = app.getPath("userData");

@@ -76,9 +76,14 @@ page count, per-page size and rotation, metadata and any boundary, then choose a
 destination path(s). Recent operations are kept in a local, searchable history (with the app's usual
 plain-text-or-regex search) so you can see what you have already tried.
 
-There is no native file-browse dialog on this page — or on any page in the app yet, this is a
-cross-cutting gap rather than something specific to PDF tools — so the source and destination
-fields are plain absolute-path text inputs.
+Every path field carries a native **Browse** control beside its text box — an open-file picker for
+the source, a save picker for each destination — and a typed path and a browsed one are the same
+value, validated identically. Free text stays available for whatever a picker cannot anticipate.
+The Browse button appears only inside the desktop shell, since a browser cannot open a native
+dialog; there it is not rendered at all rather than rendered inert.
+
+Two fields are still text-only: `--sources` for merge and `--destinations` for split each hold a
+comma-separated *list* of paths, which a single-file picker does not fit.
 
 ## From the CLI
 

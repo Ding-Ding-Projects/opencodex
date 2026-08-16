@@ -16,18 +16,23 @@
  * server routes and the fs-facing service underneath it do not know or care
  * that this page exists — but it does not attempt to be that converter.
  *
- * ## The missing native browse control is not specific to this page
+ * ## Path fields carry a native browse control
  *
- * The source and destination fields are plain absolute-path text inputs. No
- * page in this app has a native file/folder browse dialog yet — grepping for
- * `showOpenDialog` across the whole tree returns nothing — so this is a
- * pre-existing, cross-cutting gap rather than something invented here.
- * Recording it honestly here rather than pretending a text field satisfies
- * "every path text box carries a native browse control" is the point.
+ * They did not for a long time, and this comment used to say so: grepping for
+ * `showOpenDialog` across the whole tree returned nothing, and the page told
+ * the user as much. `components/PathInput.tsx` closes that — an open-file
+ * picker for the source, a save picker for each single destination, through a
+ * `dialog:open-path` channel the main process owns.
+ *
+ * Two fields here are still text-only, deliberately: `pdf-sources` (merge) and
+ * `pdf-destinations` (split) each hold a comma-separated LIST of paths, and a
+ * single-file picker does not fit a list. Browse-and-append would, and is not
+ * built. Said plainly rather than left as an unexplained inconsistency.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { Banner, Button, Card, Chip, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
+import { PathInput } from "../components/PathInput";
 import { SearchField } from "../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { useT, type TKey } from "../i18n/shared";
@@ -382,13 +387,12 @@ export default function PdfTools({ apiBase }: { apiBase: string }) {
     <div className="m3-stack">
       <Card title={t("pdf.title")} subtitle={t("pdf.subtitle")}>
         <Field label={t("pdf.sourceLabel")} hint={t("pdf.sourceHint")} id="pdf-source">
-          <TextInput
+          <PathInput
             id="pdf-source"
             value={sourcePath}
-            onChange={e => setSourcePath(e.target.value)}
+            onChange={setSourcePath}
+            mode="file"
             placeholder={t("pdf.sourcePlaceholder")}
-            spellCheck={false}
-            autoComplete="off"
           />
         </Field>
 
@@ -441,7 +445,7 @@ export default function PdfTools({ apiBase }: { apiBase: string }) {
               <TextInput id="pdf-sources" value={sources} onChange={e => setSources(e.target.value)} />
             </Field>
             <Field label={t("pdf.destinationLabel")} id="pdf-destination-merge">
-              <TextInput id="pdf-destination-merge" value={destination} onChange={e => setDestination(e.target.value)} />
+              <PathInput id="pdf-destination-merge" value={destination} onChange={setDestination} mode="save" />
             </Field>
           </>
         )}
@@ -452,7 +456,7 @@ export default function PdfTools({ apiBase }: { apiBase: string }) {
               <TextInput id="pdf-pages" value={pages} onChange={e => setPages(e.target.value)} placeholder="3,1,2" />
             </Field>
             <Field label={t("pdf.destinationLabel")} id="pdf-destination-extract">
-              <TextInput id="pdf-destination-extract" value={destination} onChange={e => setDestination(e.target.value)} />
+              <PathInput id="pdf-destination-extract" value={destination} onChange={setDestination} mode="save" />
             </Field>
           </>
         )}
@@ -463,7 +467,7 @@ export default function PdfTools({ apiBase }: { apiBase: string }) {
               <TextInput id="pdf-order" value={order} onChange={e => setOrder(e.target.value)} placeholder="3,1,2" />
             </Field>
             <Field label={t("pdf.destinationLabel")} id="pdf-destination-reorder">
-              <TextInput id="pdf-destination-reorder" value={destination} onChange={e => setDestination(e.target.value)} />
+              <PathInput id="pdf-destination-reorder" value={destination} onChange={setDestination} mode="save" />
             </Field>
           </>
         )}
@@ -475,7 +479,7 @@ export default function PdfTools({ apiBase }: { apiBase: string }) {
             </Field>
             <Toggle on={relative} onChange={setRelative} label={t("pdf.relativeLabel")} />
             <Field label={t("pdf.destinationLabel")} id="pdf-destination-rotate">
-              <TextInput id="pdf-destination-rotate" value={destination} onChange={e => setDestination(e.target.value)} />
+              <PathInput id="pdf-destination-rotate" value={destination} onChange={setDestination} mode="save" />
             </Field>
           </>
         )}

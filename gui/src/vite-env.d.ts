@@ -49,5 +49,25 @@ interface Window {
       /** Resolves only once `/healthz` answers, or explains why it did not. */
       start: () => Promise<{ ok: true; port: number; adopted: boolean } | { ok: false; error: string }>;
     };
+    /**
+     * The native file/folder picker behind every path text box.
+     *
+     * Absent in a browser, where nothing can open one — so `PathInput` renders
+     * the plain text field alone rather than a Browse button guaranteed to do
+     * nothing. `mode` is a word this bridge chooses from, not an Electron
+     * `properties` array; the main process decides what each means.
+     *
+     * Always resolves: a cancelled dialog is `{ ok: true, canceled: true }`,
+     * because changing your mind is a normal outcome rather than a failure to
+     * catch.
+     */
+    dialog?: {
+      openPath: (options: {
+        mode: "file" | "directory" | "save";
+        title?: string;
+        /** Starting directory only — the user still chooses what comes back. */
+        defaultPath?: string;
+      }) => Promise<{ ok: boolean; canceled: boolean; path?: string; error?: string }>;
+    };
   };
 }

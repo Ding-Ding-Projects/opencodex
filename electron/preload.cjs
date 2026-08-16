@@ -97,4 +97,24 @@ contextBridge.exposeInMainWorld("opencodexDesktop", {
   downloads: {
     openPopup: (kind, id) => ipcRenderer.invoke("downloads:open-popup", { kind, id }),
   },
+  /**
+   * The native file/folder picker behind every path text box.
+   *
+   * `mode` is a word this bridge chooses from -- "file", "directory" or "save"
+   * -- not an Electron `properties` array. The main process decides what each
+   * one means, so the renderer cannot ask for a picker the app never intended
+   * to offer, and cannot read anything: the dialog returns only what the user
+   * themselves selected.
+   *
+   * Always resolves. A cancelled dialog comes back `{ ok: true, canceled: true }`
+   * rather than rejecting, because changing your mind is a normal outcome and a
+   * caller should not have to tell it apart from a failure with a try/catch.
+   */
+  dialog: {
+    openPath: (options) => ipcRenderer.invoke("dialog:open-path", {
+      mode: options?.mode,
+      title: options?.title,
+      defaultPath: options?.defaultPath,
+    }),
+  },
 });

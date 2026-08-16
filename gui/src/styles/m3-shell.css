@@ -3005,3 +3005,21 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   margin-top: auto;
   padding-top: var(--sp-2, 12px);
 }
+
+/* Path text box + its native Browse control (components/PathInput.tsx).
+   The button is a fixed-width sibling of a flexible field, so a long path
+   scrolls inside the input instead of squeezing the button to nothing --
+   `min-width: 0` on the input is what allows it to shrink at all (CSS Flexbox
+   §4.5 gives a flex item a content-based minimum otherwise, which is the same
+   rule that put the bottom nav's labels off the edge and crushed the download
+   popup's filename to a 2px sliver). */
+.m3-pathinput { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.m3-pathinput__row { display: flex; align-items: center; gap: var(--sp-2, 12px); width: 100%; }
+.m3-pathinput__row > input { flex: 1 1 auto; min-width: 0; }
+.m3-pathinput__browse { flex: 0 0 auto; white-space: nowrap; }
+.m3-pathinput__error { font-size: var(--t-body-s); color: var(--m3-error); }
+
+/* At phone width the button drops under the field rather than starving it. */
+@media (max-width: 560px) {
+  .m3-pathinput__row { flex-direction: column; align-items: stretch; }
+}
