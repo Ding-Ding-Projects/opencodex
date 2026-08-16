@@ -5,7 +5,7 @@ Two commands, and every one of them runs any LLM you point it at.</p>
 <p align="center">
   <a href="https://x.com/claudeebum"><img src="https://img.shields.io/badge/%40claudeebum-000000?logo=x&logoColor=white" alt="Follow @claudeebum on X"></a>
   <a href="https://www.npmjs.com/package/@bitkyc08/opencodex"><img src="https://img.shields.io/npm/v/@bitkyc08/opencodex?color=cb3837&label=npm&logo=npm" alt="npm version"></a>
-  <a href="https://github.com/lidge-jun/opencodex/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@bitkyc08/opencodex?color=blue" alt="license"></a>
+  <a href="https://github.com/Ding-Ding-Projects/opencodex/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@bitkyc08/opencodex?color=blue" alt="license"></a>
   <img src="https://img.shields.io/node/v/@bitkyc08/opencodex?logo=node.js&label=node" alt="node version">
 </p>
 
@@ -553,9 +553,9 @@ Every capture below is a real screen from the real built dashboard — the same 
 `ocx gui` opens — taken through this project's own capture harness (`scripts/capture-shots.ts` /
 `scripts/capture-menus.ts` / `scripts/design-capture-shots.ts`) rather than mocked up or hand-edited.
 The full-page shots are at commit
-[`824f3d153`](https://github.com/lidge-jun/opencodex/commit/824f3d153), the most recent commit to
+[`824f3d153`](https://github.com/Ding-Ding-Projects/opencodex/commit/824f3d153), the most recent commit to
 touch `assets/shots/`, merged into `main` at the current tip
-[`df4104c22`](https://github.com/lidge-jun/opencodex/commit/df4104c22). Bilingual mode (English +
+[`df4104c22`](https://github.com/Ding-Ding-Projects/opencodex/commit/df4104c22). Bilingual mode (English +
 廣東話) was on for most captures, which is why nearly every label carries both languages side by
 side — that is the shipped bilingual rendering, not a translation artifact.
 
@@ -743,7 +743,7 @@ Maintainer source-of-truth notes live under [`structure/`](./structure). Histori
 Contributor setup lives in [`CONTRIBUTING.md`](./CONTRIBUTING.md), and security reporting guidance
 lives in [`SECURITY.md`](./SECURITY.md).
 Report undisclosed vulnerabilities privately through
-[GitHub private vulnerability reporting](https://github.com/lidge-jun/opencodex/security/advisories/new),
+[GitHub private vulnerability reporting](https://github.com/Ding-Ding-Projects/opencodex/security/advisories/new),
 not a public issue.
 
 The memory-sync guide documents the provenance checks, Windows synchronizer boundary, and read-only
@@ -755,7 +755,7 @@ Source development requires the `bun` CLI on your `PATH`. This is separate from 
 package's bundled Bun runtime, which is used only by installed `ocx` commands.
 
 ```bash
-git clone https://github.com/lidge-jun/opencodex.git
+git clone https://github.com/Ding-Ding-Projects/opencodex.git
 cd opencodex
 bun install
 bun run dev:proxy    # start the proxy API in dev mode

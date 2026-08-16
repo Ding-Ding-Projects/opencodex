@@ -776,6 +776,10 @@ select.input { appearance: none; }
 
 /* ---- misc ---- */
 .muted { color: var(--muted); }
+/* Paired with `.muted` at five call sites (api-keys-panels.tsx, RegexBuilderButton.tsx)
+   for caption-sized helper text, and defined in no stylesheet until now -- so all five
+   rendered dimmed but at full body size, which is not what any of them meant. */
+.small { font-size: var(--t-body-s, 0.8125rem); }
 .faint { color: var(--faint); }
 .row { display: flex; align-items: center; gap: 10px; }
 .spread { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -1202,14 +1206,15 @@ button.prov-account-row.active { cursor: default; }
 .usage-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
 
 /* ── Toggle switch ── */
-.toggle { position: relative; display: inline-block; width: var(--toggle-w); height: var(--toggle-h); flex-shrink: 0; }
-.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-.toggle .slider { position: absolute; inset: 0; background: var(--toggle-off-bg); border-radius: var(--radius-pill); cursor: pointer; transition: background var(--motion-normal) ease; }
-.toggle .slider::after { content: ""; position: absolute; top: 50%; left: 3px; width: var(--toggle-dot); height: var(--toggle-dot); background: var(--toggle-dot-color); border-radius: var(--radius-round); transform: translateY(-50%); transition: transform var(--motion-normal) ease; }
-.toggle input:checked + .slider { background: var(--toggle-on-bg); }
-.toggle input:checked + .slider::after { transform: translate(calc(var(--toggle-w) - var(--toggle-dot) - 6px), -50%); }
-.toggle input:focus-visible + .slider { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
-.toggle input:disabled + .slider { opacity: 0.5; cursor: not-allowed; }
+/* The checkbox+`.slider` toggle pattern that used to live here is gone. It was
+   a second bare `.toggle {}` rule sharing the name with the button+knob switch
+   above, and NOTHING in gui/src ever rendered a `.slider` child for it -- so
+   every rule in the block was dead except `.toggle input { opacity: 0 }`,
+   which matched a real checkbox in OAuthAccountPoolSettings and made it
+   invisible, with no substitute drawn in its place. That label now carries its
+   own class below, and `.toggle` means one thing again. */
+.pool-toggle-label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.pool-toggle-label input { flex-shrink: 0; }
 
 /* ── Setting row (label left, control right) ── */
 .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; gap: 16px; }

@@ -213,7 +213,16 @@ export default function OAuthAccountPoolSettings({
                   : copy.disabledDesc}
           </div>
         </div>
-        <label className="toggle" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        {/* NOT `.toggle`. That class is the button+`.toggle-knob` switch
+            `CodexAutoSwitchSetting` uses, and `styles.css` also carried a
+            second `.toggle` block written for a checkbox+`.slider` pattern that
+            has no consumer anywhere. Its `.toggle input { opacity: 0; width: 0;
+            height: 0 }` rule matched THIS checkbox and hid it, with no
+            `.slider` sibling to draw in its place — so the control rendered as
+            a fixed 36x20 grey pill with "On"/"Off" text overflowing it and
+            nothing clickable-looking inside. Its own class keeps a real
+            checkbox visible. */}
+        <label className="pool-toggle-label">
           <input
             type="checkbox"
             checked={enabled}

@@ -87,14 +87,55 @@ describe("the README's documentation links", () => {
     // 404ed. A broken link at the top of the readme is the first thing a new
     // reader meets.
     const readme = await Bun.file("README.md").text();
-    const paths = [...readme.matchAll(/https:\/\/[a-z.-]*github\.io\/opencodex\/([a-z0-9/-]*)/g)]
+    // Both hosts. This matched ONLY `<sub>.github.io/opencodex/...` until now --
+    // a host the README has never used, since every docs link goes to the
+    // canonical custom domain. `paths` was therefore always `[]`, the loop below
+    // never ran, and the single `expect()` inside it never executed: a guard
+    // written for a real 404 that could not have caught that 404 again.
+    const paths = [
+      ...readme.matchAll(/https:\/\/opencodex\.me\/([a-z0-9/-]*)/g),
+      ...readme.matchAll(/https:\/\/[a-z.-]*github\.io\/opencodex\/([a-z0-9/-]*)/g),
+    ]
       .map(m => m[1].replace(/\/$/, ""))
       .filter(Boolean);
+
+    // Without this the assertion above can go quiet again the moment the host
+    // changes or the regex drifts, and a vacuous pass is indistinguishable from
+    // a real one.
+    expect(`README docs links found: ${paths.length > 0}`).toBe("README docs links found: true");
 
     for (const path of paths) {
       const isPage = [".md", ".mdx"].some(ext => existsSync(join(DOCS, `${path}${ext}`)));
       const isCoveredSection = hasIndexPage(path) || config.includes(`"/${path}"`);
       expect(`${path} resolves: ${isPage || isCoveredSection}`).toBe(`${path} resolves: true`);
     }
+  });
+
+  test("every GitHub link points at the repository this actually ships from", async () => {
+    // The README carried six `github.com/<upstream-owner>/opencodex` links while
+    // `origin` is a different repository: a clone command for the wrong codebase,
+    // a security-advisory link routing vulnerability reports to strangers, a
+    // LICENSE badge, and two commit links whose SHAs were created HERE and
+    // return HTTP 422 there (verified against both repos with `gh api`).
+    //
+    // One reference is legitimately upstream and must survive this: issue #92,
+    // whose title resolves in the upstream repo and 404s in this one. So the
+    // rule is not "no upstream links" -- it is that only ISSUE links may be.
+    const readme = await Bun.file("README.md").text();
+    const origin = Bun.spawnSync(["git", "remote", "get-url", "origin"]).stdout.toString().trim();
+    const owner = /github\.com[/:]([^/]+)\//.exec(origin)?.[1];
+    expect(`origin owner parsed: ${Boolean(owner)}`).toBe("origin owner parsed: true");
+
+    const foreign = [...readme.matchAll(/https:\/\/github\.com\/([^/\s)]+)\/opencodex\/([a-z-]+)\//g)]
+      .filter(m => m[1] !== owner && m[2] !== "issues")
+      .map(m => `${m[1]}/${m[2]}`);
+    expect(foreign).toEqual([]);
+
+    // The clone command is checked separately: it has no path segment, so the
+    // pattern above cannot see it, and it is the single most damaging one.
+    const clones = [...readme.matchAll(/git clone https:\/\/github\.com\/([^/\s]+)\/opencodex\.git/g)]
+      .map(m => m[1])
+      .filter(o => o !== owner);
+    expect(clones).toEqual([]);
   });
 });
