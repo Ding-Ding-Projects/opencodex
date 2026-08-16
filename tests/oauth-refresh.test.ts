@@ -577,3 +577,65 @@ describe("oauth refresh hardening", () => {
     expect(getAccountSet("anthropic")!.accounts[0]!.needsReauth).toBeUndefined();
   });
 });
+
+/**
+ * The error `postJson` throws is not swallowed anywhere. It escapes `runLogin`
+ * uncaught, `settle()` stores `e.message` verbatim, `GET /api/oauth/status`
+ * returns it as-is, and `use-add-provider-oauth.ts` renders it into a toast —
+ * with no pass through `redactSecretString` at any point on that path.
+ *
+ * It used to be built as `` `Anthropic OAuth HTTP ${status}: ${responseBody}` ``,
+ * interpolating the complete, unbounded upstream body. Both callers send a
+ * credential in the same request: `exchangeToken` a PKCE `code_verifier`,
+ * `refreshAnthropicToken` a stored `refresh_token`. An OAuth error body that
+ * echoes request parameters — the exact pattern `oauth/github-copilot.ts` guards
+ * against by name — therefore reached the screen unredacted.
+ *
+ * These assert on the CREDENTIAL not appearing rather than on the message's
+ * wording, so a later rephrasing cannot quietly make the test vacuous.
+ */
+describe("an Anthropic OAuth failure never carries the upstream body", () => {
+  const SECRET = "sk-ant-oat01-DO-NOT-LEAK-THIS-VALUE";
+
+  function failWith(body: string): void {
+    globalThis.fetch = (async () => new Response(body, {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+  }
+
+  test("a body echoing the refresh_token does not reach the error message", async () => {
+    // The shape that makes this dangerous: a verbose provider error quoting back
+    // what it was sent.
+    failWith(JSON.stringify({
+      error: "invalid_grant",
+      error_description: `The refresh_token ${SECRET} is expired or revoked`,
+    }));
+    const { refreshAnthropicToken } = await import("../src/oauth/anthropic");
+    let caught: unknown;
+    try { await refreshAnthropicToken("some-refresh-token"); } catch (err) { caught = err; }
+
+    expect(caught).toBeInstanceOf(AnthropicTokenError);
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expect(`leaks secret: ${message.includes(SECRET)}`).toBe("leaks secret: false");
+    // error_description is dropped wholesale -- it is the field that carries the echo.
+    expect(`leaks description: ${message.includes("expired or revoked")}`).toBe("leaks description: false");
+    // and the diagnosis a reader actually needs survives
+    expect(message).toContain("invalid_grant");
+    expect(message).toContain("400");
+  });
+
+  test("an unparseable body is not pasted in either", async () => {
+    // No `error` field to extract, so the temptation is to fall back to the raw
+    // text. That fallback is what this guards against.
+    failWith(`<html>upstream proxy error, token=${SECRET}</html>`);
+    const { refreshAnthropicToken } = await import("../src/oauth/anthropic");
+    let caught: unknown;
+    try { await refreshAnthropicToken("some-refresh-token"); } catch (err) { caught = err; }
+
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expect(`leaks secret: ${message.includes(SECRET)}`).toBe("leaks secret: false");
+    expect(`leaks markup: ${message.includes("<html>")}`).toBe("leaks markup: false");
+    expect(message).toContain("400");
+  });
+});

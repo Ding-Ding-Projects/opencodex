@@ -61,8 +61,24 @@ async function postJson(url: string, body: Record<string, string | number>): Pro
     } catch {
       // Best-effort only: malformed error bodies remain structured by HTTP status.
     }
+    // The parsed `error` CODE only — never `responseBody`, and never
+    // `error_description`. The two callers of this function are `exchangeToken`,
+    // which sends a PKCE `code_verifier`, and `refreshAnthropicToken`, which
+    // sends a stored `refresh_token`; a verbose OAuth error body that echoes
+    // request parameters would carry one of those straight through. This
+    // message is not swallowed anywhere: it escapes `runLogin` uncaught
+    // (`oauth/index.ts`), is stored verbatim by `settle()`, returned by
+    // `GET /api/oauth/status`, and rendered into a toast by
+    // `use-add-provider-oauth.ts` — with no pass through `redactSecretString`
+    // at any point on that path.
+    //
+    // Same rule, same reason, as `oauth/github-copilot.ts`, which already says
+    // "never the body or error_description, which can echo credential material".
+    // The status and the error code are what a user or a log actually needs.
     throw new AnthropicTokenError(
-      `Anthropic OAuth HTTP ${response.status}: ${responseBody}`,
+      oauthError
+        ? `Anthropic OAuth failed: ${oauthError} (HTTP ${response.status})`
+        : `Anthropic OAuth HTTP ${response.status}`,
       response.status,
       oauthError,
     );
