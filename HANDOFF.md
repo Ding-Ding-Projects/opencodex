@@ -1,5 +1,84 @@
 # Handoff
 
+## Session close — 2026-08-16, tip `316ff9a5b`
+
+### What this project is right now
+
+A Windows desktop app (Electron + React + Bun) that runs a local proxy in front of AI provider
+APIs, with a dashboard, a CLI (`ocx`), and an auto-release pipeline that cuts a GitHub release per
+commit. `main` is dewed and clean; every linked checkout is clean; there are no stashes.
+
+| | |
+| --- | --- |
+| Tip | `316ff9a5b`, matching the remote |
+| GUI suite | **1630 pass · 0 fail** (194 files, ~70s) |
+| Root suite | **7382 pass · 0 real fail** — see the warning below, this is NOT one run |
+| Typecheck (root + gui), privacy scan | clean |
+| Windows CI | **success** on `0a6c642ae` and `b8ac93dba` |
+| Latest release | **build-219** at `b8ac93dba` |
+
+> [!WARNING]
+> **`bun test tests` never finishes** — 124 minutes, ~98% CPU, memory pinned at 295 MB, no stdout
+> after the 4th file. Do not wait it out and do not read the log for progress: bun prints a
+> per-file header only for files that emit output, so a frozen log proves nothing. There is a
+> **60-second two-file reproducer** and the cause is narrowed to a module mock; see
+> [#32](https://github.com/Ding-Ding-Projects/opencodex/issues/32).
+>
+> **To get a verdict, shard it** — chunks of 30 files, each its own `bun` process with a timeout.
+> 17 of 18 chunks return green in 9–101s; the 18th holds the reproducer and its 30 files pass
+> individually. That is where 7382 comes from: every one of the 534 files verified, never a single
+> whole-suite run.
+
+### Which checks run against what
+
+The GUI suite and the root suite read **source**. Three things read the **built artifact**, and the
+distinction has caught real defects this session that no source test could:
+
+- `scripts/capture-shots.ts` photographs the real desktop window through Win32 `PrintWindow`, and
+  refuses to write a shot it cannot prove is the screen it claims — including, now, one whose
+  corner surface would be clipped out of frame.
+- The packaging build is the only thing that runs the stricter `noUnusedLocals` config; `bun x tsc
+  --noEmit` passed on an unused import the build rejected.
+- Reading a capture is what found three defects this session that were invisible in source.
+
+### Open, with issue numbers
+
+| # | What | Note |
+| --- | --- | --- |
+| [#32](https://github.com/Ding-Ding-Projects/opencodex/issues/32) | The suite does not terminate | 2-file reproducer; fix is a design call about a test seam in the hot request path |
+| [#33](https://github.com/Ding-Ding-Projects/opencodex/issues/33) | Anthropic OAuth echoes the raw upstream body into a user toast | The exchange/refresh calls carry a PKCE verifier and a refresh token |
+| [#34](https://github.com/Ding-Ding-Projects/opencodex/issues/34) | Six verified defects: 2 stale-result races, 2 missing bounds, 2 dead surfaces | 1–4 behavioural, 5–6 cleanup |
+| [#17](https://github.com/Ding-Ding-Projects/opencodex/issues/17), [#10](https://github.com/Ding-Ding-Projects/opencodex/issues/10), [#8](https://github.com/Ding-Ding-Projects/opencodex/issues/8) | Pre-existing feature work | Not touched this session |
+
+Also open and deliberately not done: old screenshots containing a real account name remain reachable
+in git history (purging needs a history rewrite and the owner's authorization); `ci.yml`'s path
+filter means a docs-only commit registers no Windows CI run at all; the converter queue accepts
+structured-data jobs only and has no GUI page; the model-runtime harness launch is unbuilt on
+purpose, since a launcher accepting an unvalidated argument is worse than none.
+
+### Boundaries worth knowing before you start
+
+- **Releases are pruned to the newest ten**, tag and all. An ancestry proof pinned to a `build-*`
+  tag stops being checkable once that tag is deleted — prove against `main`.
+- **`OPENCODEX_HOME` does not isolate the Codex config.** `startServer()` writes routing into
+  `$CODEX_HOME/config.toml`, a separate global path. Isolate all three of `OPENCODEX_HOME`,
+  `CODEX_HOME` and `GROK_HOME`, as `scripts/capture-shots.ts` does.
+- **Adding a remote inside a linked checkout retargets `gh` for the whole repository**, because
+  linked checkouts share `.git/config`. Confirm with `gh api repos/:owner/:repo --jq .full_name`
+  before trusting any `gh` read.
+- **The repo pins `eol=lf`** (`.gitattributes`), with `.bat`/`.cmd` the deliberate exception.
+  Python's `io.open(p, "w")` on Windows writes CRLF and `git status` stays clean, because git
+  normalizes on read — but a test that reads the working tree will fail. Write binary, or pass
+  `newline=""`.
+
+### Two retained jers, deliberately
+
+`feat/w2-schoolmode` and `feat/w3-shortcuts` each hold one commit that is **not** an ancestor of
+`main`. Both are preservation checkpoints, and their own commit messages say so. Their diffs against
+`main` show ~61k and ~43k deletions respectively, because they branched from a far older point —
+merging either would delete a large amount of current work. They are kept, not pending.
+
+
 ## Every contract has code behind it now — 2026-08-15
 
 ### Position
