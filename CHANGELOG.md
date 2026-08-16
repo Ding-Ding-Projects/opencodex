@@ -22,6 +22,7 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 - fix(gui): port CodexPoolStrategySetting off legacy `.card`/`.card-sub` markup onto the shared M3 card classes the rest of the Codex Auth screen already uses
 - fix(gui): show a notice's tone, timestamp and source screen in the app bar's notification popover, matching the design instead of title/body alone
 - fix(gui): give the bottom nav's grid item and its label both the `min-width: 0` a grid/flex item never gets by default, so the four labels stop overflowing their own tracks — running into each other with no gap and pushing the fourth off the screen edge — at phone widths in bilingual mode
+
 Hand-written until the next release tag exists. The generator rebuilds this file
 from tags and takes each entry from a commit subject, so these lines are absorbed
 into their release section — not lost — the next time it runs.
@@ -29,6 +30,16 @@ into their release section — not lost — the next time it runs.
 - feat(gui): show every context-menu item's keyboard shortcut from one binding registry
 - fix(test): read GUI endpoints from call sites, not documentation prose
 - feat(gui): let the user rename the app's display name
+- feat(gui): give every single-path text box a native Browse control — an open-file picker for a source, a save picker for a destination, a folder picker for a ZIP extract — wired at all ten path fields across the file converter and PDF tools; the button is absent rather than inert in a browser, where no native dialog exists
+- fix(gui): stop every status pill in the app rendering in the window's top-right corner on top of the maximize and close buttons, and stop the notification bell's unread count rendering as a 24px pill instead of a 16px dot — one `.m3-badge` class was declared twice, 570 lines apart, by two components that wanted opposite things
+- fix(gui): make the OAuth account-pool toggle visible again; a second, consumerless `.toggle` rule was hiding its real checkbox with `opacity: 0` and drawing no substitute in its place
+- fix(gui): fill in the Cantonese half of the dashboard's 30-day coverage stat, which rendered the literal token `{pct}` because `String.replace` substitutes only the first of the two placeholders bilingual mode produces
+- fix(gui): size the helper text under the API-keys panels and the regex-builder popover, which was dimmed but rendering at full body size because the `.small` class it asks for was defined in no stylesheet
+- fix(gui): retire copy telling users to manage a provider from a "classic view" that no longer exists, in all seven locales
+- fix(cli): let `ocx account clear-cooldown` clear a cooldown on any OAuth pool, not just Codex; the generic route and its implementation were both built and reachable from nowhere, so a Claude or Gemini account in cooldown had no way out but waiting
+- fix(capture): stop the screenshot harness photographing the operator's real Windows account name, by rehoming the whole capture process tree onto a neutral profile before any home path is read, and refusing to launch if that did not take effect
+- fix(capture): resolve the pinned Electron from npx's cache directly, so the harness still starts under npm 12, where the previous probe fails with a message indistinguishable from "Electron is not installed"
+- docs: point the README's clone command, security-advisory link, licence badge and commit links at this repository rather than upstream
 
 ## 2.7.42 — 2026-07-28
 
