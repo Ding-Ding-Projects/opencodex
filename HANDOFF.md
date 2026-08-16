@@ -9,11 +9,27 @@
 
 | | |
 | --- | --- |
-| Root suite | **7398 pass · 0 fail** |
-| GUI suite | **1595 pass · 0 fail** |
+| Root suite | **7382 pass · 0 real fail** — but see the warning below: `bun test tests` does not terminate |
+| GUI suite | **1624 pass · 0 fail** |
 | Typecheck (root + gui), privacy scan | all clean |
-| Releases | `build-193` … `build-200`, published automatically per commit |
+| Releases | `build-193` … `build-201`, published automatically per commit |
 | Captures | 42 app · 12 menus · 19 design-prototype · 19 side-by-side composites |
+
+> [!WARNING]
+> **`bun test tests` never finishes.** Measured 2026-08-16: 124 minutes, ~98% CPU, resident
+> memory pinned at exactly 295 MB, no stdout after the 4th file. Do not wait it out, and do
+> not diagnose it from the log — bun prints a per-file header only for files that emit
+> output, so the GUI suite prints 8 headers for 193 files and a frozen log proves nothing.
+> `--timeout` cannot reach it either: whatever spins is outside test scope.
+>
+> There is a **two-file reproducer that runs in 60 seconds**, and the cause is narrowed to a
+> module mock in `tests/abort-race.test.ts` — full evidence in
+> [#32](https://github.com/Ding-Ding-Projects/opencodex/issues/32).
+>
+> **To get a verdict, shard it**: chunks of 30 files, each its own `bun` process with a
+> timeout. 17 of 18 chunks come back green in 9–101s each; the 18th holds the reproducer and
+> its 30 files pass individually. That is where the 7382 above comes from — every one of the
+> 534 test files verified, not one whole-suite run.
 
 The 53 partials each name the half still missing. **Nothing was promoted to `present` for having
 shipped the hard part** — that restraint is the only thing that makes the count worth reading.
