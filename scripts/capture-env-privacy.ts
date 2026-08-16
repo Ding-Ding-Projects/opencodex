@@ -50,10 +50,31 @@ export interface NeutralCaptureHome {
   localAppData: string;
   appData: string;
   temp: string;
+  /**
+   * The operator's REAL `LOCALAPPDATA`, captured before the rehome overwrote it.
+   *
+   * Rehoming is about what the captured app RENDERS, not about blinding the
+   * harness to its own machine. Some harness-side lookups legitimately need the
+   * real profile -- resolving the pinned Electron out of npm's cache is the
+   * case that forced this -- and after `applyNeutralCaptureHome()` runs there is
+   * otherwise no way back to it.
+   *
+   * A path read through this must never reach a captured pixel, a log, an
+   * export or a commit; it exists to FIND a binary, not to display one. Empty
+   * string when the variable was unset.
+   */
+  realLocalAppData: string;
 }
 
-/** Pure — no I/O, no env mutation. What `applyNeutralCaptureHome` computes and later asserts against. */
-export function computeNeutralCaptureHome(label: string): NeutralCaptureHome {
+/**
+ * Pure — no I/O, no env mutation. What `applyNeutralCaptureHome` computes and
+ * later asserts against.
+ *
+ * `realLocalAppData` is passed in rather than read from `process.env` here so
+ * this stays pure and testable; `applyNeutralCaptureHome` supplies the live
+ * value before it overwrites it.
+ */
+export function computeNeutralCaptureHome(label: string, realLocalAppData = ""): NeutralCaptureHome {
   const root = join("C:\\Users\\Public", label);
   return {
     root,
@@ -61,6 +82,7 @@ export function computeNeutralCaptureHome(label: string): NeutralCaptureHome {
     localAppData: join(root, "AppData", "Local"),
     appData: join(root, "AppData", "Roaming"),
     temp: join(root, "Temp"),
+    realLocalAppData,
   };
 }
 
@@ -109,7 +131,8 @@ export function assertHomeIsNeutral(realHome: string, realUser: string, resolved
 export function applyNeutralCaptureHome(label: string): NeutralCaptureHome {
   const realHome = homedir();
   const realUser = (process.env.USERNAME || "").trim();
-  const neutral = computeNeutralCaptureHome(label);
+  // Read BEFORE the overwrite below, or it is gone.
+  const neutral = computeNeutralCaptureHome(label, process.env.LOCALAPPDATA || "");
 
   mkdirSync(neutral.downloads, { recursive: true });
   mkdirSync(neutral.localAppData, { recursive: true });

@@ -93,7 +93,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { applyNeutralCaptureHome } from "./capture-env-privacy";
 import { type Rect, toDevicePixels, transientOutOfBounds } from "./capture-transient-bounds";
@@ -970,24 +970,84 @@ function pinnedElectronVersion(): string {
 }
 
 /**
+ * Where npx unpacks a `-p` package. Each invocation gets a content-addressed
+ * directory, so several Electron versions can sit here side by side and the
+ * version has to be checked rather than assumed.
+ */
+function npxCacheRoot(): string {
+  // The REAL LOCALAPPDATA, not the neutral one: `applyNeutralCaptureHome()` has
+  // already rehomed this process by the time anything calls in here, and the
+  // npm cache belongs to the operator's actual profile. Nothing identifying is
+  // read out of it -- only whether an electron.exe of the pinned version exists.
+  const local = NEUTRAL.realLocalAppData || process.env.LOCALAPPDATA || "";
+  return join(local, "npm-cache", "_npx");
+}
+
+/**
+ * The pinned Electron binary already unpacked in npx's cache, or `null`.
+ *
+ * Checked against `dist/version` rather than against the directory name, which
+ * is a hash of the install request and says nothing about what is inside it.
+ */
+function electronFromNpxCache(version: string): string | null {
+  const root = npxCacheRoot();
+  if (!root || !existsSync(root)) return null;
+  for (const entry of readdirSync(root)) {
+    const dist = join(root, entry, "node_modules", "electron", "dist");
+    const exe = join(dist, "electron.exe");
+    const stamp = join(dist, "version");
+    if (!existsSync(exe) || !existsSync(stamp)) continue;
+    if (readFileSync(stamp, "utf8").trim() === version) return exe;
+  }
+  return null;
+}
+
+/**
  * Electron is deliberately not a repo dependency: electron-builder downloads the
- * runtime itself from the pinned version. Asking npx for the package's own
- * exported path beats guessing at its cache layout, and gives us the binary
- * directly so the spawned pid is Electron's rather than a wrapper's — which
- * matters because the window is found by owning process.
+ * runtime itself from the pinned version. We want the binary directly rather
+ * than a wrapper, because the window is found by owning process id.
+ *
+ * Three routes, in order, because the first two each fail in their own way:
+ *
+ *   1. `OCX_ELECTRON`, for a caller who already knows.
+ *   2. npx's own cache, read directly. This is the route that works.
+ *   3. `npx -p electron@<v> node -e "console.log(require('electron'))"`, the
+ *      original approach, kept last because it still resolves on setups where
+ *      the cache layout differs.
+ *
+ * Route 3 was route 1 until npm 12, and it now fails on this machine with
+ * `Cannot find module 'electron'` even though `-p` installed the package
+ * perfectly: the `node` child resolves `require()` from the CURRENT directory's
+ * `node_modules`, not from the temporary prefix npx installed into, and this
+ * repo has no `electron` there on purpose. The failure is indistinguishable
+ * from "Electron is not installed" -- it took reading npx's cache by hand to
+ * find a complete, correct 43.2.0 already sitting on disk. So the cache is
+ * tried BEFORE the subprocess: it is faster, it needs no network, and it does
+ * not depend on npm's resolution behaviour staying still.
  */
 function resolveElectron(): string {
   if (process.env.OCX_ELECTRON) return process.env.OCX_ELECTRON;
   const version = pinnedElectronVersion();
+
+  const cached = electronFromNpxCache(version);
+  if (cached) return cached;
+
   const probe = spawnSync(
     "npx",
     ["--yes", "-p", `electron@${version}`, "node", "-e", "console.log(require('electron'))"],
     { encoding: "utf8", shell: true },
   );
+  // npx may have just populated the cache even though the `require` failed --
+  // which is exactly the npm 12 shape above, and is worth one more look before
+  // giving up.
+  const nowCached = electronFromNpxCache(version);
+  if (nowCached) return nowCached;
+
   const path = (probe.stdout || "").trim().split(/\r?\n/).filter(Boolean).pop();
   if (!path || !existsSync(path)) {
     throw new Error(
-      `could not resolve electron@${version} via npx.\n`
+      `could not resolve electron@${version}.\n`
+      + `  npx cache searched: ${npxCacheRoot()}\n`
       + `  stdout: ${(probe.stdout || "").trim()}\n  stderr: ${(probe.stderr || "").trim()}\n`
       + "  Set OCX_ELECTRON to an electron binary to skip this lookup.",
     );
