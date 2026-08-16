@@ -290,8 +290,17 @@ export async function cmdAddKey(args: string[], deps: AccountDeps): Promise<numb
  * `devlog/_plan/260726_cooldown_lockout_hardening`: injected routing makes the proxy the
  * only model path for Codex Desktop, so a stuck cooldown reads as "the whole app is dead".
  *
- * Codex accounts only. API-key pools already reset their own 429 cooldowns through key
- * management (`clearKeyCooldowns`), and OAuth providers have no equivalent state here.
+ * Codex AND generic OAuth pools. API-key pools already reset their own 429 cooldowns
+ * through key management (`clearKeyCooldowns`), so they are the only kind refused here.
+ *
+ * This used to say "OAuth providers have no equivalent state here" and refuse anything
+ * that was not Codex. That was wrong: the generic pool has exactly the same state, the
+ * `clearOAuthAccountCooldown` implementation (`src/oauth/provider-pool.ts`) and the
+ * `POST /api/oauth/accounts/clear-cooldown` route were both fully built, and nothing in
+ * the GUI or the CLI reached either of them. A Claude or Gemini account that entered
+ * cooldown had no way out but waiting -- with the same "the whole app is dead" symptom
+ * the Codex path exists to relieve, since injected routing makes the proxy the only
+ * model path.
  */
 export async function cmdClearCooldown(args: string[], deps: AccountDeps): Promise<number> {
   const wantsJson = flag(args, "--json");
@@ -300,13 +309,17 @@ export async function cmdClearCooldown(args: string[], deps: AccountDeps): Promi
   if (!name || !requestedId || args.length) return usage();
   const classified = configAndType(deps, name);
   if ("error" in classified) return usage(`Error: ${classified.error}`);
-  if (classified.type !== "codex") {
-    return usage(`Error: ${name} is not a Codex account pool; cooldown clearing applies to Codex accounts only`);
+  if (classified.type !== "codex" && classified.type !== "oauth") {
+    return usage(`Error: ${name} is an API-key pool; its 429 cooldowns are cleared through key management`);
   }
-  const id = requestedId === "main" ? MAIN_ID : requestedId;
+  // `main` is a Codex-only alias for the app's own login; a generic OAuth pool has no
+  // such entry, so the id is passed through untouched there.
+  const id = classified.type === "codex" && requestedId === "main" ? MAIN_ID : requestedId;
   const baseUrl = await resolveBaseUrl(deps);
   if (!baseUrl) return proxyUnreachable();
-  const response = await apiJson(deps, baseUrl, "POST", "/api/codex-auth/accounts/clear-cooldown", { id });
+  const response = classified.type === "oauth"
+    ? await apiJson(deps, baseUrl, "POST", "/api/oauth/accounts/clear-cooldown", { provider: name, accountId: id })
+    : await apiJson(deps, baseUrl, "POST", "/api/codex-auth/accounts/clear-cooldown", { id });
   if (response.status === 0) return proxyUnreachable();
   if (response.status !== 200) return apiError(response.json, `failed to clear cooldown for ${requestedId}`);
   const cleared = response.json?.cleared === true;
