@@ -1750,6 +1750,7 @@ export const M3_EN = {
   "auth.group.movePickerEmpty": "No groups yet.",
   "auth.group.movePickerCreateNew": "Create a new group…",
   "auth.group.moved": "Moved",
+  "auth.group.moveFailed": "Could not move those entries. They stayed where they were.",
   "bulk.deleteAuthenticatorEntries": "Delete accounts",
   "bulk.confirmDeleteAuthenticatorEntries": "Delete {count} account(s)? You will not be able to generate their codes again.",
   "bulk.moveToGroup": "Move to group",

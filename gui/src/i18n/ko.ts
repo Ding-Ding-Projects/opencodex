@@ -333,6 +333,7 @@ export const ko: Record<TKey, string> = {
   "prov.keySwitched": "{key} 키로 전환했습니다.",
   "prov.keySwitchFail": "키 전환에 실패했습니다",
   "prov.keyRemoved": "{key} 키를 제거했습니다.",
+  "prov.keyRemoveFail": "키 {key}를 제거하지 못했습니다. 변경되지 않았습니다.",
   "prov.keyRemoveAria": "{key} 키 제거",
   "prov.keyRemoveConfirm": "API 키 {key}를 제거할까요? 이 프록시 설정에서 삭제됩니다.",
   "prov.activeBadge": "활성",

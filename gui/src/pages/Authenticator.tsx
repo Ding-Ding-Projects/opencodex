@@ -185,8 +185,19 @@ export default function Authenticator({ apiBase }: { apiBase: string }) {
   const applyMove = useCallback(async (groupId: string | null) => {
     if (!movePicker) return;
     const ids = movePicker.ids;
+    // The picker used to close BEFORE the await, so a rejected move looked
+    // exactly like a successful one: the dialog vanished, the entries stayed in
+    // their old group, and `bulkSetAuthenticatorGroup` -> `readJsonOrThrow`
+    // threw into a promise the only call site discards with `void` -- an
+    // unhandled rejection with no window handler anywhere in gui/src to catch
+    // it. Close on success only, and say so on failure.
+    try {
+      await bulkSetAuthenticatorGroup(apiBase, ids, groupId);
+    } catch {
+      notify({ tone: "error", title: t("auth.group.moveFailed") });
+      return;
+    }
     setMovePicker(null);
-    await bulkSetAuthenticatorGroup(apiBase, ids, groupId);
     notify({ tone: "success", title: t("auth.group.moved") });
     refresh();
   }, [apiBase, movePicker, notify, refresh, t]);

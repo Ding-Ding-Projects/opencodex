@@ -85,3 +85,52 @@ test("the default density matches the prototype", () => {
   // one step tighter than the design it was ported from.
   expect(DEFAULT_PREFS.density).toBe(3);
 });
+
+/**
+ * "Reset appearance" must not reach across and clear a setting a different
+ * screen owns.
+ *
+ * Both reset paths rebuild from `DEFAULT_PREFS` and then carry a short allowlist
+ * of fields back over, precisely because narration and the emoji switch belong to
+ * Language & voice rather than to Appearance. `costRange` -- the App Bar cost
+ * meter's 7d/30d/all filter, written only by `shell/CostMeter.tsx`, with no
+ * control on the Appearance screen at all -- was missing from both lists, so
+ * resetting a theme silently put it back to "all".
+ *
+ * Asserted as a SET rather than by spot-checking one field: the defect was an
+ * omission, and a test that only checks the fields somebody remembered cannot
+ * catch the next one that gets forgotten.
+ */
+describe("an appearance reset leaves other screens' settings alone", () => {
+  /** Fields owned by another screen that must survive an Appearance reset. */
+  const FOREIGN_TO_APPEARANCE = [
+    "narrator", "narratorLang", "narratorVoices", "narratorEdge",
+    "showEmojis",
+    "costRange",
+  ] as const;
+
+  test("settings-drafts carries every foreign field across the reset", async () => {
+    const { resetAppearanceFrom } = await import("../src/settings-drafts");
+    const before = { ...DEFAULT_PREFS, theme: "dark" as const, narrator: true, showEmojis: false, costRange: "7d" as const };
+    const after = resetAppearanceFrom(before);
+    // The appearance field DOES reset -- that is the feature, and without this
+    // line the test would pass on a reset that does nothing at all.
+    expect(after.theme).toBe(DEFAULT_PREFS.theme);
+    for (const key of FOREIGN_TO_APPEARANCE) {
+      expect(`${key}=${JSON.stringify(after[key])}`).toBe(`${key}=${JSON.stringify(before[key])}`);
+    }
+  });
+
+  test("the live provider's reset preserves the same set", async () => {
+    // `main.tsx` mounts `PrefsProvider` from `theme/prefs`, so THIS is the
+    // implementation Appearance.tsx's Reset button actually calls. Fixing only
+    // the settings-drafts copy would leave the user-visible path broken -- which
+    // is exactly what nearly happened here.
+    const source = await Bun.file(new URL("../src/theme/prefs.tsx", import.meta.url)).text();
+    const start = source.indexOf("...DEFAULT_PREFS");
+    const block = source.slice(start, source.indexOf("}));", start));
+    for (const key of FOREIGN_TO_APPEARANCE) {
+      expect(`${key} carried: ${block.includes(`${key}: prev.${key},`)}`).toBe(`${key} carried: true`);
+    }
+  });
+});

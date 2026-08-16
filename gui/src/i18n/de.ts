@@ -327,6 +327,7 @@ export const de: Record<TKey, string> = {
   "prov.keySwitched": "Zu Schlüssel {key} gewechselt.",
   "prov.keySwitchFail": "Schlüssel-Wechsel fehlgeschlagen",
   "prov.keyRemoved": "Schlüssel {key} entfernt.",
+  "prov.keyRemoveFail": "Schlüssel {key} konnte nicht entfernt werden. Er ist unverändert.",
   "prov.keyRemoveAria": "Schlüssel {key} entfernen",
   "prov.keyRemoveConfirm": "API-Schlüssel {key} entfernen? Er wird aus der Proxy-Konfiguration gelöscht.",
   "prov.activeBadge": "Aktiv",

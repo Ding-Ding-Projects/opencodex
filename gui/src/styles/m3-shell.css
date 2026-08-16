@@ -51,17 +51,28 @@
 }
 .m3-nav-brand img { width: 26px; height: 26px; flex: 0 0 auto; }
 .m3-nav-brand-text { min-width: 0; }
+/* `.m3-nav-brand-text` above already sets `min-width: 0`, which is the CONTAINER
+   half of the fix -- it lets the block shrink inside the fixed-width rail. The
+   ELEMENT half was never added, so `nowrap` text simply ran past the edge and was
+   cropped mid-character by `.m3-nav` (`overflow-x: hidden`), with no ellipsis to
+   show anything had been cut. The app name is user-renamable up to 60 code points
+   (`theme/app-name.ts`), so this is reachable by design, not just by a long
+   bilingual string. Same pattern `.m3-nav-label` already uses. */
 .m3-nav-brand-name {
   font-size: var(--t-title-m);
   font-weight: 600;
   letter-spacing: 0.1px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .m3-nav-brand-meta {
   font-family: var(--mono);
   font-size: var(--t-label-s);
   color: var(--m3-on-surface-variant);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .m3-nav-item {
@@ -1483,7 +1494,11 @@ html[data-desktop] .m3-appbar .m3-avatar {
   background: var(--m3-surface-container);
   border-bottom: 1px solid var(--m3-outline-variant);
 }
-.m3-mob__title { font-weight: 600; white-space: nowrap; }
+/* `min-width: 0` so the flex item may shrink at all (CSS Flexbox 4.5 gives it a
+   content-based minimum otherwise), then ellipsis rather than a mid-character crop.
+   In bilingual mode this renders "opencodex remote" joined with its Cantonese
+   counterpart, on a phone-width bar that also carries the model chip. */
+.m3-mob__title { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .m3-mob__model {
   margin-inline-start: auto;
   max-width: 58%;

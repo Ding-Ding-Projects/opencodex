@@ -333,6 +333,7 @@ export const zh: Record<TKey, string> = {
   "prov.keySwitched": "已切换到密钥 {key}。",
   "prov.keySwitchFail": "切换密钥失败",
   "prov.keyRemoved": "已移除密钥 {key}。",
+  "prov.keyRemoveFail": "无法删除密钥 {key}。它未被更改。",
   "prov.keyRemoveAria": "移除密钥 {key}",
   "prov.keyRemoveConfirm": "移除 API 密钥 {key}？它将从此代理的配置中删除。",
   "prov.activeBadge": "已启用",

@@ -333,6 +333,7 @@ export const ja: Record<TKey, string> = {
   "prov.keySwitched": "キー {key} に切り替えました。",
   "prov.keySwitchFail": "キーの切り替えに失敗しました",
   "prov.keyRemoved": "キー {key} を削除しました。",
+  "prov.keyRemoveFail": "キー {key} を削除できませんでした。変更されていません。",
   "prov.keyRemoveAria": "キー {key} を削除",
   "prov.keyRemoveConfirm": "API キー {key} を削除しますか? このプロキシの設定から削除されます。",
   "prov.activeBadge": "アクティブ",

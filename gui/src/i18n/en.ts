@@ -343,6 +343,7 @@ export const en = {
   "prov.keySwitched": "Switched to key {key}.",
   "prov.keySwitchFail": "Failed to switch key",
   "prov.keyRemoved": "Removed key {key}.",
+  "prov.keyRemoveFail": "Could not remove key {key}. It is unchanged.",
   "prov.keyRemoveAria": "Remove key {key}",
   "prov.keyRemoveConfirm": "Remove API key {key}? It is deleted from this proxy's config.",
   "prov.activeBadge": "Active",

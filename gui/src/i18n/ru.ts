@@ -338,6 +338,7 @@ export const ru: Record<TKey, string> = {
   "prov.keySwitched": "Переключено на ключ {key}.",
   "prov.keySwitchFail": "Не удалось переключить ключ",
   "prov.keyRemoved": "Ключ {key} удалён.",
+  "prov.keyRemoveFail": "Не удалось удалить ключ {key}. Он не изменён.",
   "prov.keyRemoveAria": "Удалить ключ {key}",
   "prov.keyRemoveConfirm": "Удалить API-ключ {key}? Он будет удалён из конфигурации этого прокси.",
   "prov.activeBadge": "Активен",

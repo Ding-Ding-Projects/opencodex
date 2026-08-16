@@ -176,13 +176,21 @@ export function useProviderAccountPools(deps: {
       tone: "danger",
     });
     if (!confirmed) return;
-    const res = await fetch(`${apiBase}/api/providers/keys?name=${encodeURIComponent(provider)}&id=${encodeURIComponent(entry.id)}`, { method: "DELETE" });
-    if (res.ok) {
-      notify(t("prov.keyRemoved", { key: entry.label ?? entry.masked }), true);
-      void fetchKeyPools(Object.keys(keyPools));
-      void fetchConfig();
-      void fetchProviderQuotas(true);
+    // The failure branch every sibling in this file already has (switchApiKey,
+    // removeAccount, editCredentialAlias). Without it a rejected DELETE -- a
+    // non-2xx, or fetch throwing while offline -- was indistinguishable from
+    // success: the danger-tone confirm closed, nothing was said, and the key
+    // stayed exactly where it was.
+    const res = await fetch(`${apiBase}/api/providers/keys?name=${encodeURIComponent(provider)}&id=${encodeURIComponent(entry.id)}`, { method: "DELETE" }).catch(() => null);
+    if (!res || !res.ok) {
+      const data = res ? await res.json().catch(() => ({})) as { error?: string } : {};
+      notify(data.error || t("prov.keyRemoveFail", { key: entry.label ?? entry.masked }), false);
+      return;
     }
+    notify(t("prov.keyRemoved", { key: entry.label ?? entry.masked }), true);
+    void fetchKeyPools(Object.keys(keyPools));
+    void fetchConfig();
+    void fetchProviderQuotas(true);
   };
 
   const addApiKeyValue = async (provider: string, rawKey: string): Promise<boolean> => {

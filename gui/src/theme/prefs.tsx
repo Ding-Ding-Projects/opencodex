@@ -149,6 +149,12 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     // on Appearance, for the same reason: a "how the app looks" reset triggered
     // from a different tab should not reach across and silently flip a switch
     // that screen owns.
+    //
+    // `costRange` is the same case and was the one that got missed: the App Bar
+    // cost meter's 7d/30d/all filter, written only from `shell/CostMeter.tsx`,
+    // with no control anywhere on the Appearance screen. Without this line the
+    // `...DEFAULT_PREFS` spread put it back to "all" every time somebody reset
+    // their theme.
     setPrefsState(prev => ({
       ...DEFAULT_PREFS,
       narrator: prev.narrator,
@@ -156,6 +162,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
       narratorVoices: prev.narratorVoices,
       narratorEdge: prev.narratorEdge,
       showEmojis: prev.showEmojis,
+      costRange: prev.costRange,
     }));
   }, []);
 

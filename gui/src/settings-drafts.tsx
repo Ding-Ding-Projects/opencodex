@@ -66,7 +66,7 @@ function resetOneElementStyle(prefs: Prefs, id: string): Prefs {
   return { ...prefs, elementStyles };
 }
 
-function resetAppearanceFrom(prefs: Prefs): Prefs {
+export function resetAppearanceFrom(prefs: Prefs): Prefs {
   // Voices come through with the rest of the narration settings: see the note on
   // the matching reset in `theme/prefs.tsx`. `showEmojis` rides along for the
   // same reason — it is a Language & voice setting, not an Appearance one, so a
@@ -79,6 +79,13 @@ function resetAppearanceFrom(prefs: Prefs): Prefs {
     narratorVoices: prefs.narratorVoices,
     narratorEdge: prefs.narratorEdge,
     showEmojis: prefs.showEmojis,
+    // Same reason as the five above, and it was the one that got missed:
+    // `costRange` is the App Bar cost meter's 7d/30d/all filter, set only from
+    // `shell/CostMeter.tsx`. There is no control for it anywhere on the
+    // Appearance screen, so a reset triggered from that screen must not reach
+    // over and put it back to "all" -- which is exactly what the
+    // `...DEFAULT_PREFS` spread did to it.
+    costRange: prefs.costRange,
   };
 }
 
