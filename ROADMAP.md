@@ -31,17 +31,29 @@ absent hours before they landed and nothing corrected it afterwards. Cantonese, 
 the funny-level ladder, word-depth typography, dim sum photographs and the shared settings search
 were all described here as unbuilt while their code sat on `main`. Those rows are rewritten below.
 
-Release state, re-checked 2026-08-13, tag range re-checked again 2026-08-15: the newest non-preview
-`v*` tag is still **v2.7.42** (2026-07-28), but `v*` is no longer the only release series.
+Release state, tag range re-checked 2026-08-16: the newest non-preview `v*` tag is still
+**v2.7.42** (2026-07-28), but `v*` is no longer the only release series.
 `.github/workflows/auto-release.yml` publishes a real GitHub release per green run, tagged
-`build-<run_number>`, and refuses to publish one without a Windows installer attached. **29** such
-tags exist as of 2026-08-15, from **build-120** (2026-08-02) to **build-202** (2026-08-15) — the
-2026-08-13 text said ten tags ending at build-152 and is nineteen releases stale; `build-152` was
-never the ceiling, it was just the newest tag that existed on the day someone last looked. Every
-commit for PDF tools, the universal file converter, the Ollama suite manager and browser-extension
-download capture (see the Completed section below) is a verified ancestor of `build-202`
-(`git merge-base --is-ancestor`), so all of that has shipped in a tagged release too; `build-202`
-itself sits two ordinary commits behind the current `main` tip.
+`build-<run_number>`, and refuses to publish one without a Windows installer attached. **10**
+such tags exist at any moment, and that number is **fixed rather than growing**: the workflow's
+last step prunes every `build-*` release but the newest ten (`Prune old automated builds (keep
+10)`, `--cleanup-tag`, so the tag goes with it). As of 2026-08-16 the retained window is
+**build-199 … build-219**. Versioned `v*` releases are never pruned.
+
+This paragraph has been stale twice, and both times the correction was another absolute number
+that went stale within a day — so the mechanism matters more than the figure. Releases are cut
+**per commit**, automatically, and the ten-deep window slides forward with them. A tag named
+here is not merely out of date later; it is *deleted* later. The 2026-08-13 text claimed ten
+tags ending at build-152, the 2026-08-15 text said twenty-nine ending at build-202, and by
+2026-08-16 every tag below build-199 had been pruned out of existence. Re-derive the window
+with `gh release list` rather than reading a number off this page.
+
+Every commit for PDF tools, the universal file converter, the Ollama suite manager and
+browser-extension download capture (see the Completed section below) was verified an ancestor of
+`build-202` (`git merge-base --is-ancestor`) when that tag existed. Note the consequence of the
+pruning above: an ancestry proof pinned to a `build-*` tag stops being checkable once that tag
+is pruned. Re-prove against the current newest build tag, or against `main`, rather than
+against a tag that may already be gone.
 
 ## Completed — PDF tools, the universal file converter, the Ollama suite manager, and browser-extension download capture close the inventory's absent column (2026-08-14 to 2026-08-15)
 
