@@ -40,6 +40,12 @@ into their release section — not lost — the next time it runs.
 - fix(capture): stop the screenshot harness photographing the operator's real Windows account name, by rehoming the whole capture process tree onto a neutral profile before any home path is read, and refusing to launch if that did not take effect
 - fix(capture): resolve the pinned Electron from npx's cache directly, so the harness still starts under npm 12, where the previous probe fails with a message indistinguishable from "Electron is not installed"
 - docs: point the README's clone command, security-advisory link, licence badge and commit links at this repository rather than upstream
+- fix(gui): make the provider workspace's Remove-provider and unsaved-changes confirmations dismissable by keyboard; both were hand-rolled `<div>`s with no Escape handler, no focus trap and no focus return, so a keyboard user who opened one could not leave it
+- fix(gui): report a failed API-key deletion instead of silently doing nothing — a rejected DELETE closed the danger-tone confirm, said nothing, and left the key in place
+- fix(gui): report a failed authenticator group move, and stop the picker closing before the move has actually landed; the rejection previously became an unhandled promise with no user-facing feedback at all
+- fix(gui): stop "Reset appearance" clearing the App Bar's cost-meter range, which belongs to a different screen and has no control on the Appearance page
+- fix(gui): ellipsize the nav rail's app name and version instead of cropping them mid-character; the container already allowed shrinking, the elements never got the overflow half of the fix, and the app name is user-renamable up to 60 code points
+- fix(gui): ellipsize the phone remote's header title, which had no overflow handling at all in a flex row it shares with the model chip
 
 ## 2.7.42 — 2026-07-28
 
