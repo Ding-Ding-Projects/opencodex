@@ -1150,7 +1150,7 @@ export const ko: Record<TKey, string> = {
   "pws.noMatchFilters": "필터와 일치하는 프로바이더가 없습니다.",
   "pws.noProvidersConfigured": "설정된 프로바이더가 없습니다.",
   "pws.workspaceMainAria": "프로바이더 상세",
-  "pws.detailComingSoon": "상세 보기는 준비 중입니다 — 클래식 보기에서 관리하세요.",
+  "pws.detailComingSoon": "이 공급자의 세부 정보를 지금은 볼 수 없습니다.",
   "pws.selectPrompt": "목록에서 프로바이더를 선택하세요.",
   "pws.connectFirst": "첫 프로바이더를 연결하세요",
   "pws.empty.browseFree": "무료 프로바이더 보기",

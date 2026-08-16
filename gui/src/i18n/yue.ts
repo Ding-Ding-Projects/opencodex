@@ -921,7 +921,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "pws.noMatchFilters": "冇供應商符合啲篩選。",
   "pws.noProvidersConfigured": "未設定過任何供應商。",
   "pws.workspaceMainAria": "供應商詳情",
-  "pws.detailComingSoon": "詳情檢視就快有 — 而家用經典檢視去管理呢個供應商。",
+  "pws.detailComingSoon": "現在看唔到呢個供應商嘅詳情。",
   "pws.selectPrompt": "喺清單度揀個供應商。",
   "pws.connectFirst": "連接你第一個供應商",
   "pws.empty.browseFree": "睇下免費供應商",

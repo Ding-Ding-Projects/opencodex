@@ -1,8 +1,15 @@
 /**
  * ProviderWorkspaceShell — the workspace chrome (WP080b): search, filter
  * popover (status/pricing/type/sort), grouped rail with keyboard navigation,
- * empty state, and a render-prop `detail` slot. Detail/Overview panel bodies
- * arrive in WP090/091; until then the slot renders a real placeholder message.
+ * empty state, and a render-prop `detail` slot.
+ *
+ * The `detail` slot is FILLED. This comment used to say the panel bodies
+ * "arrive in WP090/091; until then the slot renders a real placeholder" -- both
+ * shipped, and the sole call site (pages/Providers.tsx) returns a
+ * <ProviderDetails> for every item unconditionally. The `?? placeholder`
+ * fallback below is therefore unreachable in the shipped app and is kept only
+ * as defensive UI for a future wiring regression; its copy no longer points at
+ * a "classic view", which has not existed for some time.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { fixedPanelStyle, useAnchoredPlacement } from "../../shell/use-anchored-placement";

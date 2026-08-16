@@ -834,7 +834,7 @@ export const ja: Record<TKey, string> = {
   "pws.noMatchFilters": "フィルタに一致するプロバイダーがありません。",
   "pws.noProvidersConfigured": "プロバイダーが設定されていません。",
   "pws.workspaceMainAria": "プロバイダーの詳細",
-  "pws.detailComingSoon": "詳細ビューは近日対応 — このプロバイダーの管理にはクラシックビューを使用してください。",
+  "pws.detailComingSoon": "このプロバイダーの詳細は現在表示できません。",
   "pws.selectPrompt": "リストからプロバイダーを選択してください。",
   "pws.connectFirst": "最初のプロバイダーを接続",
   "pws.empty.browseFree": "無料プロバイダーを見る",

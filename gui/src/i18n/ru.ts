@@ -866,7 +866,7 @@ export const ru: Record<TKey, string> = {
   "pws.noMatchFilters": "Нет провайдеров, соответствующих фильтрам.",
   "pws.noProvidersConfigured": "Провайдеры не настроены.",
   "pws.workspaceMainAria": "Сведения о провайдере",
-  "pws.detailComingSoon": "Подробный вид скоро появится — для управления этим провайдером используйте классический вид.",
+  "pws.detailComingSoon": "Сведения об этом провайдере сейчас недоступны.",
   "pws.selectPrompt": "Выберите провайдера из списка.",
   "pws.connectFirst": "Подключите первого провайдера",
   "pws.empty.browseFree": "Посмотреть бесплатных провайдеров",

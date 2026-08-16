@@ -1150,7 +1150,7 @@ export const zh: Record<TKey, string> = {
   "pws.noMatchFilters": "没有匹配筛选的提供商。",
   "pws.noProvidersConfigured": "尚未配置提供商。",
   "pws.workspaceMainAria": "提供商详情",
-  "pws.detailComingSoon": "详情视图即将推出 — 请在经典视图中管理。",
+  "pws.detailComingSoon": "目前无法显示该供应商的详情。",
   "pws.selectPrompt": "从列表中选择一个提供商。",
   "pws.connectFirst": "连接你的第一个提供商",
   "pws.empty.browseFree": "浏览免费提供商",

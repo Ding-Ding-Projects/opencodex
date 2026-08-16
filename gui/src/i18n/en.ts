@@ -871,7 +871,7 @@ export const en = {
   "pws.noMatchFilters": "No providers match the filters.",
   "pws.noProvidersConfigured": "No providers configured.",
   "pws.workspaceMainAria": "Provider details",
-  "pws.detailComingSoon": "Detail view coming soon — use the classic view to manage this provider.",
+  "pws.detailComingSoon": "Details for this provider aren't available right now.",
   "pws.selectPrompt": "Select a provider from the list.",
   "pws.connectFirst": "Connect your first provider",
   "pws.empty.browseFree": "Browse free providers",
