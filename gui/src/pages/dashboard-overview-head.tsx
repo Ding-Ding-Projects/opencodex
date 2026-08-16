@@ -71,7 +71,17 @@ export function DashboardOverviewHead({
             <div className="dash-stat-card__value mono">{usage30d && usage30d.summary.requests > 0 ? formatTokens(usage30d.summary.totalTokens, locale) : "—"}</div>
             <div className="dash-stat-card__hint dash-stat-coverage">
               {usage30d && usage30d.summary.requests > 0
-                ? t("dash.coverage").replace("{pct}", `${Math.round(usage30d.summary.coverageRatio * 100)}%`)
+                // `t(key, vars)`, not `t(key).replace("{pct}", ...)`. A string
+                // pattern in `String.replace` substitutes the FIRST match only,
+                // and in bilingual mode `t()` has already joined both languages
+                // into one string with a placeholder in each half -- so the
+                // English side filled in and the Cantonese side rendered the
+                // literal token: "100% coverage · 覆蓋率 {pct}". It shipped that
+                // way in assets/shots/notification-centre.png. `interpolate()`
+                // in i18n/shared.ts uses split/join, which replaces every
+                // occurrence, so routing through `vars` is what makes both
+                // halves agree.
+                ? t("dash.coverage", { pct: `${Math.round(usage30d.summary.coverageRatio * 100)}%` })
                 : " "}
             </div>
           </div>
