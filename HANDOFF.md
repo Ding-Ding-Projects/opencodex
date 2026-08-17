@@ -115,6 +115,17 @@ Two independent final reviews found no remaining concrete integration blocker an
 finding. The unavoidable snapshot-to-`SetTcpEntry` interval remains below P2 and is documented as a
 kernel atomicity limit rather than hidden as a guarantee.
 
+The final real launch check caught one longstanding documentation/runtime mismatch that the earlier
+reviews did not: README and every new quickstart said `ocx codex`, but the dispatcher returned
+`Unknown command: codex`. `src/cli/codex.ts` now makes that promised command real. It starts the
+configured proxy when necessary, synchronizes Codex against the live port, resolves the selected
+Codex runtime, and forwards all arguments with inherited stdio. Focused CLI/help coverage completed
+**16/16 tests**. On the actual user profile, `ocx codex --version` returned `codex-cli 0.145.0`, and
+`ocx codex exec --skip-git-repo-check --sandbox read-only "Reply with exactly READY and no other
+text."` completed through the loopback proxy and returned exactly `READY` with exit 0. The profile's
+unusable `xai` default was also changed to the existing keyless `openai` Codex-forward route, and
+`ocx ensure` repaired the stale Grok Build port mapping.
+
 ## Admin-token gate removed — 2026-08-03
 
 The dashboard no longer collects an admin token, injects a GUI session, or retries `/api/*` with a

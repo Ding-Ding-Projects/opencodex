@@ -28,6 +28,17 @@ ocx start
 ocx start --port 8080
 ```
 
+### `ocx codex [Codex 인수...]`
+
+Codex를 opencodex를 통해 실행합니다. 정상 프록시가 없으면 설정된 포트에서 백그라운드로 시작하고,
+실제 포트에 맞춰 Codex 프로바이더 설정을 새로 고친 뒤 선택된 Codex 런타임에 나머지 인수를 그대로
+전달합니다.
+
+```bash
+ocx codex
+ocx codex exec --skip-git-repo-check "READY라고 답하세요"
+```
+
 ### `ocx stop`
 
 실행 중인 프록시를 PID로 중지하고 PID 파일을 지운 뒤 네이티브 Codex를 복원합니다. 관리형

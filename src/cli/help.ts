@@ -237,6 +237,15 @@ const helpEntries: Record<string, HelpEntry> = {
     summary: "Inspect and safely modify validated OpenCodex configuration.",
     details: ["Secrets are masked by show/get. Import requires --yes and validates before writing."],
   },
+  codex: {
+    usage: "ocx codex [codex args...]",
+    summary: "Start OpenCodex when needed and launch Codex through the live proxy.",
+    details: [
+      "Refreshes the Codex provider configuration against the live proxy port before launch.",
+      "Every remaining argument is forwarded to the selected Codex runtime unchanged.",
+      "Example: ocx codex exec --skip-git-repo-check \"Reply with READY\"",
+    ],
+  },
   claude: {
     usage: "ocx claude [claude args...]",
     summary: "Launch Claude Code wired to the proxy (env injection + gateway model discovery).",
@@ -351,6 +360,7 @@ Usage:
   ocx export <path> --yes     Full state backup — config, accounts, auth (secrets included)
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export
+  ocx codex [args...]         Start if needed and launch Codex through the proxy
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile
   ocx opencode [args...]      Launch opencode wired to the proxy (runtime provider config)

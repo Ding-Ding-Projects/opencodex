@@ -28,6 +28,17 @@ ocx start
 ocx start --port 8080
 ```
 
+### `ocx codex [codex args...]`
+
+Launch Codex through opencodex. If no healthy proxy is running, the command starts one in the
+background on the configured port. It then refreshes Codex's provider configuration against the
+live port, resolves the selected Codex runtime, and forwards every remaining argument unchanged.
+
+```bash
+ocx codex
+ocx codex exec --skip-git-repo-check "Reply with READY"
+```
+
 ### `ocx stop`
 
 Stop the running proxy (by PID), remove the PID file, and restore native Codex. If a managed

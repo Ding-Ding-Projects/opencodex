@@ -59,7 +59,10 @@ if (command === undefined || command === "help" || command === "--help" || comma
   process.exit(0);
 }
 
-if (command !== undefined && command !== "help" && hasHelpFlag(args.slice(1))) {
+// `ocx codex` is a transparent launcher: every tail argument belongs to Codex,
+// including `--help`, `-h`, and a positional value literally named `help`.
+// Wrapper-specific help remains available as `ocx help codex`.
+if (command !== undefined && command !== "help" && command !== "codex" && hasHelpFlag(args.slice(1))) {
   printSubcommandUsage(command);
   process.exit(0);
 }
@@ -1094,6 +1097,10 @@ switch (command) {
     const { handleConfigCommand } = await import("./config-command");
     process.exitCode = await handleConfigCommand(args.slice(1));
     break;
+  }
+  case "codex": {
+    const { cmdCodex } = await import("./codex");
+    process.exit(await cmdCodex(args.slice(1)));
   }
   case "claude": {
     const { cmdClaude } = await import("./claude");

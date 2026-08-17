@@ -26,6 +26,17 @@ ocx start
 ocx start --port 8080
 ```
 
+### `ocx codex [Codex の引数...]`
+
+Codex を opencodex 経由で起動します。正常なプロキシがなければ設定済みポートでバックグラウンド
+起動し、実際のポートに合わせて Codex のプロバイダー設定を更新してから、選択済み Codex
+ランタイムへ残りの引数をそのまま渡します。
+
+```bash
+ocx codex
+ocx codex exec --skip-git-repo-check "READY と返してください"
+```
+
 ### `ocx stop`
 
 実行中のプロキシを PID で停止し PID ファイルを消したのち、ネイティブ Codex を復元します。管理型

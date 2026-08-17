@@ -26,6 +26,16 @@ ocx start
 ocx start --port 8080
 ```
 
+### `ocx codex [Codex 参数...]`
+
+通过 opencodex 启动 Codex。如果没有健康的代理，命令会在已配置端口后台启动一个代理，按实际
+端口刷新 Codex 的 provider 配置，然后把其余参数原样传给已选择的 Codex 运行时。
+
+```bash
+ocx codex
+ocx codex exec --skip-git-repo-check "请回答 READY"
+```
+
 ### `ocx stop`
 
 按 PID 停止正在运行的代理，删除 PID 文件并恢复原生 Codex。如果已安装受管后台服务，

@@ -46,6 +46,14 @@ describe("CLI subcommand help", () => {
     expect(result.stdout).toContain("Start the proxy server and sync models to Codex.");
   });
 
+  test("codex help documents the plug-and-play launcher", () => {
+    const result = runCli(["help", "codex"]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Usage: ocx codex [codex args...]");
+    expect(result.stdout).toContain("Start OpenCodex when needed");
+  });
+
   test("top-level help forms exit before Codex shim auto-restore can mutate launchers", () => {
     const opencodexHome = mkdtempSync(join(tmpdir(), "ocx-help-shim-home-"));
     const binDir = mkdtempSync(join(tmpdir(), "ocx-help-shim-bin-"));
