@@ -4,6 +4,13 @@ Status of the port of `design/OpenCodex M3.dc.html` into `gui/`, as of the first
 stage. The plan of record is `design/PORT-TO-GUI.md`; this file records what has
 actually landed, what has not, and where the seams are.
 
+**Dates are per-section.** The body below is the first-stage record and is not
+re-verified. The **Deferred by scope** list and the sections marked with a
+2026-08-13 note were re-checked against the tree on that date, because four
+"not built" entries turned out to describe code that had shipped the day after
+this file was written. Numbers not carrying a re-check date — test counts,
+key counts — are from the original stage and have not been re-counted.
+
 **Chosen approach:** full per-screen rewrite of all 19 screens, staged. Stage 1
 (below) lands the foundation and the six new system screens. The thirteen
 product screens still render their existing markup, restyled through the token
@@ -40,17 +47,28 @@ Split into two files because Fast Refresh discards module state when a file
 mixes component and non-component exports — which would have reset every
 preference on each edit.
 
+`theme/viewport-preview.ts` sits beside it and supplies the *other* width the
+shell can measure itself against. `windowClass` is deliberately a JavaScript
+decision rather than a media query so an emulated width works; this is the
+module that supplies one. It is a small subscribable store rather than a
+preference because both `PrefsProvider` and `SettingsDraftProvider` derive the
+shell width and must never disagree, and because it is view state that resets on
+reload — a persisted preview would reopen the app inside a fake 412px frame with
+nothing on screen to explain why.
+
 ### 3. Shell — `gui/src/shell/`
 
 | File | Role |
 |---|---|
 | `AdaptiveNav.tsx` | bottom bar / icon rail / permanent drawer + compact modal drawer |
-| `AppBar.tsx` | title, live `v… · :port` status, notification centre, Appearance shortcut, account chip |
+| `AppBar.tsx` | title, live `v… · :port` status, notification centre, viewport preview size, Appearance shortcut, account chip |
+| `ViewportPreview.tsx` | pins the shell to an emulated width (412 / 834 / 1280) so the compact and medium layouts can be checked without resizing the window; draws the device frame and its exit banner |
 | `TabStrip.tsx` | browser-style tabs: pin, close, drag-reorder, overflow menu, roving `tabIndex` |
 | `SnackbarHost.tsx` | bottom-left `aria-live="polite"` stack |
 | `use-tabs.ts` | tab state, hash sync |
 | `notifications*.ts(x)` | snackbars + capped, persisted history |
-| `narrator.ts` | single-utterance speech queue that supersedes rather than stacks |
+| `narrator.ts` | one-utterance-at-a-time speech queue; supersedes rather than stacks, across a whole bilingual pair |
+| `narrator-voices.ts` | voice enumeration from both sources, late-arrival subscription, list search, and how a stored `voiceURI` resolves |
 | `revisions.ts` | append-only revision log |
 | `m3-ui.tsx` | Card / Button / Segmented / Slider / Field / TextInput / TextArea / Chip / Toggle / Empty / Dialog / Banner / SelectField |
 | `page-meta.ts` | nav order, icons and label keys for all 19 pages |
@@ -79,8 +97,8 @@ Status and chart colours stay functional data colours, as the spec requires.
 
 | Screen | Notes |
 |---|---|
-| **Appearance** | theme, seed picker (free hex + 8 curated), density 1–5, font family/scale/weight, live preview, per-element editors with individual reset |
-| **Language & voice** | interface language; narrator off by default, one utterance at a time, language selectable |
+| **Appearance** | theme, seed picker (free hex + 8 curated), density 1–5, font family/scale/weight, live preview, per-element editors with individual reset. Since `4ba0f747`: an infinite colour picker and the word-depth typography editor described under *Deferred by scope* |
+| **Language & voice** | interface language, including Cantonese and the bilingual mode since `499c1bc8`; the two per-language funny-level sliders with a live five-rung ladder; the narrator, off by default and one utterance at a time, with a selectable language including a serialized English-then-Cantonese mode, and a voice, speed and pitch picker **per narrated language** that reads the platform's real voice list, offers Microsoft Edge's online neural voices as an opt-in second source (the only Cantonese voices most Windows machines can reach), and says what is actually in effect; the dim sum surprise, described and previewable but with no off switch |
 | **Regex builder** | ECMAScript `RegExp` evaluated locally. Caps enforced: 400-char pattern, 20 000-char sample, 200 matches, forced advance on a zero-width match. Token palette, flags, presets, named groups, copy + Markdown export |
 | **Changelog** | reads `/api/changelog`; ISO date range (typed *and* native picker, invalid input reported inline without discarding text) composed with regex-capable search, Markdown export stating the range |
 | **Version history** | append-only; a restore is recorded as a new revision and the dialog says so |
@@ -94,6 +112,18 @@ translation is still a compile error; M3 keys resolve through `M3_OVERRIDES`
 with an English fallback and can be filled in per locale, per screen, without
 breaking the build. Nav labels are translated for all five; the rest currently
 renders English outside `en`.
+
+**Re-checked 2026-08-13:** two locales joined that arrangement without changing
+it. `yue` is a *partial* dictionary in `PARTIAL_DICTS` rather than a member of
+`DICTS`, precisely so it can be filled in incrementally instead of forcing ~1,500
+placeholder strings, and it resolves through the same fallback chain. `bi` is a
+**rendering mode, not a dictionary** — nothing is ever looked up under it;
+`resolveKey()` in `i18n/resolve.ts` resolves the English and Cantonese tracks
+separately and joins them with a middle dot, and only when they differ, so an
+untranslated key does not print in English twice. The full order per track is
+funny-level variant → the locale's full dictionary → its partial dictionary →
+its `M3_OVERRIDES` → English in the same order → the key itself, so a typo shows
+as the key name in the UI rather than as blank space.
 
 ### 7. Supporting backend (minimal, needed by the Changelog screen)
 
@@ -199,7 +229,7 @@ feature. Every enable-path test asserts the bind is *still loopback* afterwards.
 
 ### 10. CI — `.github/workflows/gui-preview.yml`
 
-Typecheck → lint → test → build, then uploads `gui/dist` as an artifact
+Typecheck → test → build, then uploads `gui/dist` as an artifact
 (`opencodex-dashboard-<sha>`, 14-day retention) with a `HOW-TO-RUN.txt`
 explaining how to serve it and which screens work without a proxy.
 
@@ -210,7 +240,14 @@ environment for the docs site.
 
 ## Verification
 
-Run locally, all green:
+**These are first-stage figures and have not been re-run since.** The suite has
+grown a long way past them — `ROADMAP.md` records 494 GUI tests at the 2026-07-30
+sweep and 874 at the 2026-08-04 one — so treat the count below as a record of
+what that stage verified, not as the current state. The 2026-08-13 pass that
+corrected this file was a documentation review and deliberately ran no tests, so
+it re-dated nothing here.
+
+Run locally at the first stage, all green:
 
 - `bun test tests` (in `gui/`) — **373 pass, 0 fail**
 - `bun x tsc -b` (gui) and `bun x tsc --noEmit` (root) — clean
@@ -244,9 +281,16 @@ check that list before anything else.
 
 ---
 
-## Not landed
+## Landed after the first stage, and what is still deferred
 
-### 11. Export + account-change history
+This section was headed **"Not landed"** until the 2026-08-13 re-check, which was
+wrong for everything except the last list: items 11 and 12, the thirteen product
+screens and the `ui.tsx` retirement had all shipped, and item 12's own first line
+said so. `ocx export` and the account-change history landed in `1b2558e0`
+(2026-07-29). Only **Deferred by scope** at the end holds items that had not
+landed — and four of the five in it since have.
+
+### 11. Export + account-change history — landed in `1b2558e0`
 
 - `ocx export <path|-> --yes` — full-state bundle (config, Codex accounts with
   OAuth credentials, auth record). Refuses without `--yes`; warning on stderr so
@@ -347,26 +391,136 @@ Add-Codex-Account modal writes those class names by hand.
   which is where it belongs; this file is not the place to look it up.
 - ~~**Codex account switching.**~~ Landed as the app-bar switcher in item 12 above
   (`gui/src/shell/AccountSwitcher.tsx`).
-- **Funny-level voice ladder** (levels 1–5). The mechanism is not built. It needs
-  array-valued dictionary entries; `M3_OVERRIDES` is the natural place to add
-  the shape. Note the rule the prototype demonstrates: facts are identical at
-  every level, only voice changes — the destructive warning reads the same at
-  level 1 and level 5.
-- **Dim sum surprise.** Built (`gui/src/shell/DimSumCard.tsx` + `shell/dimsum.ts`,
-  one draw per launch, off-switch on Appearance) but each dish still renders an
-  emoji placeholder rather than a photo, and `dimsum.ts` says so in the source.
-  Real bundled dish images are the remaining half.
-- **Bundled fonts.** `FONT_CHOICES` names Roboto Flex / Roboto Mono / Noto Sans
-  HK, but no font files are bundled — the stacks fall through to system faces
-  today. `docs/design-system/foundations.md` forbids CDN fonts, so these must be
-  vendored into `gui/public/` before the family picker means anything.
-- **Settings search across every settings surface.** Not built; needs a generated
-  index over the real settings components.
+Re-checked against the tree on **2026-08-13**. Four entries below said "not built"
+about code that had already landed on 2026-07-30 and 2026-07-31 — within a day of
+this list being written — and nothing corrected them afterwards. They are struck
+through with the commit that landed them. `ROADMAP.md` carries the same four
+corrections; if these two files ever disagree again, check the tree, not either
+file.
+
+- ~~**Funny-level voice ladder** (levels 1–5).~~ Landed in `499c1bc8`. The
+  mechanism is `gui/src/i18n/voice.ts` (1,531 lines), and it is a *curated
+  overlay* rather than the array-valued dictionary entries this entry predicted —
+  `M3_OVERRIDES` was not the shape used. `resolveTrack()` in `i18n/resolve.ts`
+  consults `voiceFor()` ahead of every dictionary, so the level styles whatever is
+  under it. Two independent sliders (English and Cantonese) live on Language &
+  voice with a live five-rung ladder. The rule this entry stated held: facts are
+  identical at every level and only voice changes, which
+  `tests/i18n-voice-and-locales.test.ts` enforces by re-deriving each entry's
+  identifiers, placeholders and consequence words from its neutral wording and
+  asserting they survive all five levels in both languages. Level 3 is
+  deliberately absent from the overlay — the shipped neutral wording *is* level 3,
+  and a second copy of it would drift.
+- ~~**Dim sum surprise** renders an emoji placeholder.~~ Photos landed in
+  `58fb0eb7`. Eleven `.webp` files sit in `gui/public/dimsum/`, one per dish in
+  `DISHES`, and `photoSrc()` resolves `dimsum/<id>.webp` from the build output
+  with no network fetch. `DimSumCard.tsx` renders the photo optimistically and
+  falls back to the emoji only on `onError`, so the emoji is now insurance
+  against an unbundled dish rather than the shipped art. The source comment in
+  `dimsum.ts` was updated with it and no longer calls the art a placeholder.
+- ~~**Bundled fonts.**~~ Landed in `5d18a875`. Eleven woff2 files (Roboto Flex,
+  Roboto, Roboto Mono, Noto Sans HK — Latin subsets, 0.41 MB total) live in
+  `gui/public/fonts/` with `@font-face` declarations in
+  `gui/src/styles/fonts.css`. Nothing is fetched at runtime, so
+  `foundations.md`'s CDN prohibition holds. **Noto Sans HK's CJK coverage is
+  deliberately not bundled** — one weight is 6.7 MB and three would be ~20 MB in
+  every clone and installer, duplicating a face Windows (Microsoft JhengHei) and
+  macOS (PingFang) already ship. The stacks name it first and fall through to the
+  system's Chinese face, which is why Cantonese renders without it. If that is
+  revisited, subset it to the glyphs the interface uses rather than shipping the
+  whole font.
+- ~~**Settings search across every settings surface.** Not built.~~ Landed in
+  `e5897a08`, with the cross-page half in `ee0c3186`. The behaviour lives once in
+  `gui/src/shell/settings-search.ts` and `use-settings-search.ts`; a surface
+  declares an option list rather than reimplementing a matcher.
+  `SettingsSearchRow` ships on Claude Code, Debug, Mobile, Network, Startup,
+  Storage and the tab appearance editor, and `settingsMatcher` is reused directly
+  by Codex Auth's account pool, the provider catalog, provider models and Claude
+  Desktop. Off-screen hits are reported in two kinds — another tab of this
+  surface, and another screen — from the shared `SETTINGS_ELSEWHERE` array in
+  `gui/src/pages/settings-elsewhere.ts`.
+
+  **The generated index this entry called out as still open has since landed.**
+  `gui/src/shell/settings-registry.ts` holds the contract and
+  `settings-registry-entries.ts` the contributions — 80 settings across 14 pages,
+  replacing all eight hand-written rows, with `settings-elsewhere.ts` reduced to a
+  shim that derives its list from the registry.
+
+  Two shapes worth keeping if this is touched. Rows are **i18n keys resolved at
+  query time**, not strings captured at render time, because the index exists to
+  describe screens that are *not mounted* — registering from a component effect
+  would have rebuilt the original blindness behind more machinery. Keys also turn
+  a row pointing at a nonexistent key into a compile error rather than a search
+  result that leads nowhere. And the registry is imported for side effect inside
+  `use-settings-search.ts` rather than at the app root, so a new surface cannot
+  forget to register.
+
+  Still open, and smaller: the index carries labels, descriptions and option
+  names but not a setting's **live value** on a page nobody has opened — a screen
+  that has not read a control cannot honestly report what it holds. A cross-page
+  hit says where the setting lives; it does not navigate there.
+- **Design parity survey, 2026-08-13 — 24 gaps open, six uncommitted.** A
+  seven-slice re-read of `design/` against `gui/` found 67 differences, 30 of them
+  real gaps. Six are in the working tree of `fix/design-parity-gaps`, whose tip is
+  `c8fd307f` — identical to `main`, so **none of it is committed, none of it is on
+  `main`, and none of it is in `build-152`**. Those six: nav labels kept in the DOM
+  and clipped rather than dropped at rail width; the compact drawer made a real
+  modal (`role="dialog"`, `aria-modal`, `inert` on `.m3-main-col`, focus trap);
+  per-tone snackbar marks with a visually hidden tone name and the missing
+  `.m3-snack.warn` surface; warnings promoted to persist-until-dismissed via
+  `PERSISTENT_TONES`; the snackbar's close and action lifted to the 48px
+  coarse-pointer floor; and the app bar's viewport preview-size control
+  (`shell/ViewportPreview.tsx` + `theme/viewport-preview.ts`, item 3 above).
+
+  The other **24 are open and unstarted**, and the full list with file and line
+  references lives in `ROADMAP.md` under *Known gaps → Design parity — the
+  2026-08-13 survey*. It is not duplicated here; one copy is
+  hard enough to keep true. The shape worth knowing from this file's point of view
+  is the element-appearance seam below, and three places the survey itself was
+  wrong that the roadmap entry corrects rather than copies: the dead
+  element-editor controls are **seventeen** across ten targets, not the five it
+  named; the hard-coded `#c44` is one site in each of two files rather than two in
+  one file, and the second file was never named; and the funny-level page-lead
+  shortfall is ten of fourteen enumerable leads, not the "18 of 22, only Dashboard
+  and Usage voiced" it stated. A survey is evidence, not a record.
+
+- **Word-depth typography** landed in `4ba0f747` and was never listed here as
+  deferred, but `ROADMAP.md` claimed it was missing, so it is worth naming:
+  `gui/src/components/appearance/TypographyEditor.tsx` carries underline styles
+  with colour and thickness, overline, single and double strikethrough, small
+  caps and all-small-caps, super/subscript, letter and word spacing, line height,
+  baseline shift, outline, shadow, glow, alignment and direction. Variable axes
+  come from the font's own `fvar` table via `readVariationAxes()` in
+  `shared/m3/fonts.ts`, not a hard-coded list.
 
 ---
 
 ## Seams worth knowing
 
+- **An element-appearance control is only live if the stylesheet reads its
+  variable.** The per-element editor compiles a curated target's controls into
+  `--el-<target>-<control>`; a control whose variable no rule consumes moves, and
+  the screen does not. Nothing fails: the editor renders, the value persists, and
+  the slider is inert. **Seventeen are dead as of 2026-08-13, across ten of the
+  sixteen `ELEMENT_TARGETS`** — `tabStrip` (color, font, radius, size), `navRail`
+  (radius, size), `table` (radius, pad), `iconButton` (font, pad), `banner`
+  (bg, color), and `size` alone on `appBar`, `card`, `menu` and `bottomNav`, plus
+  `color` on `button`. `input`, `chip`, `select`, `dialog`, `statCard` and
+  `remotePanel` are complete. Check that across **all five** stylesheets carrying
+  `--el-*` (`styles/m3-shell.css`, `styles/provider-overview-dashboard.css`,
+  `styles/provider-workspace-shell.css`, `styles-dashboard-workspace.css`,
+  `shared/m3/components.css`) — grepping `m3-shell.css` alone wrongly condemns
+  `table` and `statCard`. Two traps go with it. `gui/src/styles/m3-shell.css` and
+  `shared/m3/components.css` both style `.m3-btn--filled`, so a hook added to one
+  and not the other makes the docs site drift. And a hook on `.m3-banner` alone
+  renders nothing, because the four tone modifiers below it set `background` and
+  `color` and win on source order — the hooks belong on the modifiers.
+  `gui/tests/element-typography.test.ts` does **not** catch any of this: it asserts
+  each mapped target consumes *at least one* variable, which all ten of the
+  affected targets already do. It has to be per-target-per-control, with a
+  hand-written allow-list for the deliberate exemptions — `iconButton`'s `font`
+  and `pad` on a fixed 48×48 box are the plausible ones, and writing them down is
+  what makes them distinguishable from the fifteen oversights.
 - `data-theme` is still written on `<html>` in both directions, because legacy
   page CSS branches on it. Do not remove it until the last screen is rewritten.
 - `WIDE_PAGES` in `App.tsx` opts a page out of the 1180px centred column.
@@ -379,6 +533,16 @@ Add-Codex-Account modal writes those class names by hand.
   `useConfirm()` from `shell/confirm-context.ts`, never the native
   `window.confirm()`. That one drew an OS box the app could neither theme nor
   label, so every decision in the product read "OK".
+
+  Which tones stay on screen is decided in one place — on `main` that is
+  `notice.tone !== "error"`, so only errors persist. In the uncommitted
+  `fix/design-parity-gaps` tree it is `PERSISTENT_TONES` = `["warn", "error"]`
+  with an `autoDismisses(tone)` helper, because a warning is the one message that
+  exists to be acted on and a six-second timer only catches a user who happened
+  to be looking at that corner. Read the constant before assuming either.
+  `action.onAction` has existed since the first stage and has exactly one caller
+  in `gui/src` (`components/LaunchCard.tsx`); there is no Undo anywhere in the
+  product and no `notif.undo` string to reuse.
 
   ```ts
   const confirm = useConfirm();

@@ -16,13 +16,11 @@
  * never a silent downgrade, because a user who asked for an encrypted 7z and
  * received a plain ZIP has been told their data is protected when it is not.
  *
- * ## The encryption clause
+ * ## Encryption is deliberately unavailable for now
  *
- * `encryptHeaders` defaults to **true** whenever a password is set. An archive
- * whose contents are encrypted but whose filenames are in the clear still tells
- * anyone who finds it what it holds — `salary-review-2026.pdf` discloses most of
- * itself in its name. 7-Zip can hide those and does not by default, so this
- * inverts that default and `describePlan` says so out loud.
+ * 7-Zip accepts a password only as a command-line argument. That exposes it to
+ * process inspection on common operating systems. Until a protected input path
+ * exists, password-bearing requests are rejected before a child is spawned.
  */
 
 import { spawn } from "node:child_process";
@@ -59,16 +57,105 @@ export interface SevenZipOptions {
   multithread?: boolean | number;
   /** `-v`, e.g. "100m". Splits into numbered volumes. */
   volumeSize?: string;
-  /** `-p`. AES-256 either way; see `encryptHeaders`. */
+  /** Reserved for a future protected input path; non-empty values are refused. */
   password?: string;
-  /**
-   * `-mhe`. Encrypts the filename table too.
-   *
-   * Defaults to true when a password is set — 7-Zip's own default is off, and an
-   * archive that hides contents but publishes names is a weaker promise than the
-   * word "encrypted" makes.
-   */
+  /** Reserved alongside `password`; requesting encrypted headers is refused. */
   encryptHeaders?: boolean;
+}
+
+const SEVEN_ZIP_METHODS = new Set<SevenZipMethod>(["LZMA2", "LZMA", "PPMd", "BZip2", "Deflate", "Copy"]);
+const SEVEN_ZIP_LEVELS = new Set<SevenZipLevel>([0, 1, 3, 5, 7, 9]);
+const SEVEN_ZIP_OPTION_KEYS = new Set<keyof SevenZipOptions>([
+  "method", "level", "dictionarySize", "wordSize", "solid", "multithread",
+  "volumeSize", "password", "encryptHeaders",
+]);
+
+export type SevenZipOptionsParseResult =
+  | { ok: true; options: SevenZipOptions }
+  | { ok: false; error: string };
+
+export const SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON =
+  "encrypted 7z export is disabled because 7-Zip exposes passwords in process arguments; it will remain unavailable until a protected password-input channel exists";
+
+function boundedSizeError(value: string, field: string, maxBytes: number): string | null {
+  const match = /^([1-9]\d{0,5})([kmg])$/i.exec(value);
+  if (!match) return `${field} must be a positive size such as 64m`;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const multiplier = unit === "k" ? 1024 : unit === "m" ? 1024 ** 2 : 1024 ** 3;
+  if (amount * multiplier > maxBytes) return `${field} is larger than the supported safety limit`;
+  return null;
+}
+
+/** Validate and normalize every caller-controlled 7-Zip option before spawn. */
+export function parseSevenZipOptions(value: unknown): SevenZipOptionsParseResult {
+  if (value === undefined) return { ok: true, options: {} };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, error: "sevenZip must be an object" };
+  }
+  const raw = value as Record<string, unknown>;
+  const unknown = Object.keys(raw).filter(key => !SEVEN_ZIP_OPTION_KEYS.has(key as keyof SevenZipOptions));
+  if (unknown.length) return { ok: false, error: `unknown sevenZip option(s): ${unknown.join(", ")}` };
+
+  const options: SevenZipOptions = {};
+  if (raw.method !== undefined) {
+    if (typeof raw.method !== "string" || !SEVEN_ZIP_METHODS.has(raw.method as SevenZipMethod)) {
+      return { ok: false, error: "sevenZip.method is not supported" };
+    }
+    options.method = raw.method as SevenZipMethod;
+  }
+  if (raw.level !== undefined) {
+    if (typeof raw.level !== "number" || !SEVEN_ZIP_LEVELS.has(raw.level as SevenZipLevel)) {
+      return { ok: false, error: "sevenZip.level must be one of 0, 1, 3, 5, 7, or 9" };
+    }
+    options.level = raw.level as SevenZipLevel;
+  }
+  if (raw.dictionarySize !== undefined) {
+    if (typeof raw.dictionarySize !== "string") return { ok: false, error: "sevenZip.dictionarySize must be a string" };
+    const error = boundedSizeError(raw.dictionarySize, "sevenZip.dictionarySize", 256 * 1024 ** 2);
+    if (error) return { ok: false, error };
+    options.dictionarySize = raw.dictionarySize.toLowerCase();
+  }
+  if (raw.wordSize !== undefined) {
+    if (typeof raw.wordSize !== "number" || !Number.isInteger(raw.wordSize) || raw.wordSize < 5 || raw.wordSize > 273) {
+      return { ok: false, error: "sevenZip.wordSize must be an integer from 5 through 273" };
+    }
+    options.wordSize = raw.wordSize;
+  }
+  if (raw.solid !== undefined) {
+    if (typeof raw.solid === "boolean") options.solid = raw.solid;
+    else if (typeof raw.solid === "string") {
+      const error = boundedSizeError(raw.solid, "sevenZip.solid", 64 * 1024 ** 3);
+      if (error) return { ok: false, error };
+      options.solid = raw.solid.toLowerCase();
+    } else return { ok: false, error: "sevenZip.solid must be a boolean or bounded size" };
+  }
+  if (raw.multithread !== undefined) {
+    if (typeof raw.multithread === "boolean") options.multithread = raw.multithread;
+    else if (
+      typeof raw.multithread === "number"
+      && Number.isInteger(raw.multithread)
+      && raw.multithread >= 1
+      && raw.multithread <= 32
+    ) options.multithread = raw.multithread;
+    else return { ok: false, error: "sevenZip.multithread must be a boolean or an integer from 1 through 32" };
+  }
+  if (raw.volumeSize !== undefined) {
+    if (typeof raw.volumeSize !== "string") return { ok: false, error: "sevenZip.volumeSize must be a string" };
+    if (raw.volumeSize.trim()) {
+      return { ok: false, error: "split-volume 7z exports are not supported by the single-file download endpoint" };
+    }
+  }
+  if (raw.password !== undefined) {
+    if (typeof raw.password !== "string") return { ok: false, error: "sevenZip.password must be a string" };
+    if (raw.password.length > 0) return { ok: false, error: SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON };
+  }
+  if (raw.encryptHeaders !== undefined) {
+    if (typeof raw.encryptHeaders !== "boolean") return { ok: false, error: "sevenZip.encryptHeaders must be a boolean" };
+    if (raw.encryptHeaders) return { ok: false, error: SEVEN_ZIP_ENCRYPTION_UNAVAILABLE_REASON };
+    options.encryptHeaders = false;
+  }
+  return { ok: true, options };
 }
 
 // ------------------------------------------------------------------- ZIP
@@ -224,10 +311,12 @@ export function findSevenZip(
  * The `7z a` arguments for these options.
  *
  * Split out from the spawn so the flags can be asserted without running
- * anything — the encrypted-header default especially, which is a security
- * promise and deserves a test rather than a code read.
+ * anything, including proving rejected options never become child arguments.
  */
 export function sevenZipArgs(target: string, options: SevenZipOptions = {}): string[] {
+  const parsed = parseSevenZipOptions(options);
+  if (!parsed.ok) throw new Error(parsed.error);
+  options = parsed.options;
   const args = ["a", "-t7z", "-y", "-bso0", "-bsp0"];
   const method = options.method ?? "LZMA2";
   args.push(`-m0=${method}`);
@@ -241,11 +330,6 @@ export function sevenZipArgs(target: string, options: SevenZipOptions = {}): str
     args.push(options.multithread === true ? "-mmt=on" : options.multithread === false ? "-mmt=off" : `-mmt=${options.multithread}`);
   }
   if (options.volumeSize) args.push(`-v${options.volumeSize}`);
-  if (options.password) {
-    args.push(`-p${options.password}`);
-    // Default ON, not 7-Zip's default OFF. See the file header.
-    if (options.encryptHeaders !== false) args.push("-mhe=on");
-  }
   args.push(target);
   return args;
 }
@@ -261,16 +345,15 @@ export interface ArchivePlan {
 /**
  * What this archive will actually be, said before it is built.
  *
- * The two lines that matter are the encryption ones: whether filenames are
- * hidden, and — when they are not — that they are readable to anyone holding the
- * file. Neither is something a user should have to infer from a flag name.
+ * Encryption requests are rejected during option parsing. The remaining plan
+ * states plainly that an accepted archive is unencrypted.
  */
 export function describePlan(kind: ArchiveKind, options: SevenZipOptions = {}, sevenZip = findSevenZip()): ArchivePlan {
+  const parsed = parseSevenZipOptions(options);
+  if (!parsed.ok) return { kind, notes: [], blocked: parsed.error };
+  options = parsed.options;
   if (kind === "zip") {
     const notes = ["Deflate, with entries stored uncompressed where that is smaller."];
-    if (options.password) {
-      notes.push("This ZIP is NOT encrypted. Encryption is offered on the 7z path only; choose 7z, or remove the password.");
-    }
     return { kind, notes };
   }
 
@@ -289,15 +372,7 @@ export function describePlan(kind: ArchiveKind, options: SevenZipOptions = {}, s
   if (options.solid === false) notes.push("Non-solid: each file compresses alone, which is larger but lets one file be extracted without the rest.");
   else if (options.solid) notes.push(`Solid${typeof options.solid === "string" ? ` in ${options.solid} blocks` : ""}: smaller, but reading one file may decompress others.`);
   if (options.volumeSize) notes.push(`Split into ${options.volumeSize} volumes — every part is needed to extract.`);
-  if (options.password) {
-    notes.push(
-      options.encryptHeaders === false
-        ? "AES-256 on file CONTENTS ONLY — the file names stay readable to anyone who has the archive."
-        : "AES-256 on both contents and the file names.",
-    );
-  } else {
-    notes.push("No password: this archive is not encrypted.");
-  }
+  notes.push("No password: this archive is not encrypted.");
   return { kind, notes };
 }
 
@@ -310,10 +385,9 @@ export interface SevenZipResult {
 /**
  * Run 7-Zip over a directory that already holds the files.
  *
- * The password goes in `argv`, which is visible in a process list on most
- * systems — 7-Zip offers no stdin path for it, so the honest options were this
- * or no 7z encryption at all. Callers should treat an export password as
- * single-use rather than a reused secret, and the UI says so.
+ * Password-bearing and malformed options are refused before spawn. 7-Zip has no
+ * protected password-input path, so allowing its `-p...` argv form would expose
+ * a user secret to process inspection.
  */
 export function runSevenZip(
   sourceDir: string,
@@ -321,10 +395,12 @@ export function runSevenZip(
   options: SevenZipOptions = {},
   binary = findSevenZip(),
 ): Promise<SevenZipResult> {
+  const parsed = parseSevenZipOptions(options);
+  if (!parsed.ok) return Promise.resolve({ ok: false, message: parsed.error });
   if (!binary) {
     return Promise.resolve({ ok: false, message: "7-Zip is not installed on this machine." });
   }
-  const args = sevenZipArgs(target, options);
+  const args = sevenZipArgs(target, parsed.options);
   return new Promise(resolve => {
     const child = spawn(binary, [...args, "."], { cwd: sourceDir, windowsHide: true });
     let stderr = "";

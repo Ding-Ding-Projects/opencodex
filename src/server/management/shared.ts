@@ -51,7 +51,8 @@ import type { OcxClaudeCodeConfig, OcxClaudeDesktopProfile, OcxConfig, OcxCustom
 import type { DesktopProfileModel } from "../../claude/desktop-profile";
 import { drainAndShutdown } from "../lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
-import { estimateComboCost, estimateRequestCost, effectiveServiceTier, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
+import { classifyUsageForCost, comboPricingUnavailableReason, comboUsageUnavailableReason, estimateComboCost, estimateRequestCost, estimateRequestCostLanes, effectiveServiceTier, pricingLaneUnavailableReason, pricingSourceClassification, pricingUnavailableReason, tokensPerSecond } from "../../usage/cost";
+import type { PricingUnavailableReason } from "../../usage/expected-prices";
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
 import { applySystemEnvToggle } from "../system-env";
@@ -84,11 +85,20 @@ export type TokPerSecondResult =
 
 export type CostEstimateReason = "usage_estimated" | "cache_detail_missing" | "expected_price_overlay";
 
-export type CostResult =
-  | { kind: "value"; estimate: NonNullable<ReturnType<typeof estimateRequestCost>>; estimateReasons: CostEstimateReason[] }
-  | { kind: "unavailable"; reason: MetricUnavailableReason };
+export interface CostLaneResult {
+  kind: "value" | "unavailable";
+  /** Direct is billable-product list price; equivalent is explicitly non-billing. */
+  sourceClassification?: "direct_api_key" | "subscription_api_equivalent";
+  estimate?: NonNullable<ReturnType<typeof estimateRequestCost>>;
+  reason?: MetricUnavailableReason;
+  pricingReason?: PricingUnavailableReason;
+}
 
-export type MetricSource = Pick<RequestLogEntry, "provider" | "model" | "durationMs" | "usageStatus" | "usage" | "requestedServiceTier" | "configuredServiceTier" | "responseServiceTier"> & {
+export type CostResult =
+  | { kind: "value"; estimate: NonNullable<ReturnType<typeof estimateRequestCost>>; estimateReasons: CostEstimateReason[]; direct?: CostLaneResult; apiEquivalent?: CostLaneResult }
+  | { kind: "unavailable"; reason: MetricUnavailableReason; pricingReason?: PricingUnavailableReason; direct?: CostLaneResult; apiEquivalent?: CostLaneResult };
+
+export type MetricSource = Pick<RequestLogEntry, "provider" | "model" | "durationMs" | "usageStatus" | "usage"> & Partial<Pick<RequestLogEntry, "timestamp" | "requestedServiceTier" | "configuredServiceTier" | "responseServiceTier" | "cacheRetention" | "promptInputTokens">> & {
   attempts?: readonly PersistedUsageAttempt[];
 };
 
@@ -106,29 +116,132 @@ export function tokPerSecondResult(entry: Pick<MetricSource, "durationMs" | "usa
 }
 
 export function unavailableCostReason(entry: MetricSource): MetricUnavailableReason {
-  // Normalizer-first classification: the landed normalizer recovers legacy
-  // cachedInputTokens=read+write rows via retry, so a raw read+write>input
-  // pre-check would misclassify recoverable rows (020 audit blocker #2).
-  if (!entry.usage && !entry.attempts?.length) return "usage_missing";
-  if (entry.usageStatus === "unsupported") return "usage_unsupported";
-  if (entry.attempts?.length) return "combo_attempt_unavailable";
-  if (!entry.usage) return "usage_missing";
-  if (!normalizeCostTokens(entry.usage)) {
-    const effectiveRead = entry.usage.cacheReadInputTokens ?? entry.usage.cachedInputTokens ?? 0;
-    const effectiveWrite = entry.usage.cacheCreationInputTokens ?? 0;
-    const finite = [entry.usage.inputTokens, entry.usage.outputTokens, effectiveRead, effectiveWrite]
-      .every(v => Number.isFinite(v) && v >= 0);
-    return finite ? "invalid_cache_breakdown" : "invalid_usage";
+  if (entry.attempts?.length) {
+    return comboUsageUnavailableReason(entry.attempts) ?? "combo_attempt_unavailable";
   }
-  return "price_unmatched";
+  const usage = classifyUsageForCost(entry.usage, entry.usageStatus);
+  return usage.kind === "unavailable" ? usage.reason : "price_unmatched";
+}
+
+function unavailableLane(reason: MetricUnavailableReason, pricingReason?: PricingUnavailableReason): CostLaneResult {
+  return { kind: "unavailable", reason, ...(pricingReason ? { pricingReason } : {}) };
+}
+
+function singleLaneResult(entry: MetricSource, lane: "direct" | "api_equivalent", context: {
+  serviceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
+  promptInputTokens?: number;
+  timestamp?: number;
+}): CostLaneResult {
+  const source = pricingSourceClassification(entry.provider);
+  const baseReason = unavailableCostReason(entry);
+  if (!source || source.lane !== lane) return unavailableLane(baseReason);
+  const estimate = estimateRequestCostLanes({
+    provider: entry.provider,
+    model: entry.model,
+    usage: entry.usage,
+    usageStatus: entry.usageStatus,
+    ...context,
+  })[lane === "direct" ? "direct" : "apiEquivalent"];
+  if (estimate) {
+    return {
+      kind: "value",
+      estimate,
+      sourceClassification: estimate.sourceClassification,
+    };
+  }
+  const pricingReason = pricingLaneUnavailableReason(lane, {
+    provider: entry.provider,
+    model: entry.model,
+    usage: entry.usage,
+    usageStatus: entry.usageStatus,
+    ...context,
+  });
+  return unavailableLane(baseReason, pricingReason);
+}
+
+function comboLaneResult(entry: MetricSource, lane: "direct" | "api_equivalent", context: {
+  serviceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
+  promptInputTokens?: number;
+  timestamp?: number;
+}): CostLaneResult {
+  if (!entry.attempts?.length) return unavailableLane(unavailableCostReason(entry));
+  const sourceAttempts = entry.attempts.filter(attempt => pricingSourceClassification(attempt.provider)?.lane === lane);
+  if (sourceAttempts.length === 0) return unavailableLane("combo_attempt_unavailable");
+  const estimate = estimateComboCost(sourceAttempts, undefined, context);
+  if (estimate) {
+    return {
+      kind: "value",
+      estimate,
+      sourceClassification: lane === "direct" ? "direct_api_key" : "subscription_api_equivalent",
+    };
+  }
+  const reason = comboUsageUnavailableReason(sourceAttempts) ?? "combo_attempt_unavailable";
+  const pricingReason = comboPricingUnavailableReason(sourceAttempts, context);
+  return unavailableLane(reason, pricingReason);
 }
 
 export function costResult(entry: MetricSource): CostResult {
+  const hasLaneSource = entry.attempts?.length
+    ? entry.attempts.some(attempt => pricingSourceClassification(attempt.provider) !== null)
+    : pricingSourceClassification(entry.provider) !== null;
   const tier = effectiveServiceTier(entry);
+  const context = {
+    serviceTier: tier,
+    cacheRetention: entry.cacheRetention,
+    promptInputTokens: entry.promptInputTokens,
+    timestamp: entry.timestamp,
+  };
+  const direct = entry.attempts?.length
+    ? comboLaneResult(entry, "direct", context)
+    : singleLaneResult(entry, "direct", context);
+  const apiEquivalent = entry.attempts?.length
+    ? comboLaneResult(entry, "api_equivalent", context)
+    : singleLaneResult(entry, "api_equivalent", context);
+  // The top-level figure speaks for the WHOLE entry, so it cannot simply adopt the
+  // direct lane's number. A lane prices only the attempts it recognises: an attempt
+  // whose provider classifies into neither lane is filtered out of `sourceAttempts`
+  // before the lane sums it, so a combo with one unpriceable leg still leaves the
+  // direct lane holding a confident partial total. Publishing that as the entry's
+  // cost would quietly bill a combo for less traffic than it actually ran.
+  // `estimateComboCost` is all-or-nothing across every attempt, so it returns null
+  // for exactly that case and the entry falls through to `combo_attempt_unavailable`
+  // below — while the per-lane detail still reports what each lane could account for.
+  // A combo of subscription attempts is unaffected by this: their providers carry no
+  // direct price schedule, so the all-attempts estimate is null there too and no
+  // money-shaped total is invented for traffic nobody was billed for.
   const estimate = entry.attempts?.length
-    ? estimateComboCost(entry.attempts, undefined, tier)
-    : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, serviceTier: tier });
-  if (!estimate) return { kind: "unavailable", reason: unavailableCostReason(entry) };
+    ? estimateComboCost(entry.attempts, undefined, context)
+    : (direct.kind === "value" ? direct.estimate : null);
+  if (!estimate) {
+    const reason = unavailableCostReason(entry);
+    if (reason === "combo_attempt_unavailable" && entry.attempts?.length) {
+      const pricingReason = comboPricingUnavailableReason(entry.attempts, context);
+      return {
+        kind: "unavailable",
+        reason,
+        ...(pricingReason ? { pricingReason } : {}),
+        ...(hasLaneSource ? { direct, apiEquivalent } : {}),
+      };
+    }
+    if (reason === "price_unmatched" && entry.usage) {
+      const pricingReason = pricingUnavailableReason({
+        provider: entry.provider,
+        model: entry.model,
+        usage: entry.usage,
+        usageStatus: entry.usageStatus,
+        ...context,
+      });
+      return {
+        kind: "unavailable",
+        reason,
+        ...(pricingReason ? { pricingReason } : {}),
+        ...(hasLaneSource ? { direct, apiEquivalent } : {}),
+      };
+    }
+    return { kind: "unavailable", reason, ...(hasLaneSource ? { direct, apiEquivalent } : {}) };
+  }
   const estimateReasons = [
     entry.usageStatus === "estimated" || entry.usage?.estimated ? "usage_estimated" as const : undefined,
     entry.usage && entry.usage.cachedInputTokens === undefined
@@ -137,7 +250,7 @@ export function costResult(entry: MetricSource): CostResult {
     estimate.price?.source === "expected" || estimate.attempts?.some(a => a.price.source === "expected")
       ? "expected_price_overlay" as const : undefined,
   ].filter((reason): reason is CostEstimateReason => reason !== undefined);
-  return { kind: "value", estimate, estimateReasons };
+  return { kind: "value", estimate, estimateReasons, ...(hasLaneSource ? { direct, apiEquivalent } : {}) };
 }
 
 export function requestLogDto(entry: RequestLogEntry): Record<string, unknown> {
@@ -153,7 +266,16 @@ export function requestLogDto(entry: RequestLogEntry): Record<string, unknown> {
           ...attempt,
           displayMetrics: {
             tokPerSecond: tokPerSecondResult(attempt),
-            cost: costResult({ ...attempt, attempts: undefined, requestedServiceTier: entry.requestedServiceTier, configuredServiceTier: entry.configuredServiceTier, responseServiceTier: entry.responseServiceTier }),
+            cost: costResult({
+              ...attempt,
+              attempts: undefined,
+              timestamp: attempt.timestamp ?? entry.timestamp,
+              requestedServiceTier: entry.requestedServiceTier,
+              configuredServiceTier: entry.configuredServiceTier,
+              responseServiceTier: entry.responseServiceTier,
+              cacheRetention: entry.cacheRetention,
+              promptInputTokens: attempt.promptInputTokens ?? entry.promptInputTokens,
+            }),
           },
         })),
       }

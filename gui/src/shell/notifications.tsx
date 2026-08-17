@@ -1,15 +1,17 @@
 /**
  * Non-blocking notifications.
  *
- * Informational messages are snackbars, never modal dialogs. Errors stay on
- * screen until dismissed; everything else auto-dismisses. Each one is also
- * appended to a capped history that the notification centre and the
- * Notifications screen read.
+ * Informational messages are snackbars, never modal dialogs. Warnings and
+ * errors stay on screen until the user dismisses them; informational and
+ * success messages fade on their own — see `PERSISTENT_TONES` for why the line
+ * falls there. Each one is also appended to a capped history that the
+ * notification centre and the Notifications screen read.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AUTO_DISMISS_MS,
+  autoDismisses,
   HISTORY_CAP,
   HISTORY_KEY,
   NotificationsContext,
@@ -18,6 +20,7 @@ import {
   type Notice,
   type NotificationsApi,
 } from "./notifications-context";
+import { getNotificationSourcePage } from "./notification-source";
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<Notice[]>([]);
@@ -42,10 +45,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const notify = useCallback((input: Omit<Notice, "id" | "at" | "read">) => {
     const id = `n${++seq.current}-${Date.now()}`;
-    const notice: Notice = { ...input, id, at: Date.now(), read: false };
+    // The screen this notice belongs to, unless the caller already named one:
+    // almost none do, so this is what lets the notification centre show a
+    // source at all without threading a `source` argument through every
+    // `notify()` call site in the app.
+    const notice: Notice = { source: getNotificationSourcePage() ?? undefined, ...input, id, at: Date.now(), read: false };
     setLive(prev => prev.concat([notice]));
     setHistory(prev => [notice, ...prev].slice(0, HISTORY_CAP));
-    if (notice.tone !== "error") {
+    if (autoDismisses(notice.tone)) {
       timers.current.set(id, setTimeout(() => dismiss(id), AUTO_DISMISS_MS));
     }
     return id;

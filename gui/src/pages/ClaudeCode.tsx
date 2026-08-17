@@ -13,8 +13,9 @@ import {
   ClaudeCodeSettingsCard,
 } from "./claude-code-sections";
 import { serializeSidecarOverride } from "./claude-code-sidecar";
-import { formatCompactWindow, newClientId, type ClaudeCodeState, type MapRow } from "./claude-code-types";
+import { buildWindowOptions, formatCompactWindow, isPositiveInteger, newClientId, type ClaudeCodeState, type MapRow } from "./claude-code-types";
 import { ClaudeSettingsSearchRow, SmallFastModelSetting } from "./claude-code-settings";
+import { backgroundHelperOptions } from "./claude-code-helper-options";
 import { claudeSettingsSearch } from "./claude-settings-search";
 
 export { AutoConnectSetting, SmallFastModelSetting } from "./claude-code-settings";
@@ -25,6 +26,8 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
   const { locale } = useI18n();
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang ?? "en";
   const [state, setState] = useState<ClaudeCodeState | null>(null);
+  const [persistedMaxContextTokens, setPersistedMaxContextTokens] = useState<number | null>(null);
+  const [invalidStoredMaxContext, setInvalidStoredMaxContext] = useState(false);
   const [rows, setRows] = useState<MapRow[]>([]);
   // Load failure only. A save outcome is a snackbar — this one is not, because when
   // the config never arrives there is no screen left behind a snackbar to read it on.
@@ -46,6 +49,11 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         setLoadError(t("claude.loadFail"));
         return;
       }
+      const maxContextTokens = isPositiveInteger(r.maxContextTokens) ? r.maxContextTokens : null;
+      setPersistedMaxContextTokens(maxContextTokens);
+      setInvalidStoredMaxContext(
+        r.maxContextTokens !== null && r.maxContextTokens !== undefined && maxContextTokens === null,
+      );
       setState({
         ...r,
         // No coercion: an absent config key is AUTO, and coercing it to subscription is
@@ -53,7 +61,7 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
         authMode: r.authMode === "proxy" || r.authMode === "subscription" ? r.authMode : "auto",
         ...reconcileAutoConnectState(r),
         fastMode: r.fastMode ?? null,
-        maxContextTokens: r.maxContextTokens ?? null,
+        maxContextTokens,
         autoContext: r.autoContext !== false,
         autoCompactWindow: r.autoCompactWindow ?? null,
         injectAgents: r.injectAgents !== false,
@@ -75,13 +83,14 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
     return () => window.clearTimeout(timeout);
   }, [load]);
 
-  // Plain slugs, not `modelLabel()`: the helper-model picker is a native <select>
-  // now, and a browser drops markup inside an <option> rather than rendering it —
-  // so the icon-prefixed variant would have shown up as nothing at all.
   const modelOptions = useMemo(() => {
-    const options = (state?.available ?? []).map(m => ({ value: m, label: m }));
-    return [{ value: "", label: t("claude.smallFastModelUnsetOption") }, ...options];
+    return backgroundHelperOptions(state?.available, t("claude.smallFastModelUnsetOption"));
   }, [state?.available, t]);
+
+  const contextWindowOptions = useMemo(
+    () => buildWindowOptions(state?.maxContextTokens ?? null, t("claude.maxContextAutomatic"), localeTag),
+    [state?.maxContextTokens, t, localeTag],
+  );
 
   // Auto-compact window presets (devlog 020 + user request): dropdown like the model
   // pickers. "" = 350k default; a saved off-ladder value is surfaced as its own option.
@@ -116,6 +125,7 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
           authMode: state.authMode,
           systemEnv: state.systemEnv,
           fastMode: state.fastMode,
+          maxContextTokens: state.maxContextTokens,
           autoContext: state.autoContext,
           autoCompactWindow: state.autoCompactWindow,
           injectAgents: state.injectAgents,
@@ -156,7 +166,15 @@ export default function ClaudeCode({ apiBase }: { apiBase: string }) {
       />
       {/* Always rendered: it commits every setting on this tab, so no query may hide it. */}
       <ClaudeCodeSaveBar onSave={() => { void save(); }} />
-      <ClaudeCodeSettingsCard state={state} autoCompactOptions={autoCompactOptions} onStateChange={setState} match={search.matches} />
+      <ClaudeCodeSettingsCard
+        state={state}
+        persistedMaxContextTokens={persistedMaxContextTokens}
+        invalidStoredMaxContext={invalidStoredMaxContext}
+        contextWindowOptions={contextWindowOptions}
+        autoCompactOptions={autoCompactOptions}
+        onStateChange={setState}
+        match={search.matches}
+      />
       {search.matches("quickstart") && <ClaudeCodeQuickstartSection manualEnv={buildManualEnv(state)} />}
       {search.matches("smallFastModel") && <SmallFastModelSetting
         value={state.smallFastModel}

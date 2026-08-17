@@ -26,6 +26,14 @@
  *                                    then rolls the state files back and restarts. The
  *                                    pre-restore state is committed first, so the restore
  *                                    is itself undoable.
+ * - GET  /api/host/quick-restore  → per-tool readiness: whether Codex/Claude are present on
+ *                                    this machine, which files a restore would rewrite, and
+ *                                    whether our routing is currently in them. Lets the
+ *                                    dashboard disable a button for a stated reason instead
+ *                                    of offering one that cannot work.
+ * - POST /api/host/quick-restore  → { tool } hand ONE tool its native config back.
+ *                                    Deliberately does NOT stop the proxy, drain, or exit;
+ *                                    the handler explains why that separation is the point.
  * - POST /api/host/exit           → { drainMs?, force? } graceful "exit app": same
  *                                    hand-off and 409 warning, then the same teardown as
  *                                    POST /api/stop, then exit — so the desktop shell can
@@ -47,12 +55,20 @@ import { addCustomDataPlaneKey, describeHost, hasDataPlaneCredential, mintDataPl
 import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled, setSandboxExposedPreview } from "../../lib/debug-sandbox";
 import { cancelPairing, claimPairingToken, createPairingToken, hasOutstandingPairing } from "../../lib/pairing";
 import { takeClaimAttempt } from "../../lib/pairing-rate-limit";
-import { listStateHistory, listStateHistoryEntries, restoreStateFromHistory } from "../../lib/state-history";
+import { listStateHistory, listStateHistoryEntries, recordStateSnapshot, restoreStateFromHistory } from "../../lib/state-history";
+import {
+  QUICK_RESTORE_SNAPSHOT_DEADLINE_MS,
+  describeQuickRestoreAll,
+  isQuickRestoreTool,
+  restoreToolConfig,
+  withDeadline,
+} from "../../lib/quick-restore";
 import { drainAndShutdown, getServerListenHostname, quiesceActiveTurns, setDraining } from "../lifecycle";
 import { acceptSystemRestartAfterExternalDrain } from "./system-restart";
 import { isLoopbackHostname, jsonResponse } from "../auth-cors";
 import type { OcxConfig } from "../../types";
 import type { ManagementContext } from "./context";
+import { requireLoopbackListener } from "./local-machine-gate";
 
 /** Default hand-off window for restore/exit, and the ceiling a caller may ask for. */
 const DEFAULT_DRAIN_MS = 60_000;
@@ -424,6 +440,8 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   // Automatic installation. The body carries a catalog id and nothing else — the
   // package id and every command-line argument come from constants in the installer.
   if (url.pathname === "/api/launch/install" && req.method === "POST") {
+    const localOnly = requireLoopbackListener(ctx, "Installing applications");
+    if (localOnly) return localOnly;
     let body: { id?: unknown };
     try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
     const id = typeof body.id === "string" ? body.id.trim() : "";
@@ -465,6 +483,8 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
   }
 
   if (url.pathname === "/api/launch" && req.method === "POST") {
+    const localOnly = requireLoopbackListener(ctx, "Launching applications");
+    if (localOnly) return localOnly;
     let body: { id?: unknown };
     try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
     const id = typeof body.id === "string" ? body.id.trim() : "";
@@ -562,6 +582,74 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
       const result = terminal.killSession(killId);
       return jsonResponse(result, result.ok ? 200 : 404, req, config);
     }
+  }
+
+  // ---- Quick restore -----------------------------------------------------
+  //
+  // Two things a user in trouble needs, kept apart on purpose: get my tool's own
+  // config back, and stop the proxy. `/api/host/exit` and `POST /api/stop` do
+  // both in one request and gate the first on the second — they drain in-flight
+  // turns before touching a file, and they refuse outright when an installed
+  // service belongs to another OPENCODEX_HOME. That is correct for an orderly
+  // shutdown and useless in the situation somebody actually presses a panic
+  // button in, because every one of those refusals leaves the native config
+  // rewritten.
+  //
+  // So this route does the small half and nothing else. No drain, no service
+  // control, no exit, no lifecycle flags. It answers in milliseconds off local
+  // file I/O, which means a caller can issue it FIRST and then attempt the stop
+  // as a separate request whose failure has nowhere to reach back to. The
+  // independence is structural rather than a timeout that can still lose.
+
+  if (url.pathname === "/api/host/quick-restore" && req.method === "GET") {
+    return jsonResponse({ tools: await describeQuickRestoreAll() }, 200, req, config);
+  }
+
+  if (url.pathname === "/api/host/quick-restore" && req.method === "POST") {
+    // Same refusal as /api/host/restore and for the same reason: this rewrites
+    // the tool's real files on disk without going through `saveConfig`, so the
+    // sandbox's write guard never sees it. Restoring here would be the one
+    // action in that mode that genuinely changes the machine.
+    if (debugSandboxEnabled()) {
+      announceDebugSandboxOnce();
+      return jsonResponse({
+        error: `${DEBUG_SANDBOX_ENV} is set: a quick restore rewrites the tool's own config files, which this mode exists to prevent. Restart without it to restore.`,
+      }, 409, req, config);
+    }
+    // Reconfiguring the software installed on this machine is not something a
+    // management credential presented over the LAN should reach, exactly as
+    // launching and installing applications are not.
+    const localOnly = requireLoopbackListener(ctx, "Restoring a tool's native configuration");
+    if (localOnly) return localOnly;
+
+    let body: { tool?: unknown };
+    try { body = (await req.json()) as typeof body; } catch { return jsonResponse({ error: "Invalid JSON" }, 400, req, config); }
+    const tool = body.tool;
+    if (!isQuickRestoreTool(tool)) {
+      return jsonResponse({ error: 'tool must be "codex" or "claude"' }, 400, req, config);
+    }
+
+    // Record before writing, like every other path that can take something away.
+    // Bounded, because it shells out to git and a git stuck on a lock is exactly
+    // the class of wedge this feature routes around — the restore is worth more
+    // than the audit line, so the audit line is the part that gets abandoned.
+    // Reported either way; a snapshot that did not land must not be implied.
+    const snapshotRecorded = await withDeadline(
+      recordStateSnapshot(`before quick restore: ${tool}`),
+      QUICK_RESTORE_SNAPSHOT_DEADLINE_MS,
+    );
+
+    const restore = await restoreToolConfig(tool);
+    return jsonResponse({
+      tool,
+      success: restore.ok,
+      message: restore.message,
+      changed: restore.changed,
+      snapshotRecorded,
+      // Said out loud because the button that reaches this route also stops the
+      // proxy, and the caller must never present one outcome as both.
+      proxyStopped: false,
+    }, restore.ok ? 200 : 500, req, config);
   }
 
   if (url.pathname === "/api/host/restore" && req.method === "POST") {

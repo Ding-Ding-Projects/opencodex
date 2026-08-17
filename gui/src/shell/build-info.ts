@@ -13,19 +13,18 @@
  *   npm publishes and it should not start moving per commit.
  * - **build** — the run number that produced the installer, baked in at build
  *   time. Monotonic, and the same number the release is tagged with.
- * - **codename** — the dim sum dish, *derived* from the commit rather than
- *   passed in. The release title names a build 叉燒包 Classic Char Siu Bao by
- *   running `codenameFor` over the commit; this runs the same function over the
- *   same commit and gets the same dish. Passing it in as a second env var would
- *   work right up until one of the two was set wrong, and a build displaying a
- *   different dish from the release it came from is worse than displaying none.
+ * - **codename** — the one-use dish resolved from the public catalog by the
+ *   release workflow. It is baked into the same dashboard artifact that the
+ *   release publishes; when the catalog is unavailable the value is null rather
+ *   than a conflicting guess from the legacy local dish table.
  *
  * Outside CI there is no run number and no commit, and this says so rather than
  * inventing one. A local dev build claiming to be "build 34" is a worse lie
  * than admitting it is not a release.
  */
 
-import { codenameFor, type DimSumDish } from "./dimsum";
+import { SHIPPED_APP_NAME } from "../theme/app-name";
+import type { DimSumDish } from "./dimsum";
 
 export interface BuildInfo {
   version: string;
@@ -45,6 +44,7 @@ export function readBuildInfo(
   version: string,
   build: string = typeof __APP_BUILD__ === "string" ? __APP_BUILD__ : "dev",
   commit: string = typeof __APP_COMMIT__ === "string" ? __APP_COMMIT__ : "",
+  dish: DimSumDish | null = typeof __APP_CODENAME__ !== "undefined" ? __APP_CODENAME__ : null,
 ): BuildInfo {
   const released = build !== "dev" && build !== "";
   return {
@@ -53,7 +53,7 @@ export function readBuildInfo(
     commit,
     shortCommit: commit ? commit.slice(0, 9) : "",
     released,
-    dish: commit ? codenameFor(commit) : null,
+    dish: released && commit ? dish : null,
   };
 }
 
@@ -114,8 +114,15 @@ export function codenameLabel(info: BuildInfo): { zh: string; name: string } | n
  *
  * The version rides along for the same reason it does in the bar: the dish names
  * the build and the number orders it.
+ *
+ * `appName` is the app's *display* name, which the user can change — `App.tsx`
+ * passes whatever `theme/app-name.ts` currently holds. The default is the
+ * shipped constant rather than a second copy of the literal, so the two cannot
+ * drift; and note that a rename reaches this string and nothing else, since
+ * every identity this app has is baked in at build time and unreachable from
+ * here.
  */
-export function windowTitle(info: BuildInfo, appName = "opencodex"): string {
+export function windowTitle(info: BuildInfo, appName: string = SHIPPED_APP_NAME): string {
   const parts = [appName];
   if (info.dish) parts.push(`${info.dish.zh} ${info.dish.name}`);
   parts.push(info.released ? `v${info.version} build ${info.build}` : `v${info.version} local build`);

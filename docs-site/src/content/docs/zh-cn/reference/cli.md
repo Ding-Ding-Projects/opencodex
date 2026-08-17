@@ -17,9 +17,11 @@ opencodex 的命令行工具是 `ocx`。运行 `ocx help`（或 `--help` / `-h`�
 
 ### `ocx start [--port <port>]`
 
-启动代理服务器（首选端口 `10100`）。如果该端口已被占用，opencodex 会选择并记录另一个可用
-端口。它会写入 PID/运行时端口状态，并拒绝启动第二个仍存活的实例。启动时会把各 provider 的
-模型同步进 Codex 目录。关闭时会恢复原生 Codex，除非它以受管服务运行（`OCX_SERVICE=1`）。
+启动代理服务器（首选端口 `10100`）。不带 `--port` 的自动启动会在首选端口被占用时把另一个
+空闲端口写入运行时状态，并让 Codex 使用实际 listener，而不改写配置中的首选值。显式 `--port`
+是硬性固定：opencodex 会等待该端口；若仍不可用则失败，不会切换端口。更新交接和仪表盘重启也
+会固定已捕获的实时端口。启动过程会使用跨进程锁并等待稳定的 OpenCodex identity health，而不只
+相信 PID/TCP，因此并发启动不会产生重复 daemon。
 
 ```bash
 ocx start
@@ -38,9 +40,10 @@ ocx codex exec --skip-git-repo-check "请回答 READY"
 
 ### `ocx stop`
 
-按 PID 停止正在运行的代理，删除 PID 文件并恢复原生 Codex。如果已安装受管后台服务，
-`ocx stop` 会先停止服务，以免它重新拉起代理。Web 仪表盘的 **Stop** 按钮
-（`POST /api/stop`）执行相同操作。
+停止正在运行的代理并恢复原生 Codex。如果已安装受管后台服务，`ocx stop` 会先验证服务管理器
+确实停止，以免它重新拉起代理；随后按 identity 验证代理终止，之后才删除运行时状态和
+Codex/Grok 路由。服务或代理状态不确定时会 fail closed 并保留 OpenCodex 所有的状态以便恢复。
+Web 仪表盘的 **Stop** 按钮（`POST /api/stop`）执行相同操作。
 
 ### `ocx restore` &nbsp;·&nbsp; `ocx eject`
 

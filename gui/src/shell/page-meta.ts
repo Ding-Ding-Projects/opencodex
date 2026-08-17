@@ -1,9 +1,10 @@
 /** Nav order, icon and label key for every page. Mirrors `PAGES` in the design prototype. */
 
 import {
-  IconActivity, IconApi, IconBell, IconBolt, IconBoxes, IconBot, IconChangelog, IconDevices, IconGrid,
-  IconHardDrive, IconHistory, IconKey, IconPalette, IconReceiptLong, IconRegex, IconRestartAlt, IconServer,
-  IconShuffle, IconSliders, IconSparkle, IconTerminal, IconTranslate,
+  IconActivity, IconApi, IconBell, IconBolt, IconBot, IconBoxes, IconChangelog, IconChat, IconClock,
+  IconDevices, IconDownload, IconGauge, IconGrid, IconHardDrive, IconHistory, IconKey, IconLock, IconMenuBook, IconPalette,
+  IconPictureAsPdf, IconReceiptLong, IconRegex, IconRestartAlt, IconServer, IconShuffle, IconSliders,
+  IconSparkle, IconSyncAlt, IconTerminal, IconTranslate,
 } from "../icons";
 import { PAGE_GROUP, type Page } from "../app-routing";
 import type { TKey } from "../i18n/shared";
@@ -31,6 +32,7 @@ const ICONS: Record<Page, typeof IconGrid> = {
   startup: IconRestartAlt,
   appearance: IconPalette,
   language: IconTranslate,
+  schedule: IconClock,
   regex: IconRegex,
   changelog: IconChangelog,
   history: IconHistory,
@@ -39,6 +41,14 @@ const ICONS: Record<Page, typeof IconGrid> = {
   terminal: IconTerminal,
   mobile: IconDevices,
   settings: IconSliders,
+  docs: IconMenuBook,
+  locks: IconLock,
+  authenticator: IconLock,
+  pdf: IconPictureAsPdf,
+  converter: IconSyncAlt,
+  ollama: IconGauge,
+  "ollama-chat": IconChat,
+  downloads: IconDownload,
 };
 
 const TKEYS: Record<Page, TKey> = {
@@ -57,6 +67,7 @@ const TKEYS: Record<Page, TKey> = {
   startup: "nav.startup",
   appearance: "nav.appearance",
   language: "nav.language",
+  schedule: "nav.schedule",
   regex: "nav.regex",
   changelog: "nav.changelog",
   history: "nav.history",
@@ -65,13 +76,22 @@ const TKEYS: Record<Page, TKey> = {
   terminal: "nav.terminal",
   mobile: "nav.mobile",
   settings: "nav.settings",
+  docs: "nav.docs",
+  locks: "nav.locks",
+  authenticator: "nav.authenticator",
+  pdf: "nav.pdf",
+  converter: "nav.converter",
+  ollama: "nav.ollama",
+  "ollama-chat": "nav.ollamaChat",
+  downloads: "nav.downloads",
 };
 
 /** Nav order is deliberate: dashboard first, then auth, then the rest of the product. */
 const ORDER: Page[] = [
   "dashboard", "codex-auth", "providers", "models", "combos", "subagents",
   "logs", "usage", "storage", "api", "claude", "grok", "startup",
-  "appearance", "language", "regex", "changelog", "history", "notifications", "network", "settings", "terminal", "mobile",
+  "appearance", "language", "schedule", "regex", "changelog", "docs", "history", "notifications",
+  "network", "locks", "authenticator", "pdf", "converter", "ollama", "ollama-chat", "downloads", "settings", "terminal", "mobile",
 ];
 
 export const PAGE_META: PageMeta[] = ORDER.map(id => ({
@@ -85,5 +105,6 @@ export const PAGE_META_BY_ID: Record<Page, PageMeta> = Object.fromEntries(
   PAGE_META.map(m => [m.id, m]),
 ) as Record<Page, PageMeta>;
 
-/** The four pages the compact bottom bar shows; everything else lives in the drawer. */
-export const BOTTOM_NAV_PAGES: Page[] = ["dashboard", "codex-auth", "providers", "logs"];
+/** The four pages the compact bottom bar shows; everything else lives in the drawer.
+ *  Mirrors the prototype's `navItems.slice(0, 4)` — the first four entries of `ORDER`. */
+export const BOTTOM_NAV_PAGES: Page[] = ["dashboard", "codex-auth", "providers", "models"];

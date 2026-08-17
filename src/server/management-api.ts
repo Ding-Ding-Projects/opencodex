@@ -53,7 +53,7 @@ import { drainAndShutdown } from "./lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "./request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../usage/cost";
 import type { PersistedUsageAttempt } from "../usage/log";
-import { isAllowedManagementOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "./auth-cors";
+import { isAllowedDownloadCaptureOrigin, isAllowedManagementOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "./auth-cors";
 import { applySystemEnvToggle } from "./system-env";
 
 import type { ManagementApiDeps } from "./management/context";
@@ -66,9 +66,19 @@ import { handleOauthAccountRoutes } from "./management/oauth-account-routes";
 import { handleComboRoutes } from "./management/combo-routes";
 import { handleSystemRoutes } from "./management/system-routes";
 import { handleChangelogRoutes } from "./management/changelog-routes";
+import { handleNarratorRoutes } from "./management/narrator-routes";
 import { handleExportRoutes, type Dataset } from "./management/export-routes";
 import { DATASETS } from "../lib/export-datasets";
 import { handleHostRoutes } from "./management/host-routes";
+import { handleScheduleRoutes } from "./management/schedule-routes";
+import { handleAuthenticatorRoutes } from "./management/authenticator-routes";
+import { handleSchoolModeRoutes } from "./management/school-mode-routes";
+import { handlePdfRoutes } from "./management/pdf-routes";
+import { handleConverterRoutes } from "./management/converter-routes";
+import { handleConverterQueueRoutes } from "./management/converter-queue-routes";
+import { handleModelRuntimeRoutes } from "./management/model-runtime-routes";
+import { handleModelRuntimeChatRoutes } from "./management/model-runtime-chat-routes";
+import { handleDownloadRoutes } from "./management/download-routes";
 import type { ManagementContext } from "./management/context";
 export type { ManagementApiDeps } from "./management/context";
 import { fetchAllModels } from "./management/shared";
@@ -126,7 +136,14 @@ function exportDatasets(config: OcxConfig): Map<string, Dataset> {
 }
 
 export async function handleManagementAPI(req: Request, url: URL, config: OcxConfig, deps: ManagementApiDeps = {}): Promise<Response | null> {
-  if (!isAllowedManagementOrigin(req, config)) {
+  // The download-capture family accepts one more caller than the rest of the
+  // management plane: the opencodex browser extension itself, whose fetches
+  // carry a `*-extension://` origin rather than the dashboard's own. See
+  // `isAllowedDownloadCaptureOrigin` in `./auth-cors` for exactly how narrow
+  // that widening is — it never applies to any other `/api/*` prefix.
+  const originAllowed = isAllowedManagementOrigin(req, config)
+    || (url.pathname.startsWith("/api/downloads") && isAllowedDownloadCaptureOrigin(req, config));
+  if (!originAllowed) {
     return jsonResponse({ error: "cross-origin request blocked" }, 403, req, config);
   }
   // Management bodies are small JSON (provider names, key ids, settings). Reject oversized
@@ -179,8 +196,18 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleComboRoutes(ctx))
     ??     (await handleSystemRoutes(ctx))
     ??     (await handleChangelogRoutes(ctx))
+    ??     (await handleNarratorRoutes(ctx))
     ??     (await handleExportRoutes(ctx, exportDatasets(config)))
-    ??     (await handleHostRoutes(ctx));
+    ??     (await handleHostRoutes(ctx))
+    ??     (await handleScheduleRoutes(ctx))
+    ??     (await handleAuthenticatorRoutes(ctx))
+    ??     (await handleSchoolModeRoutes(ctx))
+    ??     (await handlePdfRoutes(ctx))
+    ??     (await handleConverterRoutes(ctx))
+    ??     (await handleConverterQueueRoutes(ctx))
+    ??     (await handleModelRuntimeRoutes(ctx))
+    ??     (await handleModelRuntimeChatRoutes(ctx))
+    ??     (await handleDownloadRoutes(ctx));
   if (routed) return routed;
 
   if (url.pathname === "/api/stop" && req.method === "POST") {

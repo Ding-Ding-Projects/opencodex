@@ -43,8 +43,12 @@ if (import.meta.main) {
   const isolated = createIsolatedTestEnvironment();
   try {
     const requestedTests = process.argv.slice(2);
+    // Bun 1.3.14's Windows worker scheduler can hit an internal assertion at
+    // its default fan-out. Keep the suite complete but bounded locally too,
+    // matching the Windows CI command and making `bun run test` reproducible.
+    const windowsBounds = process.platform === "win32" ? ["--max-concurrency=8", "--timeout=30000"] : [];
     const child = Bun.spawnSync(
-      [process.execPath, "test", "--isolate", ...(requestedTests.length > 0 ? requestedTests : ["./tests/"])],
+      [process.execPath, "test", "--isolate", ...windowsBounds, ...(requestedTests.length > 0 ? requestedTests : ["./tests/"])],
       {
         env: isolated.env,
         stdin: "inherit",

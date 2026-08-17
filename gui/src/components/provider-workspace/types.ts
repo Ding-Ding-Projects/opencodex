@@ -38,7 +38,10 @@ export interface ProviderModelUsageRow {
   inputTokens: number;
   outputTokens: number;
   shareRatio: number;
+  /** Direct API-key spend. Absent for subscription/OAuth rows, which use the field below. */
   estimatedCostUsd?: number;
+  /** Non-billing API-equivalent total for subscription/OAuth rows; never summed with the above. */
+  apiEquivalentCostUsd?: number;
 }
 
 // Auth types consumed by ProviderAuthPanel (WP091).

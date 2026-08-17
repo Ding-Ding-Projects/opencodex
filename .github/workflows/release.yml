@@ -31,8 +31,12 @@ on:
 
 permissions:
   contents: write # create the matching GitHub Release + version tag after npm publish
-  actions: read # verify the release commit already passed CI
+  actions: read # verify the release commit already passed Windows CI
   id-token: write # OIDC auth for Trusted Publishing + automatic provenance attestation
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: release
@@ -40,7 +44,7 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -102,7 +106,7 @@ jobs:
             exit 1;
           }
 
-      - name: Require successful CI for this commit
+      - name: Require successful Windows CI for this commit
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
@@ -147,12 +151,12 @@ jobs:
           )"
 
           if [ -z "$ci_url" ]; then
-            echo "::error::No successful CI run found for ${GITHUB_SHA}. Wait for CI to pass before releasing."
+            echo "::error::No successful Windows CI run found for ${GITHUB_SHA}. Wait for CI to pass before releasing."
             gh run list --workflow ci.yml --commit "$GITHUB_SHA" --limit 10 || true
             exit 1
           fi
 
-          echo "CI passed for ${GITHUB_SHA}: ${ci_url}"
+          echo "Windows CI passed for ${GITHUB_SHA}: ${ci_url}"
 
           # Notes / service baseline:
           # - Preview: newest prior release of either channel (stable or preview). A
@@ -242,14 +246,99 @@ jobs:
             fi
           fi
 
+      # The versioned GitHub release is also the stable Windows delivery path.
+      # Prepare the exact npm payload and validate its installer before npm can
+      # publish anything. A packaging failure must not leave the registry ahead
+      # of the required Windows release.
+      - name: Prepare npm release payload
+        run: npm run prepublishOnly
+
+      - name: Build unsigned Squirrel.Windows installer
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+          CSC_NAME: ""
+          CSC_KEYCHAIN: ""
+          WIN_CSC_LINK: ""
+          WIN_CSC_KEY_PASSWORD: ""
+          WIN_CSC_NAME: ""
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE "dist-desktop"
+          if (Test-Path -LiteralPath $outputRoot) {
+            Remove-Item -LiteralPath $outputRoot -Recurse -Force
+          }
+
+          # Environment variables inherited by the runner must not silently
+          # reactivate signing. Re-add only the explicit auto-discovery off switch.
+          @(
+            "CSC_LINK"
+            "CSC_KEY_PASSWORD"
+            "CSC_NAME"
+            "CSC_KEYCHAIN"
+            "WIN_CSC_LINK"
+            "WIN_CSC_KEY_PASSWORD"
+            "WIN_CSC_NAME"
+            "CSC_IDENTITY_AUTO_DISCOVERY"
+          ) | ForEach-Object {
+            Remove-Item -LiteralPath "Env:$_" -ErrorAction SilentlyContinue
+          }
+          $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
+
+          npx --yes electron-builder@26.15.3 --win squirrel --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Validate unsigned Squirrel.Windows release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE "dist-desktop"
+          if (-not (Test-Path -LiteralPath $outputRoot -PathType Container)) {
+            throw "dist-desktop was not created; refusing to publish a release without Windows assets"
+          }
+
+          $setups = @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File -Filter "*Setup*.exe")
+          if ($setups.Count -ne 1) {
+            throw "Expected exactly one Setup.exe under dist-desktop, found $($setups.Count)"
+          }
+          foreach ($setup in $setups) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $setup.FullName
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+              throw "Setup executable must be unsigned, but $($setup.Name) reported $($signature.Status)"
+            }
+            Write-Host "Verified NotSigned: $($setup.FullName)"
+          }
+
+          $releaseIndexes = @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File -Filter "RELEASES")
+          if ($releaseIndexes.Count -ne 1 -or $releaseIndexes[0].Length -eq 0) {
+            throw "Expected one non-empty Squirrel RELEASES index, found $($releaseIndexes.Count)"
+          }
+
+          $fullPackages = @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File -Filter "*-full.nupkg")
+          if ($fullPackages.Count -lt 1 -or @($fullPackages | Where-Object Length -eq 0).Count -gt 0) {
+            throw "Expected at least one non-empty full Squirrel .nupkg"
+          }
+
+          $releaseText = Get-Content -LiteralPath $releaseIndexes[0].FullName -Raw
+          foreach ($fullPackage in $fullPackages) {
+            if ($releaseText -notmatch [regex]::Escape($fullPackage.Name)) {
+              throw "RELEASES does not reference full package $($fullPackage.Name)"
+            }
+          }
+          Write-Host "Validated Setup.exe, RELEASES, and $($fullPackages.Count) full .nupkg file(s)."
+
       - name: Publish (or dry-run)
         env:
           DRY_RUN: ${{ inputs.dry-run }}
           NPM_DIST_TAG: ${{ inputs.tag }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
-            echo "::notice::DRY RUN — building + packing, not publishing"
-            npm run prepublishOnly
+            echo "::notice::DRY RUN — payload and installer verified; packing without publishing"
             npm pack --dry-run
           else
             npm publish --tag "$NPM_DIST_TAG" --access public
@@ -300,7 +389,7 @@ jobs:
             git tag --merged HEAD --list 'v[0-9]*' |
               bun scripts/release-notes.ts previous-release-tag "$RELEASE_VERSION"
           )"
-          npm_metadata="Published to npm as \`@bitkyc08/opencodex@${RELEASE_VERSION}\` with dist-tag \`${NPM_DIST_TAG}\`."
+          npm_metadata="Published to npm as \`@bitkyc08/opencodex@${RELEASE_VERSION}\` with dist-tag \`${NPM_DIST_TAG}\`. The attached Squirrel.Windows Setup.exe and update feed are unsigned; Windows may show an Unknown Publisher or SmartScreen warning."
 
           # Preview builds must be marked prerelease so GitHub "latest" keeps pointing at the
           # stable channel (matching npm dist-tags); see issue #64.
@@ -435,5 +524,85 @@ jobs:
             git push origin "refs/tags/${release_tag}"
           fi
 
+          mapfile -t setup_assets < <(find dist-desktop -type f -name '*Setup*.exe' -size +0c -print)
+          mapfile -t releases_assets < <(find dist-desktop -type f -name RELEASES -size +0c -print)
+          mapfile -t nupkg_assets < <(find dist-desktop -type f -name '*.nupkg' -size +0c -print)
+          mapfile -t full_nupkg_assets < <(find dist-desktop -type f -name '*-full.nupkg' -size +0c -print)
+
+          if [ "${#setup_assets[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one Setup.exe before release creation; found ${#setup_assets[@]}."
+            exit 1
+          fi
+          if [ "${#releases_assets[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one RELEASES index before release creation; found ${#releases_assets[@]}."
+            exit 1
+          fi
+          if [ "${#full_nupkg_assets[@]}" -lt 1 ]; then
+            echo "::error::No full Squirrel .nupkg exists; refusing to publish an incomplete update feed."
+            exit 1
+          fi
+
           gh release create "$release_tag" --target "$GITHUB_SHA" --title "$release_tag" \
-            --notes-file "$notes_file" ${prerelease_flag:+$prerelease_flag}
+            --notes-file "$notes_file" ${prerelease_flag:+$prerelease_flag} \
+            "${setup_assets[0]}#Setup.exe" \
+            "${releases_assets[0]}#RELEASES" \
+            "${nupkg_assets[@]}"
+
+      # Keep installable packages, build output, and failure metadata available
+      # even when a publish or release step fails. Only known output locations
+      # are copied; credentials, dependencies, caches, and source are excluded.
+      - name: Collect release artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE "release-artifacts"
+          New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+          @(
+            "workflow=$env:GITHUB_WORKFLOW"
+            "run_id=$env:GITHUB_RUN_ID"
+            "run_attempt=$env:GITHUB_RUN_ATTEMPT"
+            "sha=$env:GITHUB_SHA"
+            "job_status=$env:JOB_STATUS"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+          ) | Set-Content -LiteralPath (Join-Path $artifactRoot "run-metadata.txt") -Encoding utf8
+
+          $safeCount = 0
+          $installerRoot = Join-Path $env:GITHUB_WORKSPACE "dist-desktop"
+          if (Test-Path -LiteralPath $installerRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $installerRoot -Recurse -File | Where-Object {
+              $_.Name -eq "RELEASES" -or $_.Extension -in @(".exe", ".nupkg")
+            } | ForEach-Object {
+              $relative = $_.FullName.Substring($installerRoot.Length).TrimStart([char]"\", [char]"/")
+              $destination = Join-Path (Join-Path $artifactRoot "squirrel-windows") $relative
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+              Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+              $safeCount++
+            }
+          }
+
+          Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -eq "pack.json" -or $_.Name -like "*.tgz"
+          } | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $artifactRoot -Force
+            $safeCount++
+          }
+
+          if ($safeCount -eq 0) {
+            "No safe installer, update-feed, or npm package output was produced." |
+              Set-Content -LiteralPath (Join-Path $artifactRoot "NO_SAFE_ARTIFACTS.txt") -Encoding utf8
+          }
+
+      - name: Upload release artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-artifacts-${{ github.run_id }}
+          path: release-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 0

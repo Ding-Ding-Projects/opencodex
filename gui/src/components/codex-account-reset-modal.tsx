@@ -1,63 +1,85 @@
+import { useRef } from "react";
 import { useI18n } from "../i18n/shared";
-import { IconAlert, IconTicket } from "../icons";
+import { IconTicket } from "../icons";
 import { Dialog } from "../shell/m3-ui";
+import { SuperConfirmGate } from "../shell/super-confirm";
 import type { CodexAccountEntry } from "./codex-account-pool-types";
 import { CodexCreditItem } from "./codex-account-pool-helpers";
 import { formatCreditDate } from "./codex-account-pool-utils";
 
+/**
+ * Redeeming a reset credit spends something that cannot be earned back on the
+ * spot — `codexAuth.irreversible` already said so before this gate existed —
+ * so the confirm step is the destructive-action super-confirmation gate
+ * rather than a single "Use Credit" button. The info step (this account's
+ * available credits, when the next one expires) is unchanged and stays an
+ * ordinary `Dialog`, because reading that information destroys nothing.
+ */
 export function CodexAccountResetModal({
   resetPopup,
   resetConfirm,
   creditDetails,
   creditDetailsLoading,
-  redeeming,
   onClose,
   onShowConfirm,
-  onCancelConfirm,
-  onRedeem,
+  onAuthorize,
 }: {
   resetPopup: CodexAccountEntry;
   resetConfirm: boolean;
   creditDetails: { granted_at: string; expires_at: string }[] | null;
   creditDetailsLoading: boolean;
-  redeeming: boolean;
   onClose: () => void;
   onShowConfirm: () => void;
-  onCancelConfirm: () => void;
-  onRedeem: () => void;
+  /**
+   * Runs exactly once, only when both gate keys are on and the slider has
+   * reached its end. Resolves on a successful redemption; rejects (with a
+   * message the gate shows inline) on anything else — the account already
+   * had none left, the request raced another tab, the network dropped.
+   */
+  onAuthorize: () => Promise<void>;
 }) {
   const { locale, t } = useI18n();
+  // Kept even though the button it names is gone by the time a dismissal or a
+  // completion needs it — `resetConfirm` swaps this whole component out for
+  // the gate's own modal, unmounting the button along with the rest of the
+  // info step. `SuperConfirmGate` no-ops a `focus()` on a ref that resolved to
+  // nothing, at which point its own `Dialog` falls back to restoring focus to
+  // whatever opened *that* dialog. That is the same behaviour the two-Dialog
+  // version of this screen already had — Cancel on the old amber-alert step
+  // could not literally refocus "Use Credit" either, because both steps only
+  // ever shared one opener capture, taken when the account row's own button
+  // first opened this modal.
+  const useCreditRef = useRef<HTMLButtonElement>(null);
 
-  // The confirm step keeps its own centred hero — the amber alert badge above a
-  // centred headline — which is why it names the dialog through `labelledBy`
-  // instead of the `title` slot. Both steps keep the `codex-reset-title` id, so
-  // the accessible name of the dialog is unchanged from the legacy markup.
-  return resetConfirm ? (
-    <Dialog
-      onClose={onClose}
-      labelledBy="codex-reset-title"
-      actions={
-        <>
-          <button type="button" className="m3-btn m3-btn--text" onClick={onCancelConfirm}>{t("codexAuth.cancel")}</button>
-          <button type="button" className="m3-btn m3-btn--danger" onClick={onRedeem} disabled={redeeming}>
-            {redeeming ? t("codexAuth.redeeming") : t("codexAuth.useCredit")}
-          </button>
-        </>
-      }
-    >
-      <div style={{ textAlign: "center", padding: "12px 0" }}>
-        <div className="confirm-icon"><IconAlert width={22} aria-hidden="true" /></div>
-        <h3 id="codex-reset-title" className="m3-dialog__title">{t("codexAuth.confirmResetTitle")}</h3>
-        <p className="m3-dialog__desc">{t("codexAuth.confirmResetDesc", { count: String(resetPopup.quota?.resetCredits ?? 0) })}</p>
-        {creditDetails && creditDetails[0] && (
-          <p className="faint text-label">
-            {t("codexAuth.confirmWhichCredit", { date: formatCreditDate(creditDetails[0].granted_at, locale) })}
-          </p>
-        )}
-        <p className="faint text-label">{t("codexAuth.irreversible")}</p>
-      </div>
-    </Dialog>
-  ) : (
+  if (resetConfirm) {
+    const remaining = resetPopup.quota?.resetCredits ?? 0;
+    const nextCredit = creditDetails?.[0];
+    const body = [
+      t("codexAuth.confirmResetDesc", { count: String(remaining) }),
+      nextCredit ? t("codexAuth.confirmWhichCredit", { date: formatCreditDate(nextCredit.granted_at, locale) }) : "",
+      t("codexAuth.irreversible"),
+    ].filter(Boolean).join("\n\n");
+
+    return (
+      <SuperConfirmGate
+        anchorRef={useCreditRef}
+        presentation="modal"
+        title={t("codexAuth.confirmResetTitle")}
+        body={body}
+        keyLabels={[
+          t("codexAuth.gateKey1", { email: resetPopup.email }),
+          t("codexAuth.gateKey2"),
+        ]}
+        sliderLabel={t("codexAuth.gateSlider")}
+        workingLabel={t("codexAuth.redeeming")}
+        doneLabel={t("codexAuth.resetSuccessGeneric")}
+        onAuthorize={onAuthorize}
+        onClose={onClose}
+      />
+    );
+  }
+
+  return (
     <Dialog
       onClose={onClose}
       labelledBy="codex-reset-title"
@@ -78,10 +100,17 @@ export function CodexAccountResetModal({
           {/*
             Full-width and inside the body rather than the action area: this
             starts the confirm step, it does not resolve the dialog, and the
-            FIFO note below has to stay attached to it.
+            FIFO note below has to stay attached to it. A native `<button>`,
+            not the shared `Button` component: `Button` has no `forwardRef`, so
+            a `ref` handed to it never reaches the DOM.
           */}
-          <button type="button" className="m3-btn m3-btn--filled" style={{ width: "100%" }}
-            onClick={onShowConfirm} disabled={redeeming}>
+          <button
+            ref={useCreditRef}
+            type="button"
+            className="m3-btn m3-btn--filled"
+            style={{ width: "100%" }}
+            onClick={onShowConfirm}
+          >
             {t("codexAuth.useOneCredit")}
           </button>
           <p className="m3-dialog__desc text-caption" style={{ textAlign: "center" }}>{t("codexAuth.fifoNote")}</p>

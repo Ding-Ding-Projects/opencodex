@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestProviders } from "./helpers/providers";
 import ProviderOverview from "../src/components/provider-workspace/ProviderOverview";
 import type { WorkspaceItem } from "../src/provider-workspace/catalog";
 
@@ -54,9 +54,9 @@ async function mountOverview(
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
-        <ProviderOverview item={providerItem} onUpdateProvider={onUpdateProvider} />
-      </LanguageProvider>,
+      <TestProviders>
+        <ProviderOverview item={providerItem} apiBase="http://localhost:0" onUpdateProvider={onUpdateProvider} />
+      </TestProviders>,
     );
   });
   return { root, container };

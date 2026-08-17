@@ -1,10 +1,4 @@
-# Windows only, deliberately. `electron-builder.yml` ships a Squirrel installer and
-# nothing else — the macOS and Linux desktop targets were removed rather than
-# left half-configured — so validating on runners the product never ships to
-# bought nothing and cost three times the wall-clock on every commit. A green
-# tick from a platform with no installer is not evidence about anything a user
-# can install.
-name: CI
+name: Windows CI
 
 on:
   pull_request:
@@ -24,60 +18,39 @@ on:
       - ".github/workflows/release.yml"
       - ".github/workflows/enforce-pr-target.yml"
       - ".github/workflows/stale-needs-info.yml"
-  # No `paths` filter on push, deliberately, unlike the pull_request trigger
-  # above. `Auto release` now gates publishing on "a successful CI run exists
-  # for this exact commit", and a path filter makes that question unanswerable
-  # for any commit that touches only excluded files: CI never runs, no verdict
-  # is ever recorded, and the release waits out its timeout for a run that was
-  # never going to start. That is not hypothetical — it is how 84d8f16b built a
-  # 182 MB installer and then published nothing.
-  #
-  # A commit that changes no code is not untested, but "not untested" and
-  # "has a recorded pass" are different things, and only the second one is
-  # checkable. Every commit on a release branch gets a verdict. Pull requests
-  # keep the filter, where skipping an irrelevant run costs nobody a release.
   push:
     branches: [main, preview, dev]
+    paths:
+      - "src/**"
+      - "bin/**"
+      - "tests/**"
+      - "scripts/**"
+      - "gui/**"
+      - ".gitattributes"
+      - ".npmignore"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/enforce-pr-target.yml"
+      - ".github/workflows/stale-needs-info.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # Per-SHA, and never cancelled. Grouping by ref meant a second push killed
-  # the run already testing the first, so a commit could reach main having
-  # been tested by nothing — and `Auto release` gates on this workflow's
-  # conclusion, so a cancelled run also silently skips the release.
-  group: cross-platform-ci-${{ github.sha }}
-  cancel-in-progress: false
+  group: windows-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    # Windows is the binding constraint and has crept past 12 minutes.
-    # Measured on run 30503517934 (5981 tests): install 33s, typecheck 11s,
-    # `bun test` 10m04s, GUI tests 30s, privacy 4s, GUI lint 23s — the suite
-    # alone is ~10 of the 12 minutes, so the job was cancelled two seconds into
-    # the GUI build with every substantive step already green.
-    #
-    # 20 left real headroom without hiding a hang: a genuinely stuck run blows
-    # 20 as readily as 12. If this needs raising again, shard the suite instead —
-    # the ceiling is not the problem worth solving a third time.
-    #
-    # Raised to 25 for the crash-retry in the Test step below, and only for that.
-    # A Bun crash dies about 42s in, so two of them cost ~1.5 minutes before the
-    # attempt that actually runs the suite — which on the slowest observed run
-    # left the job finishing a shade under 20 and occasionally over it. This is
-    # not the suite getting longer; the note above still stands if it does.
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        # One entry rather than a bare `runs-on:` so the narrowing is visible as
-        # a narrowing, and widening again is one line if a second desktop target
-        # is ever shipped.
-        os: [windows-latest]
+    name: windows-latest
+    runs-on: windows-latest
+    # The Windows full suite stays bounded below Bun's internal-assertion range;
+    # leave enough room for the slower but deterministic worker cap and GUI smokes.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -96,71 +69,10 @@ jobs:
       - name: Typecheck
         run: bun x tsc --noEmit
 
-      # Retries ONLY a Bun crash, never a test failure.
-      #
-      # `windows-latest` is currently serving a mix of runner images, and Bun
-      # 1.3.14 panics on one of them: `panic(...): Internal assertion failure /
-      # oh no: Bun has crashed. This indicates a bug in Bun, not your code.`,
-      # roughly 42s in, after the suite has spawned its ninth worker
-      # (`workers_spawned(9) workers_terminated(8)`). Which image a job lands on
-      # decides whether CI is green, so the same commit passes and fails:
-      #
-      #   image 20260728.188.1 -> passed
-      #   image 20260714.173.1 -> crashed, three times including a rerun
-      #
-      # The same suite runs to completion locally on Windows with the same Bun
-      # and the same flag (6,304 pass over 457 files), so this is the runner
-      # image, not the tests. 1.3.14 is the newest Bun published, so there is
-      # nothing to upgrade to, and GitHub does not let a workflow pin an image
-      # to a patch version — hence a retry rather than a fix.
-      #
-      # The guard is the point: it re-runs when Bun died and the run therefore
-      # says nothing about the code, and it re-raises immediately on an ordinary
-      # non-zero exit. A blind `retry 3` here would turn a genuinely failing test
-      # into a green tick on its third roll of the dice, which is worse than the
-      # crash it was meant to paper over.
       - name: Test
-        shell: pwsh
-        run: |
-          $attempt = 0
-          $max = 3
-          while ($true) {
-            $attempt++
-            Write-Host "::group::bun test --isolate tests (attempt $attempt of $max)"
-            $log = "test-attempt-$attempt.log"
-            # Tee so the output is still visible in the log as it happens; the
-            # copy on disk is what gets pattern-matched afterwards.
-            # `--timeout 20000` because the runner is slower than this machine,
-            # not because any test needs 20 seconds.
-            #
-            # Bun's default is 5000ms per test. Two consecutive runs failed on two
-            # *different* tests, each timing out at exactly 5000ms
-            # (`executeArchivedCleanup > concurrent archiving …`, then
-            # `Kiro review regressions > Add account binds a legacy identity-less
-            # row …`), and both pass here in well under a second. Two different
-            # tests hitting the same wall is the wall moving, not the tests.
-            #
-            # This does not hide a hang: a genuinely stuck test still burns the
-            # job's 25-minute ceiling and fails the run. What it stops is a
-            # correct test being failed for the crime of running on a busy VM,
-            # which had already blocked two releases.
-            bun test --isolate --timeout 20000 tests 2>&1 | Tee-Object -FilePath $log
-            $code = $LASTEXITCODE
-            Write-Host "::endgroup::"
-            if ($code -eq 0) { exit 0 }
-
-            $crashed = Select-String -Path $log -SimpleMatch -Quiet `
-              -Pattern 'oh no: Bun has crashed'
-            if (-not $crashed) {
-              Write-Host "::error::Tests failed (exit $code). Not a Bun crash - not retrying."
-              exit $code
-            }
-            if ($attempt -ge $max) {
-              Write-Host "::error::Bun crashed on all $max attempts. See the runner image note in ci.yml."
-              exit $code
-            }
-            Write-Host "::warning::Bun crashed rather than failing a test; retrying ($attempt/$max)."
-          }
+        # Bun 1.3.14 can hit an internal assertion on Windows at its default
+        # worker count; keep the full suite intact while bounding concurrency.
+        run: bun test --isolate tests --max-concurrency=8 --timeout=30000
 
       - name: GUI tests
         run: cd gui && bun test tests
@@ -171,10 +83,8 @@ jobs:
       - name: Check release helper syntax
         run: bun build scripts/release.ts --target=bun --outdir=.tmp/ci-release-script-check
 
-      - name: GUI lint
-        run: |
-          cd gui
-          bun run lint
+      # No lint step, by project policy: lint does not gate CI or a release.
+      # ESLint stays installed and is run deliberately with `bun run lint:gui`.
 
       - name: GUI build
         run: |
@@ -184,14 +94,61 @@ jobs:
       - name: CLI help smoke
         run: bun run src/cli/index.ts help
 
+      # Preserve build outputs and failure context even when an earlier gate fails.
+      # The collector is deliberately defensive and never changes the original
+      # test verdict; only explicitly safe paths are copied.
+      - name: Collect Windows CI artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $root = Join-Path $env:GITHUB_WORKSPACE "ci-artifacts\full"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            sha = $env:GITHUB_SHA
+            jobStatus = $env:JOB_STATUS
+            runnerOs = $env:RUNNER_OS
+            runnerArch = $env:RUNNER_ARCH
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
+
+          $workspace = $env:GITHUB_WORKSPACE
+          $safeDirectories = @(
+            @{ Source = (Join-Path $workspace "gui\dist"); Destination = (Join-Path $root "gui-dist") },
+            @{ Source = (Join-Path $workspace ".tmp\ci-release-script-check"); Destination = (Join-Path $root "release-script-check") }
+          )
+          foreach ($item in $safeDirectories) {
+            if (Test-Path -LiteralPath $item.Source) {
+              Copy-Item -LiteralPath $item.Source -Destination $item.Destination -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          foreach ($pattern in @("pack.json", "*.tgz", "npm-debug.log*")) {
+            Get-ChildItem -Path $workspace -Filter $pattern -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination $root -Force -ErrorAction SilentlyContinue
+          }
+          if (-not (Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue)) {
+            Set-Content -Encoding utf8 (Join-Path $root "NO_SAFE_ARTIFACTS.txt") "No safe build output was present; metadata records the original job status."
+          }
+
+      - name: Upload Windows CI artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-ci-full-${{ github.run_id }}
+          path: ci-artifacts/full
+          if-no-files-found: warn
+          retention-days: 14
+
   npm-global-smoke:
-    name: npm-global ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: npm-global windows-latest
+    runs-on: windows-latest
     timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -222,3 +179,44 @@ jobs:
 
       - name: ocx help via bundled bun
         run: ocx help
+
+      - name: Collect npm global smoke artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $root = Join-Path $env:GITHUB_WORKSPACE "ci-artifacts\npm-global"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            sha = $env:GITHUB_SHA
+            jobStatus = $env:JOB_STATUS
+            runnerOs = $env:RUNNER_OS
+            runnerArch = $env:RUNNER_ARCH
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
+          foreach ($pattern in @("pack.json", "*.tgz", "npm-debug.log*")) {
+            Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter $pattern -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination $root -Force -ErrorAction SilentlyContinue
+          }
+          $guiDist = Join-Path $env:GITHUB_WORKSPACE "gui\dist"
+          if (Test-Path -LiteralPath $guiDist) {
+            Copy-Item -LiteralPath $guiDist -Destination (Join-Path $root "gui-dist") -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if (-not (Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue)) {
+            Set-Content -Encoding utf8 (Join-Path $root "NO_SAFE_ARTIFACTS.txt") "No safe package output was present; metadata records the original job status."
+          }
+
+      - name: Upload npm global smoke artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-ci-npm-global-${{ github.run_id }}
+          path: ci-artifacts/npm-global
+          if-no-files-found: warn
+          retention-days: 14

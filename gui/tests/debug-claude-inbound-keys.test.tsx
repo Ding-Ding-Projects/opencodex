@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { DebugClaudeInboundPanel } from "../src/pages/debug-claude-inbound-panel";
 import type { ClaudeInboundEntry } from "../src/pages/debug-shared";
 
@@ -59,9 +59,9 @@ test("Claude inbound rows with identical at/endpoint/model stay distinct via cap
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           <DebugClaudeInboundPanel entries={entries} />
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
 
@@ -75,14 +75,14 @@ test("Claude inbound rows with identical at/endpoint/model stay distinct via cap
     // Update the second row only — unique keys must keep the first row intact.
     await act(async () => {
       root.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           <DebugClaudeInboundPanel
             entries={[
               entries[0]!,
               { ...entries[1]!, thinkingType: "disabled", thinkingBudgetTokens: undefined },
             ]}
           />
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
 

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { LANE_PAGE, defaultCollapsedFamilies, laneView, rowStartsOpen } from "./claude-desktop-lane";
 import { makeCollapseStore, toggleInSet } from "./collapse-store";
 import { IconChevron, IconSearch } from "../icons";
-import { Banner, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
+import { BADGE_TONE_STYLE, Banner, Button, Chip, Empty, TextInput } from "../shell/m3-ui";
 import { useNotifications } from "../shell/notifications-context";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import { makeMatcher } from "./models-shared";
 import { claudeSettingLabels } from "./claude-settings-search";
 import { useT, type TFn, type TKey } from "../i18n/shared";
@@ -73,7 +75,16 @@ interface DesktopResponse {
 
 type PendingAction = "save" | "apply" | null;
 
-/** Tonal badge containers for the model rows (M3 status vocabulary). */
+/**
+ * Tonal badge containers for the model rows. Layout is local to this dense
+ * row (the shared `Badge` component's own chrome is identical, but these
+ * spans also carry legacy `.claude-*`/`.badge-*` classNames the disclosure
+ * tests query directly, so they stay plain spans rather than `<Badge>`).
+ * Colour comes from the single shared map, not a local guess: this used to
+ * declare its own "neutral" as `secondary-container`, which is why the 1M
+ * chip and the effort-supported badge rendered a different colour than every
+ * other "neutral" pill in the app. See `shell/m3-ui.tsx`'s `BADGE_TONE_STYLE`.
+ */
 const BADGE_BASE = {
   display: "inline-flex",
   alignItems: "center",
@@ -87,12 +98,11 @@ const BADGE_BASE = {
 } as const;
 
 const TONAL_BADGE = {
-  ok: { ...BADGE_BASE, background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
-  muted: { ...BADGE_BASE, background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
-  neutral: { ...BADGE_BASE, background: "var(--m3-secondary-container)", color: "var(--m3-on-secondary-container)" },
+  ok: { ...BADGE_BASE, ...BADGE_TONE_STYLE.ok },
+  neutral: { ...BADGE_BASE, ...BADGE_TONE_STYLE.neutral },
   // Prototype's "accent" badge. A container pair, not primary-on-primary: the Default
   // badge sits inside a row of tonal chips and a filled one reads as a button.
-  accent: { ...BADGE_BASE, background: "var(--m3-primary-container)", color: "var(--m3-on-primary-container)" },
+  accent: { ...BADGE_BASE, ...BADGE_TONE_STYLE.accent },
 } as const;
 
 /** M3 tonal status container; the tone-specific colours are applied per render. */
@@ -171,6 +181,19 @@ const SETTINGS_HIT_ROW = {
 const SETTINGS_HIT_LABEL = { fontSize: "var(--t-body-m)", fontWeight: 500 } as const;
 const SETTINGS_HIT_DESC = { color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" } as const;
 const MONO_STYLE = { fontFamily: "var(--mono)" } as const;
+
+/**
+ * The id of this bar's flag state line, which its own search field points
+ * `aria-describedby` at.
+ *
+ * A named constant rather than the same literal typed twice, because the two halves fail
+ * silently and separately when they drift: a field describing an id nothing renders is a
+ * dangling reference no screen catches, and a state line nothing points at is simply never
+ * read aloud. It is scoped to this bar by name — the per-lane model filters below own their
+ * own queries and modes, so if one of them ever grows a chip row it needs an id of its own
+ * rather than a share of this one.
+ */
+const SETTINGS_FLAGS_STATE_ID = "claude-desktop-settings-flags-state";
 
 /** One hit of this surface's settings search — same row anatomy the Codex pool uses. */
 interface DesktopSettingHit {
@@ -338,6 +361,16 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // filtering — and the Code tab's search cannot reinterpret this one.
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsRegex, setSettingsRegex] = useState(false);
+  /**
+   * The flags THIS field compiles with. State rather than the `"i"` the matcher
+   * used to pin: the builder anchored to this field composes a pattern *and* its
+   * flags, so a pattern deliberately built as case-sensitive arrived here
+   * case-insensitive and matched settings the user had ruled out. Held beside the
+   * query and the mode above it, and — like them — owned by this bar alone: the
+   * per-lane model filters below keep their own, so correcting `i` here cannot
+   * recompile what Opus is filtering.
+   */
+  const [settingsFlags, setSettingsFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const importRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -550,8 +583,14 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
   // Plain text is the default; `.*` is the explicit opt-in, evaluated locally through the
   // shared capped ECMAScript matcher (400 pattern chars). An invalid pattern matches
   // nothing and says so, rather than silently reverting to substring search.
+  //
+  // The flags come from this bar's own state rather than the matcher's default, so the
+  // builder's preview and this hit list cannot report different matches for one pattern.
+  // The matcher drops `g` and `y` before compiling — both carry `lastIndex` between calls,
+  // so one matcher reused down the settings index would keep every other row, and which
+  // half survived would depend only on the order the rows were tested in.
   const settingsActive = settingsQuery.trim().length > 0;
-  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex);
+  const settingsMatcher = makeMatcher(settingsQuery, settingsRegex, settingsFlags);
   // Held rather than rebuilt per use: the anchored builder hands the same rows back
   // as its sample, and two calls could drift into two different indexes.
   const settingsIndex = desktopSettingsIndex(t);
@@ -626,6 +665,10 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={settingsMatcher.error !== null}
+          // Only in regex mode, because that is the only mode the chip row renders in.
+          // Pointing at an id nothing renders would leave a screen reader hunting for a
+          // description that is not on the page.
+          aria-describedby={settingsRegex ? SETTINGS_FLAGS_STATE_ID : undefined}
           style={SETTINGS_SEARCH_INPUT}
         />
         <Chip
@@ -638,12 +681,28 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
         </Chip>
         <RegexBuilderButton
           value={settingsQuery}
-          onApply={pattern => setSettingsQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and leaving the
+          // flags behind is what made the popover's flag chips decorative from this
+          // field's point of view.
+          onApply={(pattern, appliedFlags) => { setSettingsQuery(pattern); setSettingsFlags(appliedFlags); }}
           regex={settingsRegex}
           onRegexChange={setSettingsRegex}
+          // Seeded from this field, so re-opening the panel shows the flags the search is
+          // actually running under instead of resetting them to the shipped default.
+          flags={settingsFlags}
           sample={settingsIndex.map(row => row.haystack).join("\n")}
         />
       </div>
+      {/* Below the row rather than inside it: the row is one flex line already carrying the
+          field, the `.*` chip and the builder trigger, and six more chips in it would crush
+          the field at the narrow widths this tab is checked at. It stays directly under the
+          search it describes, which is what the anchoring is for. */}
+      <SearchFlagsRow
+        regex={settingsRegex}
+        flags={settingsFlags}
+        onFlagsChange={setSettingsFlags}
+        id={SETTINGS_FLAGS_STATE_ID}
+      />
       <p
         role={settingsMatcher.error ? "alert" : "status"}
         style={{
@@ -839,12 +898,12 @@ export default function ClaudeDesktop({ apiBase }: { apiBase: string }) {
                       {/* Tonal containers per the M3 status vocabulary. The legacy class names
                           stay: they are the row's a11y/test contract, only the paint changes. */}
                       {model.supports1m === true && <span className="claude-1m-chip" style={TONAL_BADGE.neutral}>{t("claudeDesktop.supports1m")}</span>}
-                      {model.effortSupported === false && <span className="claude-effort-badge off" style={TONAL_BADGE.muted}>{t("claudeDesktop.effort.displayOnly")}</span>}
+                      {model.effortSupported === false && <span className="claude-effort-badge off" style={TONAL_BADGE.neutral}>{t("claudeDesktop.effort.displayOnly")}</span>}
                       {model.effortSupported === true && <span className="claude-effort-badge on" style={TONAL_BADGE.neutral}>{t("claudeDesktop.effort.supported")}</span>}
                       {profile.defaults[family] === model.route && (
                         <span className="claude-row-default" style={TONAL_BADGE.accent}>{t("claudeDesktop.defaultBadge")}</span>
                       )}
-                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`} style={model.available ? TONAL_BADGE.ok : TONAL_BADGE.muted}>
+                      <span className={`badge ${model.available ? "badge-green" : "badge-muted"}`} style={model.available ? TONAL_BADGE.ok : TONAL_BADGE.neutral}>
                         {model.available ? t("claudeDesktop.available") : t("claudeDesktop.unavailable")}
                       </span>
                     </button>

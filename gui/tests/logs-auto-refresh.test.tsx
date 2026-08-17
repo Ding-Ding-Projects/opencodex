@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { ConfirmProvider } from "../src/shell/confirm";
 import Logs from "../src/pages/Logs";
@@ -125,13 +125,13 @@ async function mountLogs(): Promise<{ root: Root; container: HTMLElement }> {
       // Logs now owns a destructive action, so it reads the confirm and
       // notification contexts main.tsx supplies. Mounting it bare would fail
       // on a missing provider rather than on anything these tests assert.
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <ConfirmProvider>
             <Logs apiBase="http://localhost" />
           </ConfirmProvider>
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   // Let virtualizer observe + measure after first paint.

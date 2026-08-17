@@ -286,6 +286,14 @@ async function mockManagementApi(req: Request): Promise<Response> {
     return json({ ok: true, accepted: true });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/codex-auth/accounts/clear-cooldown") {
+    return json({ ok: true, cleared: true });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/oauth/accounts/clear-cooldown") {
+    return json({ ok: true, cleared: true });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/oauth/status") {
     return json(oauthLoginStatus);
   }
@@ -1296,5 +1304,63 @@ describe("ocx account CLI (issue #180 matrix)", () => {
     } finally {
       sleepSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * `POST /api/oauth/accounts/clear-cooldown` and its `clearOAuthAccountCooldown`
+ * implementation were both fully built and reachable from nowhere: the literal
+ * path appeared in no caller in gui/src, src/cli or tests/, and this CLI command
+ * refused every non-Codex pool with a comment asserting "OAuth providers have no
+ * equivalent state here" -- which was simply untrue of the generic pool.
+ *
+ * The symptom was silent, which is why it survived: a Claude or Gemini account
+ * that hit a 429 cooldown had no button and no command to lift it, and injected
+ * routing makes the proxy the only model path, so it reads as the whole app
+ * being dead. Exactly the lockout the Codex path exists to relieve.
+ *
+ * These assert the ROUTE each provider kind reaches, not just an exit code, so a
+ * regression that quietly sends every provider back to the Codex-only endpoint
+ * fails here rather than 404ing in front of a user.
+ */
+describe("account clear-cooldown reaches the right pool", () => {
+  test("an OAuth pool posts to the generic route with provider and accountId", async () => {
+    const result = await run(["clear-cooldown", "anthropic", "acct_7"]);
+
+    expect(result.code).toBe(0);
+    const post = requests.find(request =>
+      request.method === "POST" && request.path === "/api/oauth/accounts/clear-cooldown");
+    expect(post).toBeDefined();
+    expect(post?.body).toMatchObject({ provider: "anthropic", accountId: "acct_7" });
+    // and NOT down the Codex-only path, which would 404 for this provider
+    expect(requests.some(r => r.path === "/api/codex-auth/accounts/clear-cooldown")).toBe(false);
+  });
+
+  test("a Codex pool still posts to the Codex route", async () => {
+    const result = await run(["clear-cooldown", "openai", "chatgpt_1"]);
+
+    expect(result.code).toBe(0);
+    const post = requests.find(request =>
+      request.method === "POST" && request.path === "/api/codex-auth/accounts/clear-cooldown");
+    expect(post).toBeDefined();
+    expect(post?.body).toMatchObject({ id: "chatgpt_1" });
+  });
+
+  test("`main` stays a Codex-only alias and is not translated for an OAuth pool", async () => {
+    // The app's own login has no counterpart in a generic OAuth pool, so the id
+    // must reach the server untouched there rather than being rewritten to the
+    // Codex sentinel.
+    await run(["clear-cooldown", "anthropic", "main"]);
+
+    const post = requests.find(request => request.path === "/api/oauth/accounts/clear-cooldown");
+    expect(post?.body).toMatchObject({ provider: "anthropic", accountId: "main" });
+  });
+
+  test("an API-key pool is refused, and says why accurately", async () => {
+    const result = await run(["clear-cooldown", "openrouter", "whatever"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("API-key pool");
+    expect(requests.some(r => r.path.includes("clear-cooldown"))).toBe(false);
   });
 });

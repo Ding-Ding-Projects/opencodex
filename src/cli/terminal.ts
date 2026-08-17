@@ -34,7 +34,8 @@ function printPresets(json: boolean): void {
 
 function flagValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
+  const value = index >= 0 ? args[index + 1] : undefined;
+  return value && !value.startsWith("--") ? value : undefined;
 }
 
 /** Flags that consume the next argument. Everything else is boolean. */
@@ -57,6 +58,10 @@ export async function handleTerminalCommand(args: string[]): Promise<number> {
 
   // Listing is the safe default: a bare `ocx terminal` must not spawn anything.
   if (!sub || sub === "list") {
+    if (sub === "list" && positional.length > 1) {
+      console.error("ocx terminal: list does not accept a preset or extra positional arguments.");
+      return 2;
+    }
     printPresets(json);
     return 0;
   }
@@ -72,8 +77,17 @@ export async function handleTerminalCommand(args: string[]): Promise<number> {
     return 1;
   }
   const command = flagValue(args, "--command");
-  const waitRaw = Number(flagValue(args, "--wait") ?? DEFAULT_WAIT_MS);
-  const wait = Number.isFinite(waitRaw) && waitRaw > 0 ? Math.min(waitRaw, 120_000) : DEFAULT_WAIT_MS;
+  if (args.includes("--command") && !command) {
+    console.error("ocx terminal: --command requires a command value.");
+    return 2;
+  }
+  const waitValue = flagValue(args, "--wait");
+  if (args.includes("--wait") && (!waitValue || !/^\d+$/.test(waitValue) || Number(waitValue) <= 0 || Number(waitValue) > 120_000)) {
+    console.error("ocx terminal: --wait must be an integer from 1 to 120000 milliseconds.");
+    return 2;
+  }
+  const waitRaw = Number(waitValue ?? DEFAULT_WAIT_MS);
+  const wait = Number.isFinite(waitRaw) && waitRaw > 0 ? waitRaw : DEFAULT_WAIT_MS;
 
   const created = createSession(preset);
   if (!created.ok) {

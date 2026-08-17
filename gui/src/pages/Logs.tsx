@@ -4,10 +4,13 @@ import { useI18n, LOCALES, type TFn } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { hashLogConversationQuery, matchesLogConversationId } from "../log-conversation-id";
 import { statusCodeInfo } from "../status-codes";
-import { IconSearch, IconX } from "../icons";
+import { IconReceiptLong, IconSearch, IconX } from "../icons";
 import { modelLabel } from "../model-display";
-import { Banner, Button, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
+import { describePriceTier, resolveCost, type PriceTierInfo, type PricingSourceClassification } from "../cost-lanes";
+import { Badge, Banner, Button, type BadgeTone, Chip, Dialog, Empty, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { FLAGS } from "../regex/engine";
+import { DEFAULT_SEARCH_FLAGS, stripStatefulFlags } from "../shell/settings-search";
 import { useConfirm } from "../shell/confirm-context";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
@@ -52,20 +55,44 @@ interface MatchedPriceInfo {
   sourceRef?: string;
   verifiedAt?: string;
   status: "verified" | "verified-derived";
+  /** Set when the matched row is a Fast or long-context band rather than base. */
+  tier?: PriceTierInfo;
+}
+
+interface CostEstimateInfo {
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  estimated: boolean;
+  price?: MatchedPriceInfo;
+  attempts?: Array<{ ordinal: number; price: MatchedPriceInfo }>;
+}
+
+/**
+ * One accounting lane's result. The management API has emitted both lanes since
+ * the pricing split; this type simply never declared them, so the page could
+ * only see `direct` and rendered an em dash for every subscription request that
+ * had a perfectly good API-equivalent figure sitting unread in the payload.
+ */
+interface CostLaneInfo {
+  kind: "value" | "unavailable";
+  sourceClassification?: PricingSourceClassification;
+  estimate?: CostEstimateInfo;
+  reason?: MetricUnavailableReason;
 }
 
 type CostResult =
   | {
     kind: "value";
-    estimate: {
-      cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-      estimated: boolean;
-      price?: MatchedPriceInfo;
-      attempts?: Array<{ ordinal: number; price: MatchedPriceInfo }>;
-    };
+    estimate: CostEstimateInfo;
     estimateReasons: CostEstimateReason[];
+    direct?: CostLaneInfo;
+    apiEquivalent?: CostLaneInfo;
   }
-  | { kind: "unavailable"; reason: MetricUnavailableReason };
+  | {
+    kind: "unavailable";
+    reason: MetricUnavailableReason;
+    direct?: CostLaneInfo;
+    apiEquivalent?: CostLaneInfo;
+  };
 
 interface LogDisplayMetrics {
   tokPerSecond: TokPerSecondResult;
@@ -208,13 +235,27 @@ function formatTokPerSecond(result: TokPerSecondResult | undefined, localeTag?: 
   return `${result.estimated ? "~" : ""}${value}`;
 }
 
-function formatEstimatedUsd(result: CostResult | undefined, localeTag?: string): string {
-  if (!result || result.kind === "unavailable" || !Number.isFinite(result.estimate.cost.total) || result.estimate.cost.total < 0) return "\u2014";
-  const totalUsd = result.estimate.cost.total;
-  return `~$${new Intl.NumberFormat(localeTag, {
+/**
+ * Resolve a row's cost to the figure it should actually show.
+ *
+ * Returns the lane alongside the text so a caller can tag an API-equivalent
+ * amount. A bare formatted string would have made the tag optional at every call
+ * site, and an untagged equivalent figure is indistinguishable from a bill.
+ */
+function estimatedUsdCell(result: CostResult | undefined, localeTag?: string): {
+  text: string;
+  kind: "direct" | "api_equivalent" | "unpriced";
+} {
+  const resolved = resolveCost<CostEstimateInfo>(result);
+  const total = resolved.estimate?.cost.total;
+  if (resolved.kind === "unpriced" || total === undefined || !Number.isFinite(total) || total < 0) {
+    return { text: "\u2014", kind: "unpriced" };
+  }
+  const text = `~$${new Intl.NumberFormat(localeTag, {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
-  }).format(totalUsd)}`;
+  }).format(total)}`;
+  return { text, kind: resolved.kind };
 }
 
 function formatEstimatedUsdValue(value: number, localeTag?: string): string {
@@ -262,28 +303,14 @@ function statusColor(status: number): string {
 
 /**
  * Status is a tonal badge in the prototype, toned 2xx ok / 3xx-4xx warn / 5xx
- * error. Status palettes are functional data colours, so the containers are
- * addressed directly rather than through a chrome class.
+ * error. Colour comes from the shared `BADGE_TONE_STYLE` map (via `Badge`) —
+ * this used to inline its own copy of the same three container pairs, one of
+ * three places in the app that did.
  */
-function statusBadgeStyle(status: number): CSSProperties {
-  const tone = status < 300
-    ? { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" }
-    : status < 500
-      ? { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" }
-      : { background: "var(--m3-error-container)", color: "var(--m3-on-error-container)" };
-  return {
-    display: "inline-flex",
-    alignItems: "center",
-    height: 24,
-    padding: "0 10px",
-    borderRadius: "var(--r-pill)",
-    fontFamily: "var(--mono)",
-    fontSize: "var(--t-label-s)",
-    fontWeight: 600,
-    letterSpacing: "0.2px",
-    whiteSpace: "nowrap",
-    ...tone,
-  };
+function statusBadgeTone(status: number): BadgeTone {
+  if (status < 300) return "ok";
+  if (status < 500) return "warn";
+  return "error";
 }
 
 type SurfaceFilter = "all" | "codex" | "claude" | "grok";
@@ -456,15 +483,30 @@ function modelTitle(log: LogEntry): string {
   return details.join(" \xC2\xB7 ");
 }
 
+/**
+ * Totals for the rows the conversation filter is currently showing.
+ *
+ * The two lanes are accumulated separately and never added together: a direct
+ * total is money owed and an API-equivalent total is a comparison, so one sum
+ * carrying both would be a number that means nothing. Previously only the direct
+ * lane was accumulated at all, which is why a subscription conversation reported
+ * "~$0.0000" beside a perfectly real token count.
+ */
 function summarizeFilteredLogs(entries: LogEntry[]): {
   requests: number;
   totalTokens: number;
-  estimatedCostUsd: number;
+  directCostUsd: number;
+  directRequests: number;
+  apiEquivalentCostUsd: number;
+  apiEquivalentRequests: number;
   unpricedRequests: number;
   unmeteredRequests: number;
 } {
   let totalTokens = 0;
-  let estimatedCostUsd = 0;
+  let directCostUsd = 0;
+  let directRequests = 0;
+  let apiEquivalentCostUsd = 0;
+  let apiEquivalentRequests = 0;
   let unpricedRequests = 0;
   let unmeteredRequests = 0;
   for (const entry of entries) {
@@ -474,15 +516,30 @@ function summarizeFilteredLogs(entries: LogEntry[]): {
       unmeteredRequests += 1;
       continue;
     }
-    const cost = entry.displayMetrics?.cost;
-    const total = cost?.kind === "value" ? cost.estimate.cost.total : undefined;
-    if (total !== undefined && Number.isFinite(total) && total >= 0) {
-      estimatedCostUsd += total;
+    const resolved = resolveCost<CostEstimateInfo>(entry.displayMetrics?.cost);
+    const total = resolved.estimate?.cost.total;
+    if (total === undefined || !Number.isFinite(total) || total < 0) {
+      unpricedRequests += 1;
       continue;
     }
-    unpricedRequests += 1;
+    if (resolved.kind === "direct") {
+      directCostUsd += total;
+      directRequests += 1;
+    } else {
+      apiEquivalentCostUsd += total;
+      apiEquivalentRequests += 1;
+    }
   }
-  return { requests: entries.length, totalTokens, estimatedCostUsd, unpricedRequests, unmeteredRequests };
+  return {
+    requests: entries.length,
+    totalTokens,
+    directCostUsd,
+    directRequests,
+    apiEquivalentCostUsd,
+    apiEquivalentRequests,
+    unpricedRequests,
+    unmeteredRequests,
+  };
 }
 
 export default function Logs({ apiBase }: { apiBase: string }) {
@@ -500,6 +557,16 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   const [surfaceFilter, setSurfaceFilter] = useState<SurfaceFilter>("all");
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the constant `"i"` it
+   * used to be: the builder — anchored beside the field or handed over from the
+   * full page — composes a pattern *and* its flags, and a field that pinned `i`
+   * showed a preview where turning on `m` or `s` changed the matches in the
+   * panel and then changed nothing about what the table found. A pattern built
+   * as case-sensitive arriving case-insensitive is the same bug read the other
+   * way round.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [conversationFilter, setConversationFilter] = useState("");
   const [conversationQueryHash, setConversationQueryHash] = useState<string | undefined>();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -523,6 +590,9 @@ export default function Logs({ apiBase }: { apiBase: string }) {
     if (!handoff) return;
     setQuery(handoff.pattern);
     setUseRegex(handoff.regex);
+    // Already validated, and already defaulted where the record carried nothing
+    // usable, so this is a plain adoption rather than another round of guessing.
+    setFlags(handoff.flags);
   }, []);
 
   const selectTab = selectLogsTab;
@@ -656,12 +726,20 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   // outside the screen, so it is the only search bar whose input does not come
   // from the box in front of the user — and it was the only one without the cap.
   // An unbounded pattern over every log line is a page the tab cannot recover from.
+  //
+  // The flags are the user's own, from the chip row below the field or carried
+  // in by the builder, minus `g` and `y`. Those two make `RegExp.prototype.test`
+  // stateful — `lastIndex` survives between calls, so testing one regex down a
+  // list of log rows returns true, false, true, false and half the matching rows
+  // disappear. They are dropped rather than refused because they are meaningful
+  // while *scanning a sample* in the builder, which is where every shipped preset
+  // sets `g`; the pattern still works here, it just stops depending on row order.
   const { matchesQuery, regexError } = useMemo(() => {
     const trimmed = query.trim();
     if (!trimmed) return { matchesQuery: () => true, regexError: null as string | null };
     if (useRegex) {
       try {
-        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), "i");
+        const re = new RegExp(trimmed.slice(0, PATTERN_CAP), stripStatefulFlags(flags));
         return { matchesQuery: (text: string) => re.test(text), regexError: null as string | null };
       } catch (cause) {
         return {
@@ -670,12 +748,22 @@ export default function Logs({ apiBase }: { apiBase: string }) {
         };
       }
     }
+    // Plain text stays case-insensitive whatever the flags say: it is a substring
+    // search over visible text, and the flags describe the regex the builder
+    // composes, so they only take effect in the mode that compiles one.
     const needle = trimmed.toLowerCase();
     return {
       matchesQuery: (text: string) => text.toLowerCase().includes(needle),
       regexError: null as string | null,
     };
-  }, [query, useRegex]);
+  }, [query, useRegex, flags]);
+
+  const toggleFlag = (flag: string) => {
+    setFlags(prev => (prev.includes(flag) ? prev.replace(flag, "") : prev + flag));
+  };
+
+  /** Whether the row has to explain that a selected chip is not being compiled. */
+  const statefulFlagsIgnored = flags.includes("g") || flags.includes("y");
 
   const filteredLogs = logs.filter(log => (
     matchesSurfaceFilter(surfaceFilter, log.surface)
@@ -811,9 +899,14 @@ export default function Logs({ apiBase }: { apiBase: string }) {
           </Chip>
           <RegexBuilderButton
             value={query}
-            onApply={pattern => setQuery(pattern)}
+            // Both halves of what the builder composed, not just the pattern.
+            // Taking the pattern and leaving the flags behind is what made the
+            // popover's own flag chips decorative from this field's point of
+            // view: they changed the match list in the panel and nothing here.
+            onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
             regex={useRegex}
             onRegexChange={setUseRegex}
+            flags={flags}
             // The unfiltered log lines, exactly as the search matches them: a
             // sample taken from `filteredLogs` would hide every row the pattern
             // being written is meant to find.
@@ -839,6 +932,61 @@ export default function Logs({ apiBase }: { apiBase: string }) {
           <Toggle on={autoRefresh} onChange={setAutoRefresh} label={t("logs.autoRefresh")} />
         </div>
       </div>
+
+      {/*
+        The flags this field is actually compiling, as controls rather than as a
+        secret. The builder hands flags over now, and a search quietly running
+        under flags the user can neither see nor change is the same invisible
+        state the hand-off used to have — moved one screen along rather than
+        fixed. So the carried flags land in chips that show what arrived and let
+        it be corrected, and a line underneath says what the current set means.
+
+        Shown only in regex mode because that is the only mode that compiles
+        them: plain text is a case-insensitive substring search whatever the
+        chips say, and a control that changes nothing while looking live is
+        exactly the decorative affordance the rules forbid.
+      */}
+      {useRegex && (
+        <>
+          <div className="m3-row" style={{ gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-l)" }}>
+              {t("search.flags")}
+            </span>
+            <div
+              className="m3-row"
+              role="group"
+              aria-label={t("search.flags")}
+              // The state line is the description, so a screen reader reaching
+              // the group hears what the current set actually compiles to rather
+              // than six unexplained single letters.
+              aria-describedby="logs-regex-flags-state"
+              style={{ gap: 6 }}
+            >
+              {FLAGS.map(f => (
+                <Chip
+                  key={f.flag}
+                  selected={flags.includes(f.flag)}
+                  onClick={() => toggleFlag(f.flag)}
+                  title={t(f.tkey)}
+                >
+                  <code style={{ fontFamily: "var(--mono)" }}>{f.flag}</code>
+                </Chip>
+              ))}
+            </div>
+          </div>
+          <p
+            id="logs-regex-flags-state"
+            style={{ margin: "0 0 8px", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}
+          >
+            {flags ? t("search.flagsCompiled", { flags }) : t("search.flagsNone")}
+            {/* `g` and `y` are dropped before compiling, so the row has to say so
+                rather than leaving the user to wonder why a global pattern
+                behaves identically with the chip on and off. */}
+            {statefulFlagsIgnored ? ` ${t("search.flagsStateful")}` : ""}
+          </p>
+        </>
+      )}
+
       {/* Height is reserved so an invalid pattern does not reflow the table, as
           in the prototype's fixed 20px error line. */}
       <p id="logs-regex-error" role="alert" style={{ minHeight: 20, margin: "0 0 12px", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
@@ -880,11 +1028,33 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       {conversationTotals && (
         <div style={{ marginBottom: 12 }}>
           <Banner tone="info">
+            {/* The headline figure prefers the billable lane; the equivalent lane is
+                stated on its own line beneath rather than folded into it, so the
+                banner never implies a subscription conversation cost money. */}
             {t("logs.conversation.totals", {
               requests: conversationTotals.requests,
               tokens: formatTokens(conversationTotals.totalTokens, localeTag ?? locale),
-              cost: formatEstimatedUsdValue(conversationTotals.estimatedCostUsd, localeTag),
+              cost: conversationTotals.directRequests > 0
+                ? formatEstimatedUsdValue(conversationTotals.directCostUsd, localeTag)
+                : conversationTotals.apiEquivalentRequests > 0
+                  ? formatEstimatedUsdValue(conversationTotals.apiEquivalentCostUsd, localeTag)
+                  : "—",
             })}
+            {conversationTotals.directRequests === 0 && conversationTotals.apiEquivalentRequests > 0 && (
+              <>
+                {" "}
+                <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+              </>
+            )}
+            {conversationTotals.directRequests > 0 && conversationTotals.apiEquivalentRequests > 0 && (
+              <>
+                {" · "}
+                {t("cost.lane.equivalent")}{" "}
+                <span className="mono">{formatEstimatedUsdValue(conversationTotals.apiEquivalentCostUsd, localeTag)}</span>
+                {" "}
+                <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+              </>
+            )}
             {" "}
             <span className="muted">
               {t("logs.conversation.scope")}
@@ -915,7 +1085,9 @@ export default function Logs({ apiBase }: { apiBase: string }) {
       ) : loading && logs.length === 0 ? (
         <Empty title={t("common.loading")} />
       ) : filteredLogs.length === 0 ? (
-        <Empty title={t(logs.length > 0 && isNarrowed ? "logs.noMatch" : "logs.noRequests")} />
+        logs.length > 0 && isNarrowed
+          ? <Empty title={t("logs.noMatch")} icon={IconSearch} />
+          : <Empty title={t("logs.noRequests")} icon={IconReceiptLong} />
       ) : (
         <div ref={scrollContainerRef} style={TABLE_SHELL}>
           <table className="m3-table logs-table">
@@ -958,12 +1130,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                         </span>
                       )}
                       {speedLabel(log) && (
-                        <span
-                          className="m3-chip"
-                          style={{ minHeight: 24, padding: "0 8px", fontSize: "var(--t-label-s)", background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)", borderColor: "transparent" }}
-                        >
-                          {speedLabel(log)}
-                        </span>
+                        <Badge tone="warn">{speedLabel(log)}</Badge>
                       )}
                     </span>
                     {/* Effort rides under the model id in the prototype rather than
@@ -974,7 +1141,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                   </td>
                   <td style={{ color: "var(--m3-on-surface-variant)" }}>{log.provider}</td>
                   <td>
-                    <span style={statusBadgeStyle(log.status)}>{log.status}</span>
+                    <Badge tone={statusBadgeTone(log.status)} style={{ fontFamily: "var(--mono)" }}>{log.status}</Badge>
                  </td>
                   <td className="mono log-col-tokens" title={tokensTitle(log, t)}>
                     {(() => {
@@ -1020,7 +1187,20 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                     {formatTokPerSecond(log.displayMetrics?.tokPerSecond, localeTag)}
                   </td>
                   <td className="num mono log-col-cost" style={NUM_CELL}>
-                    {formatEstimatedUsd(log.displayMetrics?.cost, localeTag)}
+                    {(() => {
+                      const cell = estimatedUsdCell(log.displayMetrics?.cost, localeTag);
+                      // The tag rides in the cell rather than only in a tooltip: a
+                      // column of dollar amounts is read by scanning, and a hover
+                      // hint reaches neither a scan nor a touch screen.
+                      return cell.kind === "api_equivalent"
+                        ? (
+                          <>
+                            {cell.text}{" "}
+                            <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+                          </>
+                        )
+                        : cell.text;
+                    })()}
                   </td>
                   <td>
                     <button
@@ -1171,36 +1351,95 @@ function LogDetailDialog({
       <section className="log-detail-section" aria-labelledby="log-detail-cost">
         <h4 id="log-detail-cost" className="log-detail-section-title">{t("logs.detail.section.cost")}</h4>
         <p className="log-detail-notes-line muted">{t("usage.cost.disclaimer")}</p>
-        {cost?.kind === "value" ? (
-          <>
-            <div className="log-detail-grid">
-              <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.total, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.input")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.input, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.cacheRead")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.cacheRead, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.cacheWrite")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.cacheWrite, localeTag)}</span>
-              <span className="muted">{t("logs.tokens.output")}</span><span className="mono">{formatEstimatedUsdValue(cost.estimate.cost.output, localeTag)}</span>
-              {cost.estimate.price && (
-                <>
-                  <span className="muted">{t("logs.detail.matchedKey")}</span>
-                  <span className="mono log-detail-break">{cost.estimate.price.jawcodeProvider ?? cost.estimate.price.provider}/{cost.estimate.price.modelId}</span>
-                  <span className="muted">{t("logs.detail.priceSource")}</span>
-                  <span>{t(`logs.detail.source.${cost.estimate.price.source}`)} · {t(verificationKey(cost.estimate.price.status))}</span>
-                </>
+        {/* Resolve the lane before rendering. This panel used to key off the bare
+            `cost.kind`, which the server derives from the direct lane alone, so a
+            subscription request whose fully priced API-equivalent breakdown was
+            sitting in the very same payload rendered as an em dash and a
+            "price unmatched" reason. */}
+        {(() => {
+          const resolved = resolveCost<CostEstimateInfo>(cost);
+          const estimate = resolved.estimate;
+          if (!estimate) {
+            return (
+              <div className="log-detail-grid">
+                <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{"—"}</span>
+                <span className="muted">{t("logs.detail.costBasis")}</span>
+                <span>{t("cost.lane.none")}</span>
+                <span className="muted">{t("logs.detail.unavailableReason")}</span>
+                <span>{cost?.kind === "unavailable" ? t(metricReasonKey(cost.reason)) : t("logs.detail.reason.usage_missing")}</span>
+              </div>
+            );
+          }
+          const equivalent = resolved.kind === "api_equivalent";
+          return (
+            <>
+              <div className="log-detail-grid">
+                {/* Basis first, money second: the reader learns what kind of number
+                    this is before they read the number itself. */}
+                <span className="muted">{t("logs.detail.costBasis")}</span>
+                <span>
+                  {equivalent
+                    ? <>{t("cost.lane.equivalent")} <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span></>
+                    : t("cost.lane.direct")}
+                  {/* A Fast or long-context request is priced from a different
+                      published row, so the total can be 1.5–2.5x what the same
+                      tokens would cost at the base rate. Naming the band here —
+                      beside the basis, before the money — is what stops that
+                      figure reading as a defect. */}
+                  {(() => {
+                    const tier = describePriceTier(estimate.price?.tier);
+                    if (!tier) return null;
+                    const num = (value: number): string => new Intl.NumberFormat(localeTag).format(value);
+                    const band = t(tier.band === "priority" ? "cost.tier.priority" : "cost.tier.longContext");
+                    const factor = tier.uniform
+                      ? t("cost.tier.factorUniform", { factor: num(tier.multiplier.input) })
+                      : t("cost.tier.factorSplit", {
+                        input: num(tier.multiplier.input),
+                        output: num(tier.multiplier.output),
+                      });
+                    const detail = tier.uniform
+                      ? t("cost.tier.detailUniform", { band, factor: num(tier.multiplier.input) })
+                      : t("cost.tier.detailSplit", {
+                        band,
+                        input: num(tier.multiplier.input),
+                        output: num(tier.multiplier.output),
+                        cacheRead: num(tier.multiplier.cacheRead),
+                        cacheWrite: num(tier.multiplier.cacheWrite),
+                      });
+                    return (
+                      <>
+                        {" "}
+                        <span className="cost-tier-tag" title={detail}>{band} {factor}</span>
+                        <span className="m3-visually-hidden">{detail}</span>
+                      </>
+                    );
+                  })()}
+                </span>
+                <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.total, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.input")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.input, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.cacheRead")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.cacheRead, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.cacheWrite")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.cacheWrite, localeTag)}</span>
+                <span className="muted">{t("logs.tokens.output")}</span><span className="mono">{formatEstimatedUsdValue(estimate.cost.output, localeTag)}</span>
+                {estimate.price && (
+                  <>
+                    <span className="muted">{t("logs.detail.matchedKey")}</span>
+                    <span className="mono log-detail-break">{estimate.price.jawcodeProvider ?? estimate.price.provider}/{estimate.price.modelId}</span>
+                    <span className="muted">{t("logs.detail.priceSource")}</span>
+                    <span>{t(`logs.detail.source.${estimate.price.source}`)} · {t(verificationKey(estimate.price.status))}</span>
+                  </>
+                )}
+              </div>
+              <p className="log-detail-notes-line muted">
+                {equivalent ? t("cost.lane.equivalentMeaning") : t("cost.lane.directMeaning")}
+              </p>
+              {cost?.kind === "value" && cost.estimateReasons.length > 0 && (
+                <ul className="log-detail-notes">
+                  {cost.estimateReasons.map(reason => <li key={reason}>{t(estimateReasonKey(reason))}</li>)}
+                </ul>
               )}
-            </div>
-            {cost.estimateReasons.length > 0 && (
-              <ul className="log-detail-notes">
-                {cost.estimateReasons.map(reason => <li key={reason}>{t(estimateReasonKey(reason))}</li>)}
-              </ul>
-            )}
-          </>
-        ) : (
-          <div className="log-detail-grid">
-            <span className="muted">{t("logs.detail.costTotal")}</span><span className="mono">{"\u2014"}</span>
-            <span className="muted">{t("logs.detail.unavailableReason")}</span>
-            <span>{cost?.kind === "unavailable" ? t(metricReasonKey(cost.reason)) : t("logs.detail.reason.usage_missing")}</span>
-          </div>
-        )}
+            </>
+          );
+        })()}
       </section>
 
       {detail.attempts?.length ? (
@@ -1249,7 +1488,19 @@ function LogDetailDialog({
                     </td>
                     <td className="num mono" style={NUM_CELL}>{attempt.durationMs}ms</td>
                     <td className="num mono" style={NUM_CELL}>{formatTokPerSecond(attempt.displayMetrics?.tokPerSecond, localeTag)}</td>
-                    <td className="num mono" style={NUM_CELL}>{formatEstimatedUsd(attemptCost, localeTag)}</td>
+                    <td className="num mono" style={NUM_CELL}>
+                      {(() => {
+                        const cell = estimatedUsdCell(attemptCost, localeTag);
+                        return cell.kind === "api_equivalent"
+                          ? (
+                            <>
+                              {cell.text}{" "}
+                              <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+                            </>
+                          )
+                          : cell.text;
+                      })()}
+                    </td>
                     <td className="log-detail-break">{reason}</td>
                   </tr>
                 );

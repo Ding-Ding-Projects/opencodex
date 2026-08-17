@@ -64,6 +64,13 @@ export interface SettingsOption {
 export interface ElsewhereOption {
   label: string;
   desc?: string;
+  /**
+   * Extra words that should match but are not the label, exactly as on a local
+   * option. None of these three fields is ever rendered — only `tab` is — so
+   * they exist purely to widen what a cross-page hit can be found by, and a
+   * setting has to be as findable from another screen as it is from its own.
+   */
+  keywords?: string;
   /** The tab/screen name to send the user to, translated. */
   tab: string;
 }
@@ -88,6 +95,21 @@ export const DEFAULT_SEARCH_FLAGS = "i";
  * works, it just stops being order-dependent.
  */
 const STATEFUL_FLAGS = /[gy]/g;
+
+/**
+ * The same drop, for a search bar that compiles its own regex rather than going
+ * through `settingsMatcher`.
+ *
+ * Exported because the Logs search bar is exactly that: it holds its own
+ * `RegExp` so it can bound the pattern and report the compile error on its own
+ * line, and once the regex-builder hand-off started carrying flags it inherited
+ * this hazard verbatim. Every preset the builder ships sets `g`, so a hand-off
+ * that passed `g` through untouched would have made half the matching log rows
+ * vanish — and which half would have depended on the order they arrived in.
+ */
+export function stripStatefulFlags(flags: string): string {
+  return flags.replace(STATEFUL_FLAGS, "");
+}
 
 /** Every word a search runs over for one option, in one string. */
 export function optionText(option: SettingsOption): string {
@@ -115,8 +137,7 @@ export function settingsMatcher(query: string, useRegex: boolean, flags = DEFAUL
     return { test: text => text.toLowerCase().includes(needle), error: null };
   }
   try {
-    const safe = flags.replace(STATEFUL_FLAGS, "");
-    const re = new RegExp(trimmed.slice(0, PATTERN_CAP), safe);
+    const re = new RegExp(trimmed.slice(0, PATTERN_CAP), stripStatefulFlags(flags));
     return { test: text => re.test(text), error: null };
   } catch (e) {
     return { test: () => false, error: e instanceof Error ? e.message : String(e) };
@@ -197,7 +218,7 @@ export function runSettingsSearch({
   const offTab = active ? matched.filter(option => !onThisTab(option)) : [];
 
   const elsewhereHitRows = active
-    ? elsewhere.filter(row => matcher.test([row.label, row.desc].filter(Boolean).join(" ")))
+    ? elsewhere.filter(row => matcher.test([row.label, row.desc, row.keywords].filter(Boolean).join(" ")))
     : [];
 
   return {

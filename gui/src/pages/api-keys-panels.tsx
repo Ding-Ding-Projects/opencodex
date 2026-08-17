@@ -3,6 +3,7 @@ import { IconAlert, IconCheck, IconCopy, IconKey, IconSearch, IconTrash } from "
 import { useI18n } from "../i18n/shared";
 import { Button, Card, Chip, Dialog, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import type { CopyOutcome } from "../components/use-copy-feedback";
 import {
   externalModelId,
@@ -13,8 +14,56 @@ import {
   formatCreatedDate,
   type ApiEndpointInfo,
   type ApiKeyEntry,
+  type CopilotDesktopProfile,
   type ModelTestState,
 } from "./api-keys-utils";
+
+export function ApiKeysCopilotPanel({
+  profile,
+  profileLoadFailed,
+  integrationKey,
+  creating,
+  newKeyVisible,
+  onGenerate,
+  onManage,
+}: {
+  profile: CopilotDesktopProfile | null;
+  profileLoadFailed: boolean;
+  integrationKey: ApiKeyEntry | null;
+  creating: boolean;
+  newKeyVisible: boolean;
+  localeTag?: string;
+  onGenerate: () => void;
+  onManage: () => void;
+}) {
+  const { t } = useI18n();
+  const readyCount = profile?.models.filter(model => model.ready).length ?? 0;
+  return (
+    <section className="api-panel api-copilot-panel" aria-busy={!profile && !profileLoadFailed}>
+      <p className="api-copilot-eyebrow">{t("api.copilotEyebrow")}</p>
+      <h3 className="panel-title">{t("api.copilotTitle")}</h3>
+      <p className="muted small">{t("api.copilotSubtitle")}</p>
+      <p className="api-copilot-note">{t("api.copilotOptionalKey")}</p>
+      <div className="api-copilot-actions">
+        {integrationKey ? (
+          <Button variant="text" onClick={onManage}>{t("api.copilotManageKey")}</Button>
+        ) : (
+          <Button onClick={onGenerate} disabled={creating}>{creating ? t("api.generating") : t("api.copilotGenerateKey")}</Button>
+        )}
+        {newKeyVisible && <span className="muted small" role="status">{t("api.copyThisKeyNow")} · {t("api.copilotRevealAbove")}</span>}
+      </div>
+      <div className="api-copilot-summary" role="status">
+        <span>{t("api.copilotReadyModels", { count: readyCount })}</span>
+        <span>{profileLoadFailed ? t("api.copilotStatusUnavailable") : "completions"}</span>
+      </div>
+      <div className="api-copilot-warning" role="note">
+        <strong>{t("api.copilotDirectTitle")}</strong>
+        <span>{t("api.copilotDirectWarning")}</span>
+      </div>
+      <p className="muted small">{t("api.copilotSidecars")}</p>
+    </section>
+  );
+}
 
 /** Monospace value cell shared by the endpoint and key tables. */
 const CODE_CELL = { fontFamily: "var(--mono)", overflowWrap: "anywhere" } as const;
@@ -350,11 +399,13 @@ export function ApiKeysModelsPanel({
   modelQuery,
   modelQueryError,
   useRegex,
+  modelFlags,
   copyOutcomeFor,
   modelTests,
   claudeCodeEnabled,
   onModelQueryChange,
   onUseRegexChange,
+  onModelFlagsChange,
   onCopyModelId,
   onTestModel,
   sourceLabel,
@@ -366,11 +417,14 @@ export function ApiKeysModelsPanel({
   modelQuery: string;
   modelQueryError: string | null;
   useRegex: boolean;
+  /** The flags the page compiles this query with; the chip row below edits them. */
+  modelFlags: string;
   copyOutcomeFor: (modelId: string) => CopyOutcome | null;
   modelTests: Record<string, { state: ModelTestState; detail?: string }>;
   claudeCodeEnabled: boolean;
   onModelQueryChange: (value: string) => void;
   onUseRegexChange: (next: boolean) => void;
+  onModelFlagsChange: (next: string) => void;
   onCopyModelId: (modelId: string) => void;
   onTestModel: (model: ExternalModelRow) => void;
   sourceLabel: (model: ExternalModelRow) => string;
@@ -392,7 +446,9 @@ export function ApiKeysModelsPanel({
           placeholder={t("api.modelsSearch")}
           aria-label={t("api.modelsSearch")}
           aria-invalid={!!modelQueryError}
-          aria-describedby="api-models-regex-error"
+          aria-describedby={
+            useRegex ? "api-models-regex-error api-models-flags-state" : "api-models-regex-error"
+          }
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -404,9 +460,17 @@ export function ApiKeysModelsPanel({
             pattern's survivors. An empty box is honest; a misleading one is not. */}
         <RegexBuilderButton
           value={modelQuery}
-          onApply={pattern => onModelQueryChange(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view: they changed the match
+          // list in the panel and nothing in the catalog underneath it.
+          onApply={(pattern, appliedFlags) => { onModelQueryChange(pattern); onModelFlagsChange(appliedFlags); }}
+          onDraftChange={(pattern, draftFlags) => { onModelQueryChange(pattern); onModelFlagsChange(draftFlags); }}
           regex={useRegex}
           onRegexChange={onUseRegexChange}
+          flags={modelFlags}
+          label="Regex"
+          dialogLabel="Model-search regex builder"
         />
       </div>
       <p
@@ -416,9 +480,15 @@ export function ApiKeysModelsPanel({
       >
         {modelQueryError ? `${t("regex.invalid")}: ${modelQueryError}` : ""}
       </p>
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={modelFlags}
+        onFlagsChange={onModelFlagsChange}
+        id="api-models-flags-state"
+      />
       {modelsLoading ? (
         <p className="m3-empty">{t("api.modelsLoading")}</p>
-      ) : modelsLoadFailed ? (
+      ) : modelsLoadFailed && filteredModels.length === 0 ? (
         <p className="m3-empty">{t("api.modelsLoadFailed")}</p>
       ) : filteredModels.length === 0 ? (
         <p className="m3-empty">{t("api.modelsEmpty")}</p>
@@ -446,6 +516,13 @@ export function ApiKeysModelsPanel({
                         {model.displayName !== model.id && (
                           <span style={{ color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>{model.displayName}</span>
                         )}
+                        {model.copilot?.ready === false && (
+                          <span style={{ color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
+                            {model.copilot.reason === "cursor-native-execution-unavailable"
+                              ? "Cursor native local execution must be disabled"
+                              : model.copilot.reason}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td>{sourceLabel(model)}</td>
@@ -461,7 +538,8 @@ export function ApiKeysModelsPanel({
                         </Button>
                         <Button
                           variant="outlined"
-                          disabled={testState === "testing"}
+                          disabled={testState === "testing" || model.copilot?.ready === false}
+                          title={model.copilot?.ready === false ? t("api.testUnavailable") : undefined}
                           onClick={() => { onTestModel(model); }}
                         >
                           {testState === "testing" ? t("api.testingModel") : t("api.testModel")}

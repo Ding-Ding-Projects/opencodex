@@ -30,13 +30,17 @@ import { onOutsidePress } from "./outside-press";
 import { Button, Field, Slider, TextInput } from "./m3-ui";
 import { ColorField } from "../components/appearance/ColorPicker";
 import { FontPicker } from "../components/appearance/FontPicker";
-import { IconX } from "../icons";
+import { IconLock, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { SettingsSearchRow } from "./SettingsSearch";
 import { useSettingsSearch } from "./use-settings-search";
 import type { SettingsOption } from "./settings-search";
 import { clampToViewport, tabStyleProps, type TabStyle } from "./use-tabs";
 import { FONT_CHOICES } from "../theme/m3";
+import { LockWizard } from "./LockWizard";
+import { UnlockPrompt } from "./UnlockPrompt";
+import { findLock, isUnlocked, subscribeLocks } from "./locks";
+import { hashRouteFor } from "../app-routing";
 
 /* The hex fallbacks and the `HEX` test that used to live here are gone with the
    `<input type="color">` they existed for. That input cannot hold a CSS variable,
@@ -142,6 +146,30 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
   const preview = tabStyleProps(props.style);
 
   /**
+   * "Lock this tab…" / "Lock this group…" — the same `LockWizard` and
+   * `UnlockPrompt` every other appearance surface uses, keyed by this panel's
+   * own `kind`/`id`, which line up exactly with `LockKind`/`targetId`. Read
+   * fresh on every `subscribeLocks` tick rather than once, so a lock created
+   * or removed from the Locks list while this panel happens to be open is
+   * reflected here without requiring a reopen.
+   */
+  const [lock, setLock] = useState(() => findLock(kind, id));
+  const [lockWizardOpen, setLockWizardOpen] = useState(false);
+  // State rather than reading `panelRef.current` inside the JSX below: the
+  // wizard needs an anchor element, but resolving one from a ref during
+  // render is exactly what `eslint-plugin-react-hooks`'s `refs` rule forbids
+  // (refs are for event handlers and effects, not render). Captured at the
+  // moment the lock button is actually clicked, which is an event handler.
+  const [lockAnchorEl, setLockAnchorEl] = useState<HTMLElement | null>(null);
+  // `isUnlocked()` reads session state directly and is not itself reactive —
+  // nothing re-renders this panel just because a session grant landed. This
+  // flag is what `UnlockPrompt`'s `onUnlocked`/`onRelocked` callbacks flip, so
+  // the gate below actually reflects the outcome of using it.
+  const [locallyUnlocked, setLocallyUnlocked] = useState(() => (lock ? isUnlocked(lock.id) : false));
+  useEffect(() => subscribeLocks(() => setLock(findLock(kind, id))), [kind, id]);
+  const gated = !!lock && !locallyUnlocked;
+
+  /**
    * An appearance editor is a settings surface like any other, and seven
    * properties in a 340px panel is exactly the size at which "obviously
    * scannable" stops being true — the badge field is below the fold on a short
@@ -173,7 +201,11 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
     return rows;
   }, [t, accent, onAccentChange, style.color, style.bg, style.font, style.size, style.weight, style.badge]);
 
-  const search = useSettingsSearch({ options });
+  // `"all"`, not a page id: this panel is anchored to a tab and can be opened
+  // from any screen, so none of the app's pages is "here" and every registered
+  // setting is legitimately somewhere else. Typing "theme" into a tab's style
+  // editor should say that theme lives on Appearance rather than nothing at all.
+  const search = useSettingsSearch({ options, scope: "all" });
   const { matches } = search;
 
   // Measured after paint and re-measured when the page moves under it, so the
@@ -252,6 +284,54 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
         </button>
       </header>
 
+      <div className="m3-row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+        <Button
+          variant="text"
+          onClick={event => { setLockAnchorEl(event.currentTarget); setLockWizardOpen(true); }}
+        >
+          <span className="m3-row" style={{ gap: 4, alignItems: "center" }}>
+            <IconLock width={16} height={16} aria-hidden="true" />
+            {lock ? t("locks.changeCredential") : t(kind === "group" ? "lock.wizard.lockThisGroup" : "lock.wizard.lockThisTab")}
+          </span>
+        </Button>
+      </div>
+
+      {lock && (
+        <div style={{ marginBottom: 8 }}>
+          <UnlockPrompt
+            lock={lock}
+            onUnlocked={() => setLocallyUnlocked(true)}
+            onRelocked={() => setLocallyUnlocked(false)}
+            // No Locks-page context to carry across: this panel is not the
+            // Locks page, so the ticket form on the far side opens without
+            // the convenience prefill that following the link *from* that
+            // page gets. `hashRouteFor` is the router's own spelling of the
+            // route, kept in step with `app-routing.ts` rather than
+            // hand-typed here.
+            onForgotten={() => { window.location.hash = hashRouteFor("locks"); }}
+          />
+        </div>
+      )}
+
+      {lockWizardOpen && (
+        <LockWizard
+          anchor={lockAnchorEl}
+          kind={kind}
+          targetId={id}
+          targetLabel={label}
+          onClose={() => setLockWizardOpen(false)}
+          onSaved={record => { setLock(record); setLocallyUnlocked(true); setLockWizardOpen(false); }}
+        />
+      )}
+
+      {/* Every property below is what a lock on this tab/group actually
+          protects (as a toy, not a security boundary — see the disclosure
+          `UnlockPrompt` itself renders above). Selecting a locked target
+          shows the unlock gate rather than teleporting past it into these
+          controls, per the contract's own search/palette rule applied here
+          to the one surface that already knows this target is locked. */}
+      {gated ? null : (
+      <>
       <Field label={t("tabs.stylePreview")}>
         {/* Rendered with the same classes and the same `tabStyleProps` the strip
             uses, so the preview cannot show one thing and the strip another. */}
@@ -385,6 +465,8 @@ export default function TabAppearanceEditor(props: TabAppearanceEditorProps) {
             {t("tabs.styleResetAll")}
           </Button>
         </div>
+      )}
+      </>
       )}
     </div>
   );

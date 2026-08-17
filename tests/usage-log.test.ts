@@ -118,6 +118,7 @@ describe("usage log", () => {
       totalTokens: 17,
       attempts: [{
         ordinal: 1,
+        timestamp: 1,
         provider: "a",
         model: "m1",
         adapter: "openai-chat",
@@ -126,7 +127,9 @@ describe("usage log", () => {
         sendCount: 2,
         recoveryKinds: ["transient-5xx", "transient-5xx", "oauth-401"],
         usageStatus: "estimated",
+        cacheRetention: "long",
         inputTokenEstimate: 5,
+        promptInputTokens: 5,
         usage: { inputTokens: 5, outputTokens: 0, estimated: true },
         totalTokens: 5,
         requestedEffort: "max",
@@ -154,6 +157,7 @@ describe("usage log", () => {
     ]) expect(raw).not.toContain(forbidden);
     expect(readUsageEntries()[0]?.attempts).toEqual([{
       ordinal: 1,
+      timestamp: 1,
       provider: "a",
       model: "m1",
       adapter: "openai-chat",
@@ -162,7 +166,9 @@ describe("usage log", () => {
       sendCount: 2,
       recoveryKinds: ["transient-5xx", "oauth-401"],
       usageStatus: "estimated",
+      cacheRetention: "long",
       inputTokenEstimate: 5,
+      promptInputTokens: 5,
       usage: { inputTokens: 5, outputTokens: 0, estimated: true },
       totalTokens: 5,
       requestedEffort: "max",
@@ -170,6 +176,67 @@ describe("usage log", () => {
       reasoningWireField: "reasoning_effort",
       reasoningWireValue: "high",
     }]);
+  });
+
+  test("persists bounded raw prompt input tokens without inferring them from usage", () => {
+    appendUsageEntry({
+      requestId: "ocx-prompt-size",
+      timestamp: 1,
+      provider: "openai-apikey",
+      model: "gpt-5.6-sol",
+      promptInputTokens: 271_999,
+      status: 200,
+      durationMs: 1,
+      usageStatus: "reported",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    expect(readUsageEntries()[0]).toMatchObject({
+      requestId: "ocx-prompt-size",
+      promptInputTokens: 271_999,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+
+    appendUsageEntry({
+      requestId: "ocx-invalid-prompt-size",
+      timestamp: 2,
+      provider: "openai-apikey",
+      model: "gpt-5.6-sol",
+      promptInputTokens: -1,
+      status: 200,
+      durationMs: 1,
+      usageStatus: "reported",
+      usage: { inputTokens: 999_999, outputTokens: 1 },
+    } as never);
+    expect(readUsageEntries()[1]).not.toHaveProperty("promptInputTokens");
+  });
+
+  test("omits malformed optional attempt cache retention without dropping the attempt", () => {
+    appendUsageEntry({
+      requestId: "ocx-attempt-cache-retention",
+      timestamp: 1,
+      provider: "combo",
+      model: "combo/free",
+      status: 200,
+      durationMs: 4,
+      usageStatus: "unreported",
+      attempts: [{
+        ordinal: 1,
+        timestamp: 1,
+        provider: "a",
+        model: "m1",
+        adapter: "openai-chat",
+        status: 200,
+        durationMs: 3,
+        sendCount: 1,
+        recoveryKinds: [],
+        usageStatus: "unreported",
+        cacheRetention: "forever",
+      } as never],
+    });
+
+    const attempt = readUsageEntries()[0]?.attempts?.[0];
+    expect(attempt?.timestamp).toBe(1);
+    expect(attempt).not.toHaveProperty("cacheRetention");
   });
 
   test("omits malformed optional attempt reasoning metadata without dropping the attempt", () => {
@@ -224,6 +291,8 @@ describe("usage log", () => {
       { ...valid(2), status: 99 },
       { ...valid(2), status: 600 },
       { ...valid(2), status: 200.5 },
+      { ...valid(2), timestamp: -1 },
+      { ...valid(2), timestamp: Number.NaN },
       { ...valid(2), inputTokenEstimate: -1 },
       { ...valid(2), totalTokens: -1 },
       { ...valid(2), firstOutputMs: -1 },
@@ -547,6 +616,7 @@ describe("usage log", () => {
       configuredServiceTier: "auto",
       modelSupportsServiceTier: true,
       responseServiceTier: "priority",
+      cacheRetention: "long",
       status: 200,
       durationMs: 5,
       usageStatus: "unreported",
@@ -562,7 +632,25 @@ describe("usage log", () => {
       configuredServiceTier: "auto",
       modelSupportsServiceTier: true,
       responseServiceTier: "priority",
+      cacheRetention: "long",
     });
+  });
+
+  test("drops malformed cache-retention metadata without dropping the usage row", () => {
+    appendUsageEntry({
+      requestId: "ocx-bad-cache-retention",
+      timestamp: 10,
+      provider: "anthropic-apikey",
+      model: "claude-opus-5",
+      cacheRetention: "forever",
+      status: 200,
+      durationMs: 5,
+      usageStatus: "reported",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    } as unknown as Parameters<typeof appendUsageEntry>[0]);
+    const [persisted] = readUsageEntries();
+    expect(persisted?.requestId).toBe("ocx-bad-cache-retention");
+    expect(persisted).not.toHaveProperty("cacheRetention");
   });
 
   test("readRecentUsageEntries returns only the newest N rows", () => {

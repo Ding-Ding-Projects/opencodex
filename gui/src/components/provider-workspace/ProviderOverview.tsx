@@ -4,21 +4,32 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useT, useI18n } from "../../i18n/shared";
-import { IconAlert, IconCheck } from "../../icons";
+import { IconAlert, IconCheck, IconNetworkCheck } from "../../icons";
 import { binProviderStatus, type WorkspaceItem } from "../../provider-workspace/catalog";
 import { formatRelativeTime, relativeTimeLabelsFromT, formatRequestCount, formatTokenCount } from "../../provider-workspace/usage";
 import { accountQuotaFromReport, formatQuotaSourceLabel, type ProviderQuotaReportView } from "../../provider-workspace/report";
+import { useNotifications } from "../../shell/notifications-context";
 import type { ProviderUsageTotals } from "./types";
 import { authModeLabel } from "./ProviderRail";
 import type { ProviderUpdatePatch } from "./types";
 
+/** Shape of `POST /api/providers/test` — see src/server/management/provider-routes.ts. */
+interface ProviderTestResult {
+  ok: boolean;
+  latencyMs?: number;
+  message?: string;
+  error?: string;
+}
+
 export default function ProviderOverview({
-  item, usageTotals, quotaReport, oauthEmail,
+  item, apiBase, usageTotals, quotaReport, oauthEmail,
   onEditSettings, onViewUsage, onUpdateProvider,
   onReauthenticate, onCancelLogin, reauthBusy = false,
   accountPanel, modelCount, modelsLoading = false,
 }: {
   item: WorkspaceItem;
+  /** Base URL of OpenCodex's own management API — used for the "Test connection" probe. */
+  apiBase: string;
   usageTotals?: ProviderUsageTotals;
   quotaReport?: ProviderQuotaReportView;
   oauthEmail?: string;
@@ -41,6 +52,29 @@ export default function ProviderOverview({
 }) {
   const t = useT();
   const { locale } = useI18n();
+  const { notify } = useNotifications();
+  const [testingConnection, setTestingConnection] = useState(false);
+  const testConnection = useCallback(async () => {
+    if (testingConnection) return;
+    setTestingConnection(true);
+    try {
+      const res = await fetch(`${apiBase}/api/providers/test?name=${encodeURIComponent(item.name)}`, { method: "POST" });
+      const result = await res.json() as ProviderTestResult;
+      notify({
+        tone: result.ok ? "success" : "error",
+        title: result.ok ? t("pws.connectionOk") : t("pws.connectionFailed"),
+        body: result.message ?? result.error,
+      });
+    } catch (err) {
+      notify({
+        tone: "error",
+        title: t("pws.connectionFailed"),
+        body: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setTestingConnection(false);
+    }
+  }, [apiBase, item.name, notify, t, testingConnection]);
   const timeLabels = relativeTimeLabelsFromT(t);
   const status = binProviderStatus(item);
   const needsAttention = Boolean(item.activeNeedsReauth);
@@ -99,11 +133,22 @@ export default function ProviderOverview({
             </div>
           )}
         </dl>
-        {onEditSettings && (
-          <button type="button" className="m3-btn m3-btn--text pws-btn-sm pws-edit-settings-link" onClick={onEditSettings}>
-            {t("pws.editSettings")}
+        <div className="pws-connection-actions">
+          <button
+            type="button"
+            className="m3-btn m3-btn--tonal pws-btn-sm"
+            onClick={() => void testConnection()}
+            disabled={testingConnection}
+          >
+            <IconNetworkCheck style={{ width: 16, height: 16 }} aria-hidden="true" />
+            {testingConnection ? t("pws.testing") : t("pws.testConnection")}
           </button>
-        )}
+          {onEditSettings && (
+            <button type="button" className="m3-btn m3-btn--text pws-btn-sm pws-edit-settings-link" onClick={onEditSettings}>
+              {t("pws.editSettings")}
+            </button>
+          )}
+        </div>
       </section>
 
       {accountPanel ? (

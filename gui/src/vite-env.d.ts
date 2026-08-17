@@ -6,6 +6,14 @@ declare const __APP_VERSION__: string;
 declare const __APP_BUILD__: string;
 /** Commit this build came from; empty outside CI. Names the dish codename too. */
 declare const __APP_COMMIT__: string;
+/** One-use public-catalog release codename, or null when none was resolved. */
+declare const __APP_CODENAME__: {
+  id: string;
+  name: string;
+  zh: string;
+  jyutping: string;
+  emoji: string;
+} | null;
 
 /** Injected by the desktop shell's preload (electron/preload.mjs). Absent in a browser. */
 interface Window {
@@ -40,6 +48,26 @@ interface Window {
       status: () => Promise<{ running: boolean; port: number; pid: number | null; managed: boolean }>;
       /** Resolves only once `/healthz` answers, or explains why it did not. */
       start: () => Promise<{ ok: true; port: number; adopted: boolean } | { ok: false; error: string }>;
+    };
+    /**
+     * The native file/folder picker behind every path text box.
+     *
+     * Absent in a browser, where nothing can open one — so `PathInput` renders
+     * the plain text field alone rather than a Browse button guaranteed to do
+     * nothing. `mode` is a word this bridge chooses from, not an Electron
+     * `properties` array; the main process decides what each means.
+     *
+     * Always resolves: a cancelled dialog is `{ ok: true, canceled: true }`,
+     * because changing your mind is a normal outcome rather than a failure to
+     * catch.
+     */
+    dialog?: {
+      openPath: (options: {
+        mode: "file" | "directory" | "save";
+        title?: string;
+        /** Starting directory only — the user still chooses what comes back. */
+        defaultPath?: string;
+      }) => Promise<{ ok: boolean; canceled: boolean; path?: string; error?: string }>;
     };
   };
 }

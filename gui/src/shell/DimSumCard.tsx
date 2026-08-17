@@ -8,21 +8,21 @@
 import { useEffect, useState } from "react";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
-import { usePrefs } from "../theme/prefs-context";
 import { drawDimSum, photoSrc, type DimSumDish } from "./dimsum";
+import { useSchoolModeActive } from "../school-mode/hooks";
 
 const AUTO_DISMISS_MS = 12_000;
 
 /**
  * One draw per launch, cached at module level. The cache is what makes this
  * robust against StrictMode's double-mount and any later remount of the shell:
- * the roll happens once per page load, full stop. Toggling the pref mid-session
- * does not grant a fresh roll either — the next launch honours the new value.
+ * the roll happens once per page load, full stop. A remount never buys a second
+ * chance, which is the whole of "never twice in one launch".
  */
 let launchDraw: DimSumDish | null | undefined;
 
-function drawOncePerLaunch(enabled: boolean, version: string): DimSumDish | null {
-  if (launchDraw === undefined) launchDraw = drawDimSum({ enabled, version });
+function drawOncePerLaunch(version: string): DimSumDish | null {
+  if (launchDraw === undefined) launchDraw = drawDimSum({ version });
   return launchDraw;
 }
 
@@ -64,11 +64,18 @@ export function DishArt({ dish }: { dish: DimSumDish }) {
 
 export default function DimSumCard({ version }: { version: string }) {
   const t = useT();
-  const { prefs } = usePrefs();
   // Lazy initializer, not an effect: the draw is a synchronous read+write of
   // localStorage and produces the initial state, so an effect would only add a
   // second render (and trip the set-state-in-effect rule).
-  const [dish, setDish] = useState<DimSumDish | null>(() => drawOncePerLaunch(prefs.dimsum, version));
+  const [dish, setDish] = useState<DimSumDish | null>(() => drawOncePerLaunch(version));
+  // School Mode makes the surprise "behave as if it is not installed" — not
+  // merely quieter. Checked here, at render, rather than only inside the
+  // draw itself: if the roll already happened earlier in this launch (before
+  // School Mode turned on, or before its own status fetch resolved), the
+  // "once per launch" slot is already spent and cannot be re-rolled — but
+  // this still keeps it from ever becoming *visible* while the mode is on,
+  // and it reacts live if the mode flips while the card is already showing.
+  const schoolModeActive = useSchoolModeActive();
 
   useEffect(() => {
     if (!dish) return;
@@ -76,7 +83,7 @@ export default function DimSumCard({ version }: { version: string }) {
     return () => clearTimeout(timer);
   }, [dish]);
 
-  if (!dish) return null;
+  if (!dish || schoolModeActive) return null;
 
   return (
     <div

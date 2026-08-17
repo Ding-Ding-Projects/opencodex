@@ -210,6 +210,69 @@ const MENUS: Menu[] = [
     open: `(() => { const b = (${BY_LABEL})('button', 'Build a pattern to search these settings'); if (!b) return false; b.click(); return true; })()`,
     appears: `[role="dialog"], .m3-regex, .rx-panel, .m3-menu, .rx-builder`,
   },
+  {
+    // The password/TOTP-gated Secret & display-name history manager, opened
+    // the way a user reaches it: the "History…" button on the Authenticator
+    // page. `components/authenticator/SecretHistoryDialog.tsx` renders the
+    // shared `Dialog` component (a native `<dialog>` with no `role="dialog"`
+    // attribute — that role is implicit, not written) so `appears` matches the
+    // element itself rather than an attribute nothing sets.
+    //
+    // On a freshly seeded profile no lock exists yet for this surface, so what
+    // this actually captures is the lock-creation wizard the dialog shows on
+    // first open ("no implicit master unlock" — SecretHistoryDialog.tsx's own
+    // doc comment) rather than the history table. That is still the real
+    // screen a user sees the first time they click the button, not a
+    // fabricated state.
+    name: "secret-history",
+    page: "authenticator",
+    // An `/history/i` substring match once fired on the SIDEBAR's own
+    // "Version history" nav button — first in DOM order, and a substring
+    // match away from the real target — and silently navigated to that page
+    // instead of opening anything, failing with "opened nothing matching
+    // dialog[open]...". `Authenticator.tsx`'s trigger reads exactly
+    // "History…" (`secretHistory.openButton`); match that whole label (or
+    // its English half in bilingual mode) via the same `says()` shape
+    // `BY_LABEL` already uses, not a bare substring test.
+    open: `(() => {
+      const want = "History…".toLowerCase();
+      const says = v => {
+        const s = (v || "").trim();
+        return s.toLowerCase() === want || s.split(" · ").some(p => p.trim().toLowerCase() === want);
+      };
+      const b = [...document.querySelectorAll("button")].find(el => {
+        const box = el.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && says(el.textContent);
+      });
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`,
+    appears: `dialog[open], .m3-dialog, [role="dialog"]`,
+  },
+  {
+    // "Move… into group…" from the tab context menu — a picker, deliberately
+    // never a per-group entry inlined into that menu (see TabGroupPicker.tsx's
+    // own doc comment on why). It renders its own `role="dialog"` panel with an
+    // honest empty state, so this works even before any tab group exists.
+    name: "tab-group-picker",
+    page: "dashboard",
+    open: `(async () => {
+      const tab = document.querySelector('[role="tab"], .m3-tab-btn');
+      if (!tab) return false;
+      const r = tab.getBoundingClientRect();
+      tab.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      }));
+      await new Promise(res => setTimeout(res, 400));
+      const item = [...document.querySelectorAll('button, [role="menuitem"]')]
+        .find(el => /move.*into group/i.test(el.textContent || ''));
+      if (!item) return false;
+      item.click();
+      return true;
+    })()`,
+    appears: `[role="dialog"]`,
+  },
 ];
 
 const wanted = process.argv.slice(2).filter(a => !a.startsWith("-"));

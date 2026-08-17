@@ -1,5 +1,341 @@
 # Handoff
 
+## Session close — 2026-08-16, tip `316ff9a5b`
+
+### What this project is right now
+
+A Windows desktop app (Electron + React + Bun) that runs a local proxy in front of AI provider
+APIs, with a dashboard, a CLI (`ocx`), and an auto-release pipeline that cuts a GitHub release per
+commit. `main` is dewed and clean; every linked checkout is clean; there are no stashes.
+
+| | |
+| --- | --- |
+| Tip | `316ff9a5b`, matching the remote |
+| GUI suite | **1630 pass · 0 fail** (194 files, ~70s) |
+| Root suite | **7382 pass · 0 real fail** — see the warning below, this is NOT one run |
+| Typecheck (root + gui), privacy scan | clean |
+| Windows CI | **success** on `0a6c642ae` and `b8ac93dba` |
+| Latest release | **build-219** at `b8ac93dba` |
+
+> [!WARNING]
+> **`bun test tests` never finishes** — 124 minutes, ~98% CPU, memory pinned at 295 MB, no stdout
+> after the 4th file. Do not wait it out and do not read the log for progress: bun prints a
+> per-file header only for files that emit output, so a frozen log proves nothing. There is a
+> **60-second two-file reproducer** and the cause is narrowed to a module mock; see
+> [#32](https://github.com/Ding-Ding-Projects/opencodex/issues/32).
+>
+> **To get a verdict, shard it** — chunks of 30 files, each its own `bun` process with a timeout.
+> 17 of 18 chunks return green in 9–101s; the 18th holds the reproducer and its 30 files pass
+> individually. That is where 7382 comes from: every one of the 534 files verified, never a single
+> whole-suite run.
+
+### Which checks run against what
+
+The GUI suite and the root suite read **source**. Three things read the **built artifact**, and the
+distinction has caught real defects this session that no source test could:
+
+- `scripts/capture-shots.ts` photographs the real desktop window through Win32 `PrintWindow`, and
+  refuses to write a shot it cannot prove is the screen it claims — including, now, one whose
+  corner surface would be clipped out of frame.
+- The packaging build is the only thing that runs the stricter `noUnusedLocals` config; `bun x tsc
+  --noEmit` passed on an unused import the build rejected.
+- Reading a capture is what found three defects this session that were invisible in source.
+
+### Open, with issue numbers
+
+| # | What | Note |
+| --- | --- | --- |
+| [#32](https://github.com/Ding-Ding-Projects/opencodex/issues/32) | The suite does not terminate | 2-file reproducer; fix is a design call about a test seam in the hot request path |
+| [#33](https://github.com/Ding-Ding-Projects/opencodex/issues/33) | Anthropic OAuth echoes the raw upstream body into a user toast | The exchange/refresh calls carry a PKCE verifier and a refresh token |
+| [#34](https://github.com/Ding-Ding-Projects/opencodex/issues/34) | Six verified defects: 2 stale-result races, 2 missing bounds, 2 dead surfaces | 1–4 behavioural, 5–6 cleanup |
+| [#17](https://github.com/Ding-Ding-Projects/opencodex/issues/17), [#10](https://github.com/Ding-Ding-Projects/opencodex/issues/10), [#8](https://github.com/Ding-Ding-Projects/opencodex/issues/8) | Pre-existing feature work | Not touched this session |
+
+Also open and deliberately not done: old screenshots containing a real account name remain reachable
+in git history (purging needs a history rewrite and the owner's authorization); `ci.yml`'s path
+filter means a docs-only commit registers no Windows CI run at all; the converter queue accepts
+structured-data jobs only and has no GUI page; the model-runtime harness launch is unbuilt on
+purpose, since a launcher accepting an unvalidated argument is worse than none.
+
+### Boundaries worth knowing before you start
+
+- **Releases are pruned to the newest ten**, tag and all. An ancestry proof pinned to a `build-*`
+  tag stops being checkable once that tag is deleted — prove against `main`.
+- **`OPENCODEX_HOME` does not isolate the Codex config.** `startServer()` writes routing into
+  `$CODEX_HOME/config.toml`, a separate global path. Isolate all three of `OPENCODEX_HOME`,
+  `CODEX_HOME` and `GROK_HOME`, as `scripts/capture-shots.ts` does.
+- **Adding a remote inside a linked checkout retargets `gh` for the whole repository**, because
+  linked checkouts share `.git/config`. Confirm with `gh api repos/:owner/:repo --jq .full_name`
+  before trusting any `gh` read.
+- **The repo pins `eol=lf`** (`.gitattributes`), with `.bat`/`.cmd` the deliberate exception.
+  Python's `io.open(p, "w")` on Windows writes CRLF and `git status` stays clean, because git
+  normalizes on read — but a test that reads the working tree will fail. Write binary, or pass
+  `newline=""`.
+
+### Two retained jers, deliberately
+
+`feat/w2-schoolmode` and `feat/w3-shortcuts` each hold one commit that is **not** an ancestor of
+`main`. Both are preservation checkpoints, and their own commit messages say so. Their diffs against
+`main` show ~61k and ~43k deletions respectively, because they branched from a far older point —
+merging either would delete a large amount of current work. They are kept, not pending.
+
+
+## Every contract has code behind it now — 2026-08-15
+
+### Position
+
+79 commits, 363 files, +38,998 / −425. **Zero `absent` rows remain** in
+`docs/FEATURE-INVENTORY.md`: **11 present · 53 partial · 0 absent · 1 n/a**.
+
+| | |
+| --- | --- |
+| Root suite | **7382 pass · 0 real fail** — but see the warning below: `bun test tests` does not terminate |
+| GUI suite | **1624 pass · 0 fail** |
+| Typecheck (root + gui), privacy scan | all clean |
+| Releases | `build-193` … `build-201`, published automatically per commit |
+| Captures | 42 app · 12 menus · 19 design-prototype · 19 side-by-side composites |
+
+> [!WARNING]
+> **`bun test tests` never finishes.** Measured 2026-08-16: 124 minutes, ~98% CPU, resident
+> memory pinned at exactly 295 MB, no stdout after the 4th file. Do not wait it out, and do
+> not diagnose it from the log — bun prints a per-file header only for files that emit
+> output, so the GUI suite prints 8 headers for 193 files and a frozen log proves nothing.
+> `--timeout` cannot reach it either: whatever spins is outside test scope.
+>
+> There is a **two-file reproducer that runs in 60 seconds**, and the cause is narrowed to a
+> module mock in `tests/abort-race.test.ts` — full evidence in
+> [#32](https://github.com/Ding-Ding-Projects/opencodex/issues/32).
+>
+> **To get a verdict, shard it**: chunks of 30 files, each its own `bun` process with a
+> timeout. 17 of 18 chunks come back green in 9–101s each; the 18th holds the reproducer and
+> its 30 files pass individually. That is where the 7382 above comes from — every one of the
+> 534 test files verified, not one whole-suite run.
+
+The 53 partials each name the half still missing. **Nothing was promoted to `present` for having
+shipped the hard part** — that restraint is the only thing that makes the count worth reading.
+
+### The release deadlock is gone
+
+This session began with `main` unable to produce a release for a day, and four unrelated-looking
+defects were jointly responsible while every workflow reported success:
+
+1. The CLI-parity guard regexed raw file text for `/api/…`, so the documentation browser's bundled
+   article corpus — one enormous string literal — reported five other vendors' base URLs as
+   uncovered endpoints. One `(fail)` line in a 12,200-line run, and it was the whole of CI's red.
+2. A privacy-scan exemption was attached to a **directory** rather than to content, so the same
+   bytes failed the scan after the build copied them elsewhere.
+3. Two count assertions had pinned the article corpus size and the settings list.
+4. Underneath all of it: `ci.yml`'s `paths:` filter excludes `docs/**`, so **a docs-only commit
+   registers no CI run at all**, the release gate polls forty times for a run that cannot arrive,
+   and publication skips with every step green.
+
+> Neither the workflow's green tick nor the gate step's own `success` proves a release published —
+> the gate carries `continue-on-error: true`. Only `Create the release` reporting `success` rather
+> than `skipped`, and the release record itself, tell the truth.
+
+**(4) is deliberately unfixed.** Widening the filter is a decision about whether a docs-only commit
+deserves an installer, and it belongs to the repository owner. The workaround is
+`gh workflow run ci.yml --ref main` for that exact commit; the releases above show the pipeline is
+otherwise self-sustaining.
+
+### The recurring defect in this codebase has a shape
+
+Five independent instances this session, and they are worth recognising on sight: **a capability
+wired at one end and consumed at neither, with nothing erroring to say so.**
+
+- A bundled engine the app could not find, because the resources root was never exposed on its
+  process bridge.
+- A provider **Test connection** button whose backend probe had existed all along at
+  `POST /api/providers/test`, already backing `ocx provider test`, with four strings translated into
+  **all seven locales** and no caller anywhere.
+- Converter adapters proven bundled with no route, CLI or GUI action able to run them.
+- `PdfTools.tsx` referencing CSS classes defined in no stylesheet.
+- A lossy-conversion disclosure enforced in the GUI and not in the service, so `ocx convert` could
+  silently lose types.
+
+The tell is always the same: nothing fails, so nothing reports it. **Follow a capability to its
+consumer before believing it ships.**
+
+### Two instruments, and why both were needed
+
+A six-lane source audit and a pixel side-by-side of the real prototype against the real app answered
+different questions, and where they agreed the finding was certain — the missing Test-connection
+button was found independently by both.
+
+The side-by-side required building a plain Electron shell over `design/OpenCodex M3.dc.html`
+(`design/shell/main.mjs`, `scripts/design-capture-shots.ts`). Two details make its output
+trustworthy: it serves `design/` over a throwaway loopback server rather than `file://`, because
+`support.js` resolves siblings through dynamic `import()` which Chromium handles unreliably over
+`file://`; and it refuses to write an image unless exactly one `[data-screen-label]` section is
+visible and matches the target.
+
+**Only the pixels found some defects.** A data-loss bug in `Subagents.tsx` — `persisted.current`
+captured and never diffed, so reordering a featured model and navigating away lost it silently. A
+hard-coded `#c44` standing in for a `--danger` token **defined nowhere in the tree**, ignoring dark
+mode and every appearance setting. And the download popup asking "Start this download?" over a blank
+gap where the filename and source URL belong.
+
+**And the answer to "why does it still look like there are gaps":** the implementation grew from 19
+pages to 28 while the prototype stayed at 19. Of 26 real differences found, **11 were the prototype
+being out of date**, not the app being wrong. `page-meta.ts` still carried a comment claiming it
+mirrors the prototype's page list; that comment was itself stale.
+
+### Two CSS bugs from one spec section, running opposite ways
+
+Both are automatic minimum size (CSS Flexbox §4.5), and together they are the most transferable
+thing here.
+
+- **Bottom nav overflowed.** `.m3-bottom-nav .m3-nav-item` set `min-height: 0` and not
+  `min-width: 0`, so each grid item refused to shrink below its content, blew past its `1fr` track,
+  and `text-overflow: ellipsis` never fired because the label was never constrained. Invisible in
+  English; visible in bilingual mode at phone width.
+- **Download popup collapsed.** A column flex layout in a 220px window holding ~256px of content had
+  to put the shortfall somewhere, and the spec **disables** the content-based `min-height` floor for
+  any item whose `overflow` is not `visible`. `__file` and `__url` were the only two children with
+  `overflow: hidden`, for their ellipsis — so both were crushed to a 2px sliver and nothing else
+  moved.
+
+The discriminator for the second: **width stayed at normal text size while only height collapsed.**
+A font-size failure would have shrunk both. An earlier grep-based theory — that the popup window
+never applied its tokens — was traced and disproved by measuring `--m3-primary` live on the popup's
+own `<html>`.
+
+### Guards added, each watched fail first
+
+`tests/feature-inventory-arithmetic.test.ts` derives every figure in the inventory from its own
+status cells, after **three separate lanes** moved a cell and left the summary forty lines away
+stating the old number. It has since caught two more drifts and one bug in itself.
+
+`gui/tests/app-name-identity-guard.test.tsx` is the one to keep: 33 tests scanning 753 files for any
+reference to the display-name module against a hand-written allowlist, plus behavioural proof that
+the data path is byte-identical under a name **containing the shipped name as a substring** — so a
+naive `.replace()` "fix" is still caught. What it protects against is orphaned user profiles.
+
+`gui/tests/badge-tone-single-source.test.ts` asserts against a hand-written list of call sites,
+because a guard that only checks the badges it can find passes happily on a screen that rolled its
+own.
+
+### Open
+
+- **The `ci.yml` path-filter decision** above — yours, not mine.
+- **No real built-artifact captures exist for some surfaces**, and the download-capture row says so
+  on its own stated bar rather than being rounded up.
+- **The converter queue accepts structured-data jobs only**; ZIP and PDF have working adapters not
+  yet wired as queue jobs, and the queue has no GUI page — reachable via route and
+  `ocx convert queue`.
+- **The Ollama manager has no allowlisted harness launch.** Deliberately: a half-built launcher
+  accepting an unvalidated argument is worse than none.
+- **~11 more files carry the same badge drift** outside the converted set. Bounded and known; the
+  guard is scoped to a hand-written list rather than a repo-wide sweep that would fail on
+  pre-existing drift.
+- **`Mobile.tsx` is deliberately not on the shared component library** — a separate documented design
+  language for the phone surface. Recorded, not "fixed".
+
+### Two hazards for whoever runs agents here
+
+**`OPENCODEX_HOME` does not isolate the Codex config.** `startServer()` unconditionally writes
+routing into `$CODEX_HOME/config.toml`, which is a separate global path. Two agents mutated the
+operator's live `~/.codex/config.toml` this session by isolating only `OPENCODEX_HOME`; both caught
+and restored it. Isolate **all three** — `OPENCODEX_HOME`, `CODEX_HOME`, `GROK_HOME` — as
+`scripts/capture-shots.ts` already does.
+
+**Adding a remote in a linked worktree retargets the CLI repository-wide.** Worktrees share
+`.git/config`, so a survey's `git remote add upstream` made `gh` resolve to the upstream project;
+the tell was a run list containing SHAs that do not exist here. Its push URL is now disabled and the
+CLI default pinned.
+
+## Universal feature contract — inventory, and the first two waves — 2026-08-14
+
+### What this session was, and what it turned out to be
+
+It began as "continue matching the design folder" and immediately found something else: **26 files of uncommitted work in two abandoned linked worktrees** — a pricing-accounting split and a settings-draft coordinator, roughly 1,560 lines, four days old, on branches not ahead of `main`. A cleanup pass had been authorised. That sweep would have destroyed all of it permanently.
+
+Rescuing it was right. But **that code had never been compiled or run by anyone**, and much of what followed was the bill:
+
+- It broke the dashboard build twice — once a type error, once a JSX comment placed in an expression position, where `{/* … */}` is an object literal rather than a comment and makes the file unparseable.
+- **CI was dying at Typecheck before executing a single one of 6,631 tests**, because `ci.yml` runs Typecheck before Test *in the same job*. The five failures everyone was chasing came from an older run. The cause was an accidental deletion: `estimatedRequests` dropped from the `UsageProvider` interface while two doc comments were added directly beneath it, with nothing in the commit message mentioning it.
+- Combo costs were being published from **one lane's partial view** of the attempts — a lane prices only the attempts it recognises, so an unmatched leg was silently dropped and a partial total published as whole.
+- `normalizedServiceTier()` had no case for `"default"`, the wire value OpenAI returns for ordinary traffic, so **every request that honestly reported its served tier went unpriced**.
+
+### Test and release position
+
+| | Start of session | End |
+| --- | --- | --- |
+| Dashboard suite | 474 pass / 434 fail | **1492 pass / 0 fail**, 177 files |
+| Root typecheck | failing | clean |
+| Releases published | none for four days | **build-159, 161, 165, 168, 170, 171** |
+
+The release deadlock is worth recording because it was structural rather than a bug. `Auto release` gates on a **successful Windows CI run for the exact commit**, and Windows CI declares `cancel-in-progress: true`. Per-lane pushing — which the working discipline requires — cancelled every one of them, so the gate could never be satisfied. A cancelled run is not a pass, and the gate was right to refuse. **The fix was to stop pushing and let one run finish.** Releases have shipped unattended since.
+
+**A trap worth naming for whoever reads a workflow next.** `Auto release` reports `success`, and its gate step reports `success`, even when the gate exits 1 — because the step carries `continue-on-error: true`. Neither is evidence a release published. Only `Create the release` showing `success` rather than `skipped`, and the release record itself, tell the truth.
+
+### The feature inventory
+
+`docs/FEATURE-INVENTORY.md` is new and is now the authority on completeness: **65 canonical contracts, hand-written, naming every one including the absent ones.**
+
+That last part is the whole point. A checklist that enumerates only what it found cannot detect a feature that was never built — it scans, discovers eleven things, reports eleven things, and is silent about the fifty-four it never knew to look for. That silence reads as completeness. The file exists because the previous count was wrong in exactly that way: `ROADMAP.md` recorded six shipped features as missing and left them so for a fortnight.
+
+Three rules the file enforces, each of which changed a verdict during this session:
+
+- **"Optional" describes a user's runtime choice, never an implementation exemption.** A narrator shipped disabled is shipped; a narrator that does not exist is absent.
+- **A contract is not satisfied by a sibling surface having it.** The desktop app owning a colour picker does not give the documentation site one.
+- **A contract that cannot apply names itself and its reason.** Exactly one row does, with the clause quoted.
+
+The shared Markdown renderer is the model for `partial`: it exists, it is isolated, it is tested — and only the documentation browser consumes it, so release notes, issue bodies and commit messages are still printed rather than rendered. Recording it as `present` would have quietly closed a contract about **adoption** rather than existence.
+
+### Landed
+
+Fourteen product lanes plus two orchestrated multi-agent runs:
+
+| Area | What landed |
+| --- | --- |
+| Cost accounting | Direct and API-equivalent lanes; `$0` on subscriptions fixed and labelled four ways so it cannot read as a bill; priority and long-context bands; the `"default"` tier fix |
+| Codex routing | A reported 100% no longer refuses a request. The threshold governs *preference*; only a real upstream 429/402 governs *permission*. The worst site was thread affinity unbinding mid-task |
+| Search | Flags carried through every search bar, both shared matchers and the builder hand-off; cross-page settings search grew from 8 hand-written rows to 80 across 14 pages |
+| Narrator | Per-language voice, rate and pitch; Edge neural voices as an opt-in second source, verified by real synthesis; `ocx narrator` |
+| Install | `ocx` on PATH automatically from this fork, with upstream-collision detection that touches nothing it does not own |
+| New surfaces | Command palette (`Ctrl+Shift+F`), destructive super-confirmation, emoji-in-dialogs toggle, personal-vocabulary upload, dropdown and context-menu filters, offline documentation browser, app-logo customization, scheduled settings |
+
+### Verification boundary, stated plainly
+
+The dashboard suite and both typechecks were run before every push. **The full root suite was not run locally by the integrator** — it takes about twelve minutes and, under agent-fleet contention, manufactures timeout-shaped failures that are not real.
+
+It *was* run once, by the School Mode lane, in the project's own isolated-environment mode: **6,727 pass, 3 skip, 0 fail across 6,730 tests**. Two caveats on that figure, because it is the strongest evidence here and would be easy to over-claim. It was measured on `feat/w2-schoolmode` at `8daa079f`, not on `main`: that branch is an ancestor of `main` **plus** its own alternative `ocx school-mode`, which was deliberately not merged. So it demonstrates the tree is healthy, not that this exact `main` is green.
+
+Windows CI on a clean runner remains the authoritative verdict for `main`, and has been green on every published build.
+
+No installer was downloaded or executed. Asset sizes come from the release record rather than from opening the files.
+
+### Open, and honest about it
+
+- **Fifty-three of sixty-five contracts remain partial or absent** (47 partial, 6 absent, 1 n/a). The largest absences are unbuilt products rather than missing switches: the universal file converter, PDF tools, the Ollama suite manager, and browser-extension download capture. `docs/FEATURE-INVENTORY.md` names each with its evidence. Note the count moved *up*, not down, on 2026-08-14 — see the section at the top of this file for why the previous figure was wrong in both directions at once.
+- **All wave-two lanes landed**: the built-in authenticator with TOTP pairing, per-element toy locks with the Support Tickets desk, School mode, scheduled settings, app-logo customization, the offline documentation browser, and `ocx schedule`.
+- **`tests/cli-headless-parity.test.ts` is green (9 pass, 0 fail); the scanner was the defect and the scanner was fixed.** The endpoint discovery no longer regexes raw file text. `tests/helpers/api-call-sites.ts` parses each GUI source and accepts a path only inside a *request target* — a string or template literal, in code, that is itself a URL — so the documentation browser's generated article corpus can no longer present quoted prose as GUI behaviour. Two rules carry it: text nested inside a string literal is not code (the TypeScript parser does the lexing, so a backtick in an article body is a character rather than a template), and a URL has no whitespace (an article body is rejected whole, without guessing which sentences look path-shaped). A literal carrying its own `://` is another vendor's origin, not this API. Not an ignore list: a route that stops being called drops out on its own, and a new route named only in a docs table still fails to count as reachable.
+  - Watched fail before being trusted. Planting ``fetch(`${apiBase}/api/brand-new-uncovered-route`)`` in `gui/src` turns the parity test red; deleting either scanner rule turns the new prose test red. Both were restored.
+  - Nothing real was lost by the stricter scan. Of the raw `/api/...` matches under `gui/src` that the call-site scan does not report, 31 sit outside the article corpus and **all 31 are comments** — zero are call sites. Bare prefixes such as `/api/oauth` disappeared from the scan while every concrete route under them (`/api/oauth/providers`, `/api/oauth/status`, …) is still found.
+- **`/api/disabled-models` and `/api/key-providers` are live server routes that the GUI never calls, and that is the honest end state — not a papered-over gap.** Their only appearance anywhere under `gui/` is the generated article corpus, so neither is a GUI management endpoint and the parity guard correctly stops considering them. No CLI counterpart was added for either, deliberately: `PUT /api/disabled-models` is the older single-filter blocklist writer, superseded for both surfaces by the atomic `PUT /api/model-visibility` that the GUI and `ocx models enable|disable|provider` already use — a second, non-atomic writer of the same list would be a regression, not parity. `GET /api/key-providers` serves `listKeyLoginProviders()`, and the CLI reads the same `KEY_LOGIN_PROVIDERS` registry in-process (`src/oauth/login-cli.ts:51`), so the capability is already headless without the route.
+- **React Doctor still gates** every pull request and push to `main`. Lint was removed as a gate at the owner's instruction; React Doctor is static analysis rather than ESLint, so it was flagged rather than removed.
+- **This fork is roughly 2,979 commits behind upstream** (`lidge-jun/opencodex`), diverged 2026-07-29. Reported, not ported.
+
+### Two lessons worth keeping
+
+**A guard that shares its subject's implementation agrees with its bugs.** The documentation completeness check re-walks the source tree with its own code rather than calling the generator's discovery function, precisely so it can detect that generator dropping a file. The same reasoning condemns the appearance guard a survey found this session: it only checks that a target reads *at least one* variable, so it passes cleanly on a target where five of six controls are dead.
+
+**An assertion like `expect(el).toBeNull()` against a real DOM element prints the entire happy-dom window as a diff.** Megabytes of it. The run then looks like it *hangs* rather than fails, which cost two ten-minute timeouts before the cause was found. Scope DOM queries to the region actually meant.
+
+**A test that passes alone and fails in the suite is a leak, not a flake.** Integration produced one: `configureSchoolModeApiBase` both recorded an API base and started a 1.5-second poll, and `App.tsx` calls it at module scope — so merely *importing* `App` started an interval no test could clean up. It outlived every teardown and fired into a later file's mocked `fetch`, surfacing there as a probe that file never made. Recording configuration at module scope is fine; starting a timer there is not, and the fix was to move the start into a mounted effect with a teardown.
+
+**A count assertion is usually an assertion about the size of the codebase.** Several tests broke this session by pinning "exactly one match" or "exactly N cards" — statements that quietly also said *nothing else may ever exist*. Most were retargeted to the property they meant. One was not, and that is the useful case: a palette test asserting exactly one destination per page found a genuine duplicate introduced while resolving a merge. It was about to be relaxed for looking stale; it was right.
+
+## Windows release and lifecycle reconciliation — 2026-08-09
+
+- Resolved the integration source merge against current `main` without leaving any unmerged paths. The result retains current management-plane behavior while carrying GUI build identity, lifecycle locking, duplicate-start winner adoption, loopback process-action gates, fail-closed update resolution, and strict full-state export handling.
+- Every Windows installer path explicitly disables signing, clears certificate discovery inputs, requires `Get-AuthenticodeSignature` to report `NotSigned`, and fails closed unless `Setup.exe`, `RELEASES`, and a referenced full `.nupkg` exist. Auto, stable, and super-express releases attach the complete feed; stable packaging completes before npm publication; super-express requires successful Windows CI for the exact source commit.
+- Every artifact-producing workflow now uses a step-specific defensive collector and pinned upload step with `always()`, `continue-on-error`, warning-only missing output, bounded retention, safe allowlisted paths, and run ID/SHA/original job status/runner OS/architecture metadata. Contract tests parse the YAML and inspect the actual collector, upload, and release-publication steps instead of accepting unrelated text elsewhere in a workflow.
+- Local evidence currently includes typecheck, privacy scan, GUI lint/build, docs build (191 pages and 195 HTML files), 77/77 focused workflow/Squirrel tests, 15/15 export/resource tests, isolated storage responsiveness, and a full root campaign with 6,604 passes, 4 skips, and three findings. The Squirrel contract now passes, the storage timing case passes in isolation, and the stale stdout-export expectation was corrected to the documented secret-safe refusal. The integration commit, pushed-main ancestry, and exact GitHub Actions verdict are recorded after landing.
+- Dashboard preview run `31329876937` exposed three semantic merge regressions after 896 passing GUI tests. The follow-up restores strict remote-host validation and form accessibility, reports blocked popup creation without claiming success, removes password-bearing 7z controls, and rejects password/header-encryption input at the API and archive-spawn boundaries. Replacement local evidence is 907/907 GUI tests, 54/54 archive/route tests with one environment-dependent 7-Zip skip, typecheck, privacy, GUI lint/build, and documentation build; exact-commit GitHub Actions evidence remains pending until the repair commit lands.
+- Automatic releases now resolve each one-use code name from a published `catalog-v1*` asset in the public `Ding-Ding-Projects/dim-sum-photos` catalog, inject the exact bilingual dish metadata into the GUI build, link the public photo without copying it into this repository or release, and finalize the release notes with measured workflow start, completion, and duration values after publication. Catalog failure or exhaustion is reported and leaves the version uncodenamed rather than blocking the release.
+- Proxy liveness now exposes a process ID to destructive stop/kill callers only when that process is the sole current listener on the probed port and passes a fresh process-identity check. Focused verification is 119/119 release, workflow, Squirrel, launcher-policy, and liveness tests; 15/15 GUI build-info tests; root typecheck; privacy scan; workflow syntax validation; and diff validation. The shared launcher-coordinator refactor remains future work; this handoff retains the existing bounded winner-adoption behavior and its regression coverage without landing a partial refactor.
+
 ## Plug-and-play startup and credential clarity — 2026-08-04
 
 The fresh-install contract is now documented as **`ocx start` + the user's existing ChatGPT/Codex
@@ -516,7 +852,7 @@ Tarts) and Material window buttons off it.
 - `assets/architecture.png`, both `codex-app-picker.png` copies and the five
   `hero-*.png` files are **unreferenced by any page** — dead assets, not deleted
   here because deleting is not what was asked.
-- A Gerk Tong Hui at `.claude/worktrees/keen-dijkstra-a12563` (`40aa982f`) is not
+- A linked worktree at `.claude/worktrees/keen-dijkstra-a12563` (`40aa982f`) is not
   mine and was left alone.
 
 ## Two installs, a stolen port, and the right-click that reached three elements — 2026-08-02
@@ -1586,6 +1922,148 @@ missing `gui/node_modules` (worktrees do not share it). Fixed with `cd gui && bu
 ---
 
 ## Earlier session — written 2026-07-30 against branch `main`
+
+# ⚠️ ACTIVE HANDOFF — tab groups and the four tab searches (2026-07-31)
+
+**Branch `claude/keen-dijkstra-a12563`, worktree `.claude/worktrees/keen-dijkstra-a12563`.**
+Handed off mid-review at the user's request. The feature is **built and green, and it is NOT
+finished**: an adversarial review raised 66 findings and only 2 of them were adversarially verified
+before the session ran out. Read *Known defects* before deciding this is done.
+
+## What was asked
+
+Close two parity gaps in the GUI tab system (`gui/src/shell/`):
+
+1. **Tab grouping**, which did not exist at all — create/name/rename/colour/reorder/collapse/remove,
+   drag or keyboard membership, pin a whole group or individual members, full persistence, and a
+   per-group appearance editor reached by right-click and by Shift+right-click covering typography,
+   text and highlight colours, icon/emoji, badges, borders, shape, radius, spacing, separators and
+   the expanded/collapsed/hover/focus states.
+2. **Three of the four required tab searches**, which were missing — strip, per-group, group-by-name
+   and a master search over every window — each with its own anchored regex builder and no shared
+   hidden state.
+
+## What is in the tree
+
+| File | State |
+| --- | --- |
+| `shared/m3/tabs.ts` | modified — `GroupDecor`, `readGroupDecor`, `groupDecorProps`, `setGroupDecor`, `setGroupPinned`, `groupPinState`; `togglePin` / `orderTabs` / `visibleTabs` / `moveTab` / `assignGroup` / `createGroup` / `toggleGroupCollapsed` / `reviveTabs` changed |
+| `gui/src/shell/use-tabs.ts` | rewritten onto the shared engine; pure search projections (`stripResults`, `groupResults`, `masterResults`, `matchRows`, `revealsWithoutExpanding`, `tabPanelId`) |
+| `gui/src/shell/use-search-query.ts` | **new** — one query object per field |
+| `gui/src/shell/tab-registry.ts` | **new** — `BroadcastChannel` cross-window registry |
+| `gui/src/shell/TabSearchPanel.tsx` | **new** — the four searches |
+| `gui/src/shell/GroupAppearanceEditor.tsx` | **new** |
+| `gui/src/shell/ColorField.tsx` | **new** — continuous picker, 14-notation translator, WCAG readout |
+| `gui/src/shell/TabStrip.tsx` | group runs, headers, group menu, drag-into-group, Alt+Arrow, panel wiring |
+| `gui/src/styles/m3-shell.css` | group + panel + colour CSS, `.m3-sr-only`, narrow-width and coarse-pointer blocks |
+| `gui/src/App.tsx` | `role="tabpanel"` + per-tab id, for live `aria-controls` |
+| `gui/src/theme/prefs-context.ts` | `tabGroup` element target |
+| `gui/src/i18n/m3.ts`, `gui/src/i18n/yue.ts` | 114 new keys in both |
+| `gui/tests/tab-groups.test.ts`, `gui/tests/tab-group-strip.test.tsx` | **new** — 44 tests |
+| `docs-site/.../guides/tab-groups-and-search.md` + `astro.config.mjs` + `web-dashboard.md` | new guide, sidebar entry, cross-link |
+| `structure/05_gui-and-management-api.md` | the strip's invariants, written down |
+
+## What was actually verified
+
+Every line below is a command that was run, with the output it produced.
+
+```
+cd gui && ./node_modules/.bin/tsc -p tsconfig.app.json --noEmit   → clean
+cd gui && ./node_modules/.bin/eslint src --max-warnings=0         → clean
+cd gui && bun test tests                                          → 734 pass / 0 fail (was 690)
+cd docs-site && bun test tests                                    → 267 pass / 0 fail
+```
+
+The three named must-stay-green files (`dashboard-tabs`, `tab-context-menu`, `tab-routing-loop`) pass
+unmodified. `tab-context-menu`'s exact-eight-entries assertion is why grouping was deliberately kept
+*out* of the tab context menu — see `structure/05_gui-and-management-api.md`.
+
+**Visual validation was run against the real desktop app**, not a browser: Electron on an isolated
+`CODEX_HOME` and port 10399, driven over CDP the way `scripts/capture-shots.ts` does, in bilingual
+mode with two groups (one collapsed, one decorated) and a pinned member. Measured at 1440/1152/960/720
+widths and 1×/1.25×/1.5×/2× scale: `document.scrollWidth === window.innerWidth` at every one, and the
+overflow menu engaged correctly (0 → 2 → 3 hidden tabs). The search panel rendered all five fields
+with five builders; the group menu rendered its seven entries; the translator rendered 14 notations.
+
+**That same run found a defect the tests did not** — see the first entry below.
+
+## Known defects — READ THIS FIRST
+
+Two were adversarially verified as real. The rest were raised by five independent review lenses and
+**33 verification passes were killed by the session limit**, so treat them as unverified leads, not
+as a defect list. Full detail with proposed fixes:
+`~/.claude/projects/…-keen-dijkstra-a12563/…/subagents/workflows/wf_d4081abe-dbf/journal.jsonl`.
+
+### Confirmed, and blocking
+
+1. **A collapsed group's header is drawn at the end of the strip, overlapping the app bar.**
+   Found visually and raised independently by three review lenses. `buildRuns` in `TabStrip.tsx`
+   appends a collapsed group after every other run because it has no visible members, so collapsing
+   a group in the middle of the strip teleports its header to the far right, where it paints over
+   the app bar. Screenshot: `shots/strip-1440-100pct.png` in the scratchpad. A group whose members
+   have all overflowed loses its header entirely — same cause, and it makes every header-anchored
+   group command unreachable. **Fix direction:** emit the header at the position its first member
+   occupies in the *full* tab order, not at the end, and keep drawing it when the run is empty.
+
+2. **`Delete` on a focused group header closes the active tab.** `high`. The header's `onKeyDown`
+   stops propagation only for ContextMenu/Shift+F10/Alt+Arrow; everything else bubbles to the
+   tablist handler, which reads `Delete` as "close the active tab" and Arrow/Home/End as "change the
+   selection, then move focus". Headers are ordinary Tab stops and sit *before* their members, so
+   this is the first thing a keyboard user reaches. **Fix:** either a default branch on the header
+   that stops the keys the tablist claims, or scope the tablist handler to `role="tab"` targets.
+
+3. **Export omits the group accent.** `medium`. `GroupAppearanceEditor` exports `decor` only, and
+   `group.color` lives outside it — so a copied appearance reproduces every border and radius and
+   loses the colour, while "Reset all" clears both. Export/import and reset disagree about what a
+   group's appearance *is*.
+
+### Raised but unverified — highest-severity first
+
+`moveGroup` relocates every ungrouped tab to the end of the strip · reorder commands computed against
+`groups` order which can disagree with the drawn order · clicking inside the group editor opened from
+the search panel dismisses the panel and discards all four queries · closing a tab from a search
+result drops focus to `<body>` · loose-tab runs returned as unkeyed arrays (remount → focus loss) ·
+pinning a whole group removes its header · `.m3-tsr-go` is nowrap so bilingual master-search rows
+lose their label · `.m3-tsr-note` rendered inside a non-wrapping button · `DecorSlider` puts
+"inherits the theme" into a 48px numeric slot (the default state of all nine sliders) ·
+`applyTransfer`'s catch is dead code and two of its comments describe behaviour that does not happen ·
+`gui/src/shell/tab-registry.ts` duplicates `docs-site/src/lib/tab-registry.ts` — exactly the
+duplication `shared/m3/tabs.ts` exists to stop, and it should probably move into `shared/m3/`.
+
+Then ~50 medium/low findings: fixed-px sizes against scaling type (`.m3-tabgroup-head` 160px,
+`.m3-color-space` 84px, `.m3-tsr-badge` line-height, `GroupSelect` 132px, the 380px editor panel),
+`aria-controls` on an unlabelled div, `aria-haspopup="menu"` + `aria-expanded` on one header
+reporting the menu as open, untranslated WCAG grades and gamut names reaching Cantonese, three
+Cantonese entries drifting from HK usage (讀屏軟件, 唔透明度, 隻手指埋嚟), `tabs.stripName` left as
+byte-identical English in `yue.ts`, dead `TabGroup.style`/`setGroupStyle`, and a stale comment or two.
+
+## Where the loose material is
+
+Under the session scratchpad (`…/cd827a3d-…/scratchpad/`), none of it committed:
+
+- `verify-tab-groups.ts` — the CDP visual-validation driver. Re-runnable; it is how the strip was
+  measured at every width and scale.
+- `probe.ts` — geometry probe, written to pin down defect 1 and never run.
+- `shots/` — 10 PNGs of the strip, the search panel, the group menu and the editor.
+- `review-scratch/` — two scratch test files review subagents left in `gui/tests/`, moved out so the
+  tree is clean. `zz-tmp-mg.test.ts` contains a **candidate fix for the `moveGroup` defect** and is
+  worth reading before rewriting it from scratch.
+
+To re-run the visual pass: build (`cd gui && ./node_modules/.bin/vite.exe build`), then
+`OPENCODEX_PORT=10399 CODEX_HOME=<scratch>/home npx --yes electron@43.2.0 electron/main.mjs
+--remote-debugging-port=9222 --user-data-dir=<scratch>/edata`, then `bun run verify-tab-groups.ts`.
+Both the isolated port and the isolated home are load-bearing: the installed opencodex holds a state
+file claiming port 10188, and without them the desktop entry refuses to open a window at all.
+
+## What a successor should do next
+
+1. Fix the three confirmed defects. Defect 1 is the one a user would hit first.
+2. Re-run the verification block above, and re-run the visual pass — the tests did not catch defect 1
+   and will not catch its recurrence without a case that asserts header *position*.
+3. Triage the unverified list. Several are the same defect seen through different lenses.
+4. Nothing here has been released, and no GitHub issue or Discussion has been opened for it.
+
+---
 
 ## Where the work is
 

@@ -16,7 +16,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import TabStrip from "../src/shell/TabStrip";
 import { splitTabs, tabStyleProps, useTabs, type Tab } from "../src/shell/use-tabs";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -75,7 +75,7 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   let root!: Root;
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider><Harness /></LanguageProvider>);
+    root.render(<TestLanguageProvider><Harness /></TestLanguageProvider>);
   });
   return { container, root };
 }

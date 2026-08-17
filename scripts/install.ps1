@@ -1,6 +1,9 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $scriptRoot "install-path.ps1")
+
 Write-Host "Installing opencodex..." -ForegroundColor Cyan
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -25,7 +28,6 @@ Write-Host "Using Node v$nodeVersion"
 # Install opencodex globally
 # If npm reports "install scripts blocked" for bun, rerun as:
 #   npm install -g --allow-scripts=bun @bitkyc08/opencodex
-# (use an elevated PowerShell if the original install was elevated)
 $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (-not $npm) {
     $npm = Get-Command npm -ErrorAction Stop
@@ -36,13 +38,55 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+$npmPrefix = (& $npm.Source prefix -g).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($npmPrefix)) {
+    Write-Error "opencodex installed, but npm could not report its global prefix. Run 'npm.cmd prefix -g' and add that directory to your user PATH."
+    exit 1
+}
+
+try {
+    $pathRepair = Add-NpmGlobalBinToUserPath -NpmGlobalBin $npmPrefix
+} catch {
+    Write-Error "opencodex installed, but the user PATH could not be updated for '$npmPrefix'. No machine PATH was changed. Add this directory to your user PATH, then reopen PowerShell: $($_.Exception.Message)"
+    exit 1
+}
+
+# A second `ocx` can already be on PATH — an unrelated global install, a stale
+# copy under a different npm prefix, an upstream checkout. Whichever directory
+# resolves first silently wins, so check what a FRESH shell would actually
+# run, not this process: Add-NpmGlobalBinToUserPath already prepended our
+# directory to *this* process's $env:Path, which would hide a real collision
+# by making us look first here no matter what a new shell would resolve.
+# A new shell's PATH is the machine PATH followed by the (now-repaired)
+# persisted user PATH, so that is what gets simulated here.
+try {
+    $freshShellPath = @(
+        [Environment]::GetEnvironmentVariable("Path", "Machine"),
+        [Environment]::GetEnvironmentVariable("Path", "User")
+    ) -join ";"
+    $collision = Resolve-OcxPathCollision -NpmGlobalBin $npmPrefix -ResolvedOcxPaths (Get-OcxCommandPaths -PathValue $freshShellPath)
+} catch {
+    $collision = $null
+    Write-Warning "Could not check for another 'ocx' on PATH: $($_.Exception.Message)"
+}
+if ($collision -and $collision.Collision) {
+    if ($collision.Reordered) {
+        Write-Host "Another 'ocx' was found on PATH at '$($collision.Winner)'. This fork's directory ($npmPrefix) now comes first, so new shells will run this fork's build." -ForegroundColor Yellow
+    } elseif ($collision.MachineBlocked) {
+        Write-Warning "Another 'ocx' is on the system (machine-wide) PATH at '$($collision.Winner)' and will keep winning over this fork's install at '$npmPrefix' — this script only changes your user PATH and never the machine PATH. If that is not the build you want, remove or rename that install, or run 'ocx' by its full path: $npmPrefix\ocx.cmd"
+    }
+}
+
 $ocx = Get-Command ocx.cmd -ErrorAction SilentlyContinue
 if (-not $ocx) {
     $ocx = Get-Command ocx -ErrorAction SilentlyContinue
 }
 if (-not $ocx) {
-    $npmPrefix = & $npm.Source prefix -g
-    Write-Error "opencodex installed, but 'ocx' is not on PATH. Add your npm global bin directory to PATH, then reopen PowerShell: $npmPrefix"
+    if ($pathRepair.ProcessPathRefreshFailed) {
+        Write-Error "opencodex installed and the user PATH includes '$npmPrefix', but this PowerShell process could not be refreshed. Open a new PowerShell window and run 'ocx help'."
+    } else {
+        Write-Error "opencodex installed and the user PATH includes '$npmPrefix', but 'ocx' is still unavailable in this PowerShell process. Open a new PowerShell window and run 'ocx help'."
+    }
     exit 1
 }
 

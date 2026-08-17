@@ -46,7 +46,7 @@ namespaced selected id を bare id に変えます。
 | `connectTimeoutMs?` | `number` | `200000` | DNS/TCP/TLS と最終レスポンスヘッダーだけを待つ試行ごとの deadline。レスポンス body 生成前に終了します。 |
 | `shutdownTimeoutMs?` | `number` | `5000` | 進行中のターンを中断する前の graceful drain deadline。 |
 | `websockets?` | `boolean` | `false` | `supports_websockets` を知らせ Codex が Responses WebSocket 経路を使うようにします。省略または `false` なら HTTP/SSE を維持します。 |
-| `apiKeys?` | `OcxApiKey[]` | `[]` | 非 loopback バインドで管理 API とデータプレーン認証に追加で許可する生成型 `ocx_…` 認証情報。ダッシュボードが管理し、項目フィールドは下で説明します。 |
+| `apiKeys?` | `OcxApiKey[]` | `[]` | 非 loopback バインドで追加許可する生成型 `ocx_…` データプレーン認証情報。ADMIN 認証情報ではありません。ダッシュボードが管理し、項目フィールドは下で説明します。 |
 | `codexAutoStart?` | `boolean` | `true` | Codex shim が Codex 実行前に `ocx ensure` を実行するようにします。`false` なら `ocx ensure` は何もしません。 |
 | `codexShimAutoRestore?` | `boolean` | `true` | 完了した外部 Codex 更新で以前にインストールした shim が置換された場合に復元します。無効にするには `false`、またはプロセスで `OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0` を設定します。 |
 | `syncResumeHistory?` | `boolean` | `true` | 戻せる Codex App 履歴互換モード。opencodex は元の Codex thread metadata をバックアップし、旧 OpenAI interactive row を `opencodex` に再マッピングし、opencodex が作成した `exec` row を App に見えるソースとして一時的に昇格します。`ocx stop` / `ocx restore` はバックアップした OpenAI row を復元し、残った opencodex user thread を OpenAI に戻し、ネイティブ Codex が `config.toml` からプロキシを削除した後でも開き続けられるようにします。オフにするには `false` に設定します。 |
@@ -118,8 +118,7 @@ pool アカウントの追加と quota 更新はダッシュボードの **Codex
 ## リモートアクセス
 
 opencodex はデフォルトで `127.0.0.1`（loopback 専用）にバインドします。`hostname` を `0.0.0.0` のような
-非 loopback アドレスに設定すると管理 API（`/api/*`）とデータプレーン（`/v1/responses`）の **両方** に token
-認証を強制します。
+非 loopback アドレスに設定すると、データプレーンと管理 API は別々の認証情報で保護されます。
 
 起動前に `OPENCODEX_API_AUTH_TOKEN` 環境変数を設定してください。
 
@@ -128,22 +127,32 @@ export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
 ocx start
 ```
 
-非 loopback バインドではこの変数がないとプロキシは起動しません。LAN アクセス用のバックグラウンド
-サービスをインストールするときも同じ変数を先に export したのち `ocx service install` を実行し、launchd、
-systemd、Task Scheduler に渡す必要があります。クライアントはすべてのリクエストの `x-opencodex-api-key` ヘッダーに
-token を入れる必要があります。
+非 loopback バインドではこの変数または生成済み `apiKeys` がないとプロキシは起動しません。LAN アクセス用の
+バックグラウンドサービスをインストールするときも同じ変数を先に export したのち `ocx service install` を
+実行し、launchd、systemd、Task Scheduler に渡す必要があります。データプレーンクライアントはすべての
+リクエストの `x-opencodex-api-key` ヘッダーに token を入れる必要があります。
 
 ```
 x-opencodex-api-key: your-secret-token
 ```
 
 `Authorization: Bearer …` ヘッダーも許可します。起動後はダッシュボードで生成した `apiKeys` を環境変数
-token の代わりに使えます。すべての候補は timing side channel を防ぐため定数時間
+token の代わりに使えますが、`/api/*` への権限は与えません。
+
+管理 API とリモートダッシュボードには別の ADMIN token が必要です。OpenCodex は起動時に保護されたローカル
+secret file を作成するか、`OPENCODEX_ADMIN_AUTH_TOKEN` を使います。リモートダッシュボードはこの ADMIN
+値を入力するよう求め、データプレーン key は拒否します。すべての認証情報候補は定数時間
 （`timingSafeEqual`）で比較します。
+
+Material 3 ダッシュボードの **別の OpenCodex に接続** では IPv4、IPv6、DNS ホスト名と相手の実行中ポートを
+手入力できます。相手を probe せず、URL に token を入れず、token も保存しません。自動起動が fallback
+ポートを使った場合は `config.port` だけでなく `ocx host status` または `ocx status` の
+identity-verified な live 値を使ってください。
 
 :::caution[LAN 公開]
 `0.0.0.0` にバインドするとプロキシと設定されたすべてのプロバイダー認証情報がローカルネットワークにさらされます。
-信頼できるネットワークでのみ使い、強力な `OPENCODEX_API_AUTH_TOKEN` を必ず設定してください。
+HTTP は暗号化されません。信頼できるネットワークでのみ使い、強力なデータプレーン/ADMIN 認証情報を設定し、
+信頼できない経路では SSH port forwarding を優先してください。
 :::
 
 ## プロバイダー（`OcxProviderConfig`）

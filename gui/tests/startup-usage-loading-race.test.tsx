@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act, useState } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import Startup from "../src/pages/Startup";
 import Usage from "../src/pages/Usage";
@@ -103,11 +103,11 @@ test("an aborted Startup fetch must not clear loading while its replacement is i
     return (
       // Startup reports copy and install outcomes as snackbars, so it needs the
       // notification host main.tsx mounts — rendering it bare throws.
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <Startup apiBase={apiBase} />
         </NotificationsProvider>
-      </LanguageProvider>
+      </TestLanguageProvider>
     );
   }
 
@@ -179,9 +179,9 @@ test("an aborted Usage fetch must not clear loading while its replacement is in 
     const [apiBase, setApiBase] = useState("http://old");
     (window as unknown as { __bumpApiBase?: () => void }).__bumpApiBase = () => setApiBase("http://new");
     return (
-      <LanguageProvider>
+      <TestLanguageProvider>
         <Usage apiBase={apiBase} />
-      </LanguageProvider>
+      </TestLanguageProvider>
     );
   }
 

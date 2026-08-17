@@ -978,6 +978,27 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
   // success
   // ------------------------------------------------------------------
 
+  /**
+   * The rename confirmation. `{name}` is what the user just typed, so it is
+   * the one token every rung has to carry — a level that celebrates without
+   * repeating the name back does not confirm anything.
+   */
+  "appearance.appNameSavedBody": {
+    cat: "success",
+    en: {
+      1: "The display name is now {name}.",
+      2: "It is called {name} now.",
+      4: "Say hello to {name}.",
+      5: "It answers to {name} from here on. Same app underneath, new name on the door. 🪧",
+    },
+    yue: {
+      1: "顯示名稱而家係 {name}。",
+      2: "而家叫做 {name} 喇。",
+      4: "同 {name} 打個招呼啦。",
+      5: "由而家開始佢應「{name}」呢個名。底下仲係同一個 app，只係塊招牌換咗 🪧",
+    },
+  },
+
   "launch.installed": {
     cat: "success",
     en: {
@@ -1330,6 +1351,29 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
     },
   },
 
+  /**
+   * The rename card's lead.
+   *
+   * Voiced because the level ladder is exactly where a disclosure gets quietly
+   * dropped: the fact that must survive to level 5 is that a new name moves
+   * the label and nothing underneath it. Every rung says so.
+   */
+  "appearance.appNameSub": {
+    cat: "guidance",
+    en: {
+      1: "Changes the name this app displays. Storage locations, update configuration and the on-disk application name are unaffected.",
+      2: "Changes the name this app shows you. Where your settings live, how it updates and what it is called on disk all stay put.",
+      4: "Call it whatever you like. It is only a label — your settings stay exactly where they are, and so does everything else under the hood.",
+      5: "Name it after your cat if you want. It is a label and nothing more: your settings, your updates and the name on disk carry on exactly as they were, entirely unbothered.",
+    },
+    yue: {
+      1: "更改此 app 顯示嘅名稱。儲存位置、更新設定同硬碟上嘅名稱一律不受影響。",
+      2: "改呢個 app 顯示畀你睇嘅名。設定擺喺邊、點更新、喺硬碟叫咩，全部照舊。",
+      4: "鍾意叫呢個 app 做咩就咩。淨係一個名牌 —— 你啲設定原封不動，底下嘅嘢一樣都唔會郁。",
+      5: "改做你隻貓個名都得。呢個純粹係塊名牌：你啲設定、更新、硬碟上個 app 名，全部照舊，一啲都唔理你改咗咩。",
+    },
+  },
+
   "lang.sub": {
     cat: "guidance",
     en: {
@@ -1450,32 +1494,32 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
   "dimsum.hint": {
     cat: "delight",
     en: {
-      1: "A treat shown on roughly one launch in a hundred. It can be disabled under Appearance.",
-      2: "A 1-in-100 launch treat — turn it off under Appearance.",
-      4: "One launch in a hundred gets you this. Turn it off under Appearance.",
-      5: "One launch in a hundred, this shows up uninvited. Turn it off under Appearance if you would rather it did not.",
+      1: "A treat shown on roughly one launch in ten. It dismisses itself.",
+      2: "A 1-in-10 launch treat — it sees itself out.",
+      4: "One launch in ten gets you this. It leaves on its own.",
+      5: "One launch in ten, this shows up uninvited — and then, unlike most uninvited guests, leaves on its own.",
     },
     yue: {
-      1: "大約每一百次開機出現一次嘅小驚喜。可以喺「外觀」度關閉。",
-      2: "一百次開機先出一次嘅小驚喜 —— 想熄可以喺「外觀」度熄。",
-      4: "一百次開機先中一次。唔想見到就去「外觀」度熄咗佢。",
-      5: "一百次開機先突然彈出嚟一次，冇人請佢。唔想見到就去「外觀」度熄咗佢。",
+      1: "大約每十次開機出現一次嘅小驚喜。佢會自己收埋。",
+      2: "十次開機有一次嘅小驚喜 —— 唔使你趕，佢自己走。",
+      4: "十次開機中一次。你唔理佢，佢自己收工。",
+      5: "十次開機就有一次突然彈出嚟，冇人請佢 —— 不過佢好識做，坐一陣就自己走人。",
     },
   },
 
   "dimsum.toggleHint": {
     cat: "delight",
     en: {
-      1: "Approximately one launch in a hundred displays a small dim sum card. It is never shown on a first run or immediately after an update.",
-      2: "Roughly one launch in a hundred shows a small dim sum card — never on your first run or right after an update.",
-      4: "About one launch in a hundred puts a small dim sum card on screen. Never on your first run, and never right after an update.",
-      5: "About once every hundred launches, a small dim sum card wanders in. Never on your first run, and never right after an update — it knows when to stay out of the way.",
+      1: "Approximately one launch in ten displays a small dim sum card. It is never shown on a first run or immediately after an update, and it does not interrupt work in progress.",
+      2: "Roughly one launch in ten shows a small dim sum card — never on your first run or right after an update, and never over what you are doing.",
+      4: "About one launch in ten puts a small dim sum card on screen. Never on your first run, never right after an update, and never in your way.",
+      5: "About once every ten launches, a small dim sum card wanders in. Never on your first run, and never right after an update — it knows exactly when to stay out of the way, which is more than can be said for most notifications.",
     },
     yue: {
-      1: "大約每一百次開機，會顯示一張細細張嘅點心卡。第一次執行同啱啱更新完唔會出現。",
-      2: "大約一百次開機出一次點心卡 —— 第一次執行同啱啱更新完就唔會出。",
-      4: "大約一百次開機，會有一次彈張細細張點心卡出嚟。第一次執行同啱啱更新完就一定唔會出。",
-      5: "大約一百次開機，會有一次有張細細張點心卡自己行入嚟。第一次執行同啱啱更新完就唔會出 —— 佢識做，唔會阻你。",
+      1: "大約每十次開機，會顯示一張細細張嘅點心卡。第一次執行同啱啱更新完唔會出現，亦唔會打斷緊做緊嘅嘢。",
+      2: "大約十次開機出一次點心卡 —— 第一次執行同啱啱更新完就唔會出，亦唔會阻住你。",
+      4: "大約十次開機，會有一次彈張細細張點心卡出嚟。第一次執行同啱啱更新完就一定唔會出，亦唔會阻你做嘢。",
+      5: "大約十次開機，會有一次有張細細張點心卡自己行入嚟。第一次執行同啱啱更新完就唔會出 —— 佢好識做，知道幾時唔應該阻你，呢點比好多通知都叻。",
     },
   },
 };

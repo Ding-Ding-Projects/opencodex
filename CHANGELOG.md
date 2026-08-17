@@ -2,6 +2,50 @@
 
 Generated from release tags by `bun scripts/generate-changelog.ts`.
 Preview tags are omitted. The dashboard reads this file through `/api/changelog`.
+An `## Unreleased` section, if one is present, is hand-written and carried across a regeneration.
+
+## Unreleased
+
+- fix(auth): pin forwarded Codex OAuth credentials to the canonical ChatGPT host and refuse to forward them to any other configured `authMode: "forward"` provider; refuse cross-origin redirects on every credential-bearing sidecar fetch (ported from upstream lidge-jun/opencodex#1471)
+- fix(oauth): guard `expires_in` and the computed token expiry against `NaN`, `Infinity`/overflow, and negative values across the Anthropic, ChatGPT, Kimi, and Codex-account-store OAuth refresh paths, so a malformed token response cannot stamp a credential as valid forever or already-expired (ported from upstream lidge-jun/opencodex, three-commit chain ending 355b69e5b)
+- fix(redact): mask colon-labelled credentials echoed back by upstream error bodies (`x-api-key: <value>`), close the "prefix it with Bearer" smuggling hole that exemption first opened, and recognize quoted credential keys a serialized headers object uses (`{"x-api-key":"<value>"}`) that the prior pattern list did not cover (ported, intent merged rather than transplanted, from upstream lidge-jun/opencodex's redact.ts hardening arc)
+- fix(errors): classify local Windows NTFS/ACL hardening (`icacls`) failures as 503 server errors instead of 401 authentication errors, so a local filesystem permission problem is never reported to the user as an invalid credential (ported from upstream lidge-jun/opencodex#1296)
+- fix(codex): stop the proxy from freezing solid when the dashboard's first mount fires its usual burst of `/api/*` requests, by warming every dynamically-imported module the burst reaches before the listener opens, and by throttling repeat passive WHAM usage fetches per account so a startup quota prime and the dashboard's own account poll can never both hit the network within a few seconds of each other
+- feat(auth): add a password/TOTP-protected, encrypted local history for TOTP-entry and display-name mutations
+- feat(pdf): inspect, split, merge, extract, reorder, rotate and edit metadata for local PDF files, with a bounded worker sandbox and post-write reopen validation
+- feat(cli): add `ocx pdf` as the headless counterpart to the new PDF tools page
+- docs(guides): document PDF tools, its capability disclosures and its reopen-validation contract
+- feat(gui): move a tab into a group from an anchored picker
+- docs(gui): document tab groups and the four tab searches
+- fix(gui): track dirty state on the Subagents featured-slot editor and stop a window close/reload from silently discarding an unsaved reorder or removal
+- fix(gui): replace the undefined `--danger` token in CodexPoolStrategySetting and MemoryObservabilityCard with the real M3 error role, which was rendering as a hard-coded red regardless of theme
+- fix(gui): port CodexPoolStrategySetting off legacy `.card`/`.card-sub` markup onto the shared M3 card classes the rest of the Codex Auth screen already uses
+- fix(gui): show a notice's tone, timestamp and source screen in the app bar's notification popover, matching the design instead of title/body alone
+- fix(gui): give the bottom nav's grid item and its label both the `min-width: 0` a grid/flex item never gets by default, so the four labels stop overflowing their own tracks — running into each other with no gap and pushing the fourth off the screen edge — at phone widths in bilingual mode
+
+Hand-written until the next release tag exists. The generator rebuilds this file
+from tags and takes each entry from a commit subject, so these lines are absorbed
+into their release section — not lost — the next time it runs.
+
+- feat(gui): show every context-menu item's keyboard shortcut from one binding registry
+- fix(test): read GUI endpoints from call sites, not documentation prose
+- feat(gui): let the user rename the app's display name
+- feat(gui): give every single-path text box a native Browse control — an open-file picker for a source, a save picker for a destination, a folder picker for a ZIP extract — wired at all ten path fields across the file converter and PDF tools; the button is absent rather than inert in a browser, where no native dialog exists
+- fix(gui): stop every status pill in the app rendering in the window's top-right corner on top of the maximize and close buttons, and stop the notification bell's unread count rendering as a 24px pill instead of a 16px dot — one `.m3-badge` class was declared twice, 570 lines apart, by two components that wanted opposite things
+- fix(gui): make the OAuth account-pool toggle visible again; a second, consumerless `.toggle` rule was hiding its real checkbox with `opacity: 0` and drawing no substitute in its place
+- fix(gui): fill in the Cantonese half of the dashboard's 30-day coverage stat, which rendered the literal token `{pct}` because `String.replace` substitutes only the first of the two placeholders bilingual mode produces
+- fix(gui): size the helper text under the API-keys panels and the regex-builder popover, which was dimmed but rendering at full body size because the `.small` class it asks for was defined in no stylesheet
+- fix(gui): retire copy telling users to manage a provider from a "classic view" that no longer exists, in all seven locales
+- fix(cli): let `ocx account clear-cooldown` clear a cooldown on any OAuth pool, not just Codex; the generic route and its implementation were both built and reachable from nowhere, so a Claude or Gemini account in cooldown had no way out but waiting
+- fix(capture): stop the screenshot harness photographing the operator's real Windows account name, by rehoming the whole capture process tree onto a neutral profile before any home path is read, and refusing to launch if that did not take effect
+- fix(capture): resolve the pinned Electron from npx's cache directly, so the harness still starts under npm 12, where the previous probe fails with a message indistinguishable from "Electron is not installed"
+- docs: point the README's clone command, security-advisory link, licence badge and commit links at this repository rather than upstream
+- fix(gui): make the provider workspace's Remove-provider and unsaved-changes confirmations dismissable by keyboard; both were hand-rolled `<div>`s with no Escape handler, no focus trap and no focus return, so a keyboard user who opened one could not leave it
+- fix(gui): report a failed API-key deletion instead of silently doing nothing — a rejected DELETE closed the danger-tone confirm, said nothing, and left the key in place
+- fix(gui): report a failed authenticator group move, and stop the picker closing before the move has actually landed; the rejection previously became an unhandled promise with no user-facing feedback at all
+- fix(gui): stop "Reset appearance" clearing the App Bar's cost-meter range, which belongs to a different screen and has no control on the Appearance page
+- fix(gui): ellipsize the nav rail's app name and version instead of cropping them mid-character; the container already allowed shrinking, the elements never got the overflow half of the fix, and the app name is user-renamable up to 60 code points
+- fix(gui): ellipsize the phone remote's header title, which had no overflow handling at all in a flex row it shares with the model chip
 
 ## 2.7.42 — 2026-07-28
 

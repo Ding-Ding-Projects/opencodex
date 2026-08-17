@@ -186,18 +186,17 @@ describe("ocx export", () => {
     expect(bundle.config).toBeTruthy();
   });
 
-  test("stdout mode keeps the payload clean and the warning on stderr", async () => {
+  test("stdout mode refuses to print a plaintext-secret backup", async () => {
     const chunks: string[] = [];
     const realWrite = process.stdout.write.bind(process.stdout);
     process.stdout.write = ((chunk: string) => { chunks.push(String(chunk)); return true; }) as typeof process.stdout.write;
     try {
-      expect(await handleExportCommand(["-", "--yes"])).toBe(0);
+      expect(await handleExportCommand(["-", "--yes"])).toBe(2);
     } finally {
       process.stdout.write = realWrite;
     }
-    // stdout parses as the bundle alone; the warning went to stderr.
-    const bundle = JSON.parse(chunks.join(""));
-    expect(bundle.kind).toBe("opencodex-export");
+    expect(chunks).toEqual([]);
     expect(errored.join("\n")).toContain("THIS EXPORT CONTAINS SECRETS");
+    expect(errored.join("\n")).toContain("cannot be written to stdout");
   });
 });

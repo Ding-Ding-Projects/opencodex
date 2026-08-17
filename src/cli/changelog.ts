@@ -39,7 +39,14 @@ function changelogPath(): string | null {
 
 function flagValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
-  return index === -1 ? undefined : args[index + 1];
+  const value = index === -1 ? undefined : args[index + 1];
+  return value && !value.startsWith("--") ? value : undefined;
+}
+
+function isCalendarDate(value: string): boolean {
+  if (!ISO.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 export async function handleChangelogCommand(args: string[]): Promise<number> {
@@ -57,10 +64,18 @@ export async function handleChangelogCommand(args: string[]): Promise<number> {
   const limit = rawLimit === undefined ? 20 : Number(rawLimit);
 
   for (const [flag, value] of [["--from", from], ["--to", to]] as const) {
-    if (value && !ISO.test(value)) {
+    if (args.includes(flag) && !value) {
+      console.error(`ocx changelog: ${flag} requires a value in YYYY-MM-DD format.`);
+      return 2;
+    }
+    if (value && !isCalendarDate(value)) {
       console.error(`ocx changelog: ${flag} expects YYYY-MM-DD, got "${value}".`);
       return 2;
     }
+  }
+  if (args.includes("--search") && !search) {
+    console.error("ocx changelog: --search requires a text value.");
+    return 2;
   }
   if (!Number.isInteger(limit) || limit < 0) {
     console.error(`ocx changelog: --limit expects a non-negative integer, got "${rawLimit}".`);

@@ -257,3 +257,516 @@ export async function loadSettingsSnapshot(apiBase: string, signal?: AbortSignal
     },
   };
 }
+
+/**
+ * A server-backed field that Settings can stage. The identifiers deliberately
+ * describe data rather than screen rows: one endpoint may echo more than one
+ * row, but a revision is only earned by the field the user actually changed.
+ */
+export type SettingsDraftField =
+  | "codexAutoStart"
+  | "shadowCall"
+  | "maMode"
+  | "multiAgentGuidanceEnabled"
+  | "syncCodexSubagentDefaults"
+  | "effortCap"
+  | "subagentEffortCap"
+  | "policyEnabled"
+  | "policySchedule"
+  | "debug"
+  | "usage"
+  | "injection"
+  | "claude";
+
+export interface AcceptedSettingsChange {
+  field: SettingsDraftField;
+  before: unknown;
+  after: unknown;
+}
+
+/**
+ * A field the endpoint answered for but did not store: it echoed something other
+ * than what was asked. There is no error to quote here — the write succeeded and
+ * the server simply kept its own value — so the echo *is* the reason, and saying
+ * which value was kept is the only honest account of what happened.
+ */
+export interface RefusedSettingsChange {
+  field: SettingsDraftField;
+  /** What the user staged. */
+  desired: unknown;
+  /** What the endpoint echoed instead, which is what is actually stored. */
+  echoed: unknown;
+}
+
+export type SettingsEndpoint =
+  | "settings"
+  | "shadow"
+  | "mode"
+  | "injection"
+  | "effortCaps"
+  | "policy"
+  | "debug";
+
+/** An endpoint that could not be written at all, as distinct from one that refused a value. */
+export interface FailedSettingsWrite {
+  endpoint: SettingsEndpoint;
+  /**
+   * The staged fields that endpoint carried. Kept so a notice can name the
+   * settings the user actually touched rather than the route they travel on —
+   * "Shadow Call Intercept" is something a reader recognises; "shadow" is not.
+   */
+  fields: SettingsDraftField[];
+  /** The server's own error copy where it sent one, otherwise the transport failure, verbatim. */
+  reason: string;
+}
+
+/**
+ * What the settings endpoints made of one apply, in the three states a caller
+ * has to tell apart: stored, refused, and never written.
+ */
+export interface ServerSaveOutcome {
+  /** User-requested fields whose echoed value proves that they were accepted. */
+  accepted: AcceptedSettingsChange[];
+  /** Fields the endpoint answered for but did not store, still staged for another attempt. */
+  refused: RefusedSettingsChange[];
+  /** Endpoint groups that could not be written or did not return a usable echo. */
+  failed: FailedSettingsWrite[];
+}
+
+/**
+ * A settings group this browser owns outright: it is stored in `localStorage`
+ * and never sent to the proxy, so nothing about it has an endpoint, an echo or
+ * a `SettingsDraftField`.
+ */
+export type BrowserSettingsGroup = "appearance" | "language" | "funny";
+
+/**
+ * A browser-owned group whose durable write the browser refused.
+ *
+ * This is deliberately not a `FailedSettingsWrite`, because it is not the same
+ * event and must not be described as one. A failed endpoint write changed
+ * nothing anywhere; a refused `localStorage.setItem` leaves the value **applied
+ * to the running interface** — the draft is what the tokens, the document
+ * language and every `t()` already render — and merely unable to survive a
+ * reload. Saying "could not be saved" would be true and would still mislead, so
+ * the third state gets its own name rather than being folded into the second.
+ */
+export interface FailedBrowserWrite {
+  group: BrowserSettingsGroup;
+  /** Whatever the browser said, verbatim. */
+  reason: string;
+}
+
+/**
+ * The screen name each browser-owned group is known by, for the same reason
+ * `SETTINGS_FIELD_LABELS` exists: a notice has to name what could not be stored,
+ * and the only name the user has ever seen for it is the one on its own surface.
+ *
+ * Two of the three are already-shipped keys rather than new copy — "Appearance"
+ * is the nav entry the whole group lives under, and "Interface language" is the
+ * row that sets the locale. Only the funny levels needed a name of their own:
+ * they are two rows written under one storage key, so neither row's label can
+ * stand for the pair.
+ */
+export const BROWSER_GROUP_LABELS: Record<BrowserSettingsGroup, TKey> = {
+  appearance: "nav.appearance",
+  language: "lang.title",
+  funny: "lang.funnyLevels",
+};
+
+/**
+ * What one apply did across both halves of the draft — the server-backed fields
+ * and the browser-owned groups. The draft coordinator hands this back so a
+ * surface that sits inside the language and notification providers — which the
+ * coordinator itself does not — can say so on screen.
+ */
+export interface SettingsSaveOutcome extends ServerSaveOutcome {
+  /**
+   * Browser-owned groups that repainted but could not be stored. Named for the
+   * state it leaves the user in rather than for the operation that failed:
+   * applied, not saved.
+   */
+  unpersisted: FailedBrowserWrite[];
+}
+
+export interface SettingsApplyResult extends ServerSaveOutcome {
+  /** Server-confirmed baseline, including any endpoint side effects it echoed. */
+  applied: SettingsSnapshot;
+  /** Only fields an endpoint did not accept remain staged for another attempt. */
+  draft: SettingsSnapshot | null;
+}
+
+/**
+ * The row label each staged field is shown under on the Settings screen.
+ *
+ * A notice and a Version history entry both have to name a setting, and the only
+ * name a user has ever seen for it is the one on its row. Reusing those keys
+ * keeps all three surfaces saying the same words, and means a relabelled row
+ * moves its notice copy with it rather than leaving a second name to go stale.
+ */
+export const SETTINGS_FIELD_LABELS: Record<SettingsDraftField, TKey> = {
+  codexAutoStart: "dash.codexAutoStart",
+  shadowCall: "dash.shadowCallIntercept",
+  maMode: "dash.multiAgent",
+  multiAgentGuidanceEnabled: "dash.multiAgentGuidance",
+  syncCodexSubagentDefaults: "dash.syncCodexSubagentDefaults",
+  effortCap: "dash.effortCapLabel",
+  subagentEffortCap: "dash.subagentEffortCapLabel",
+  policyEnabled: "storage.policy.enabled",
+  policySchedule: "storage.policy.schedule",
+  debug: "debug.debug",
+  usage: "debug.usage",
+  injection: "debug.injection",
+  claude: "debug.claude",
+};
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** The one equality used for persisted snapshots and staged server echoes. */
+export function settingsSnapshotsEqual(left: SettingsSnapshot, right: SettingsSnapshot): boolean {
+  return sameValue(left, right);
+}
+
+function changed<T extends object>(before: T, desired: T, fields: readonly (keyof T)[]): (keyof T)[] {
+  return fields.filter(field => !sameValue(before[field], desired[field]));
+}
+
+function retainUnaccepted<T extends object>(echoed: T, desired: T, fields: readonly (keyof T)[]): T {
+  const next = { ...echoed } as T;
+  for (const field of fields) {
+    if (!sameValue(echoed[field], desired[field])) {
+      Object.assign(next, { [field]: desired[field] });
+    }
+  }
+  return next;
+}
+
+function acceptedChanges<T extends object>(
+  fields: readonly (keyof T)[],
+  before: T,
+  desired: T,
+  echoed: T,
+  names: Record<keyof T, SettingsDraftField | undefined>,
+): AcceptedSettingsChange[] {
+  const out: AcceptedSettingsChange[] = [];
+  for (const field of fields) {
+    const name = names[field];
+    if (name && sameValue(echoed[field], desired[field]) && !sameValue(echoed[field], before[field])) {
+      out.push({ field: name, before: before[field], after: echoed[field] });
+    }
+  }
+  return out;
+}
+
+/**
+ * The refusals, under the *same* predicate `retainUnaccepted` uses to keep a
+ * field staged. Deliberately the same test rather than a second one that happens
+ * to agree today: a control that springs back with no notice and a notice about
+ * a control that did not spring back are both worse than either alone.
+ */
+function refusedChanges<T extends object>(
+  fields: readonly (keyof T)[],
+  desired: T,
+  echoed: T,
+  names: Record<keyof T, SettingsDraftField | undefined>,
+): RefusedSettingsChange[] {
+  const out: RefusedSettingsChange[] = [];
+  for (const field of fields) {
+    const name = names[field];
+    if (name && !sameValue(echoed[field], desired[field])) {
+      out.push({ field: name, desired: desired[field], echoed: echoed[field] });
+    }
+  }
+  return out;
+}
+
+/** The staged fields an endpoint was asked to write, for a failure that has no echo to read. */
+function requestedFields<T extends object>(
+  fields: readonly (keyof T)[],
+  names: Record<keyof T, SettingsDraftField | undefined>,
+): SettingsDraftField[] {
+  const out: SettingsDraftField[] = [];
+  for (const field of fields) {
+    const name = names[field];
+    if (name) out.push(name);
+  }
+  return out;
+}
+
+/**
+ * The server's own words where it sent any.
+ *
+ * `readJsonOrThrow` already lifts an error body's `error`/`message` into the
+ * thrown Error, so the useful copy is sitting in `message` and only needs to be
+ * kept rather than swallowed. The endpoint path is the fallback: it is at least
+ * a true statement about which write failed, which a generic apology is not.
+ */
+function reasonOf(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  const text = String(error).trim();
+  return text && text !== "[object Object]" ? text : fallback;
+}
+
+/**
+ * What the browser said when it refused to store something, in its own words.
+ *
+ * Unlike `reasonOf` this keeps the `name` alongside the message, because for a
+ * storage failure the name is the more actionable half and the message is the
+ * part that varies. `QuotaExceededError` means something has to be freed up or
+ * that this is a private window; `SecurityError` means storage is switched off
+ * for this document by policy — and a user can act on that distinction, while
+ * the accompanying message is engine-specific, occasionally empty, and in
+ * Safari's case identical for both. The name is omitted only when the message
+ * already carries it, so nothing ever renders `QuotaExceededError:
+ * QuotaExceededError: …`.
+ *
+ * The fallback is the storage key. It is a thin thing to tell someone, but it is
+ * a true statement about which write failed, which a generic apology is not.
+ */
+export function browserWriteReason(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    const name = error.name.trim();
+    if (name && name !== "Error" && !message.includes(name)) return message ? `${name}: ${message}` : name;
+    if (message) return message;
+  }
+  const text = String(error).trim();
+  return text && text !== "[object Object]" ? text : fallback;
+}
+
+/** Count only editable values; read-only endpoint echoes must never make a draft look dirty. */
+export function countSettingsDraftChanges(applied: SettingsSnapshot, draft: SettingsSnapshot): number {
+  let count = 0;
+  if (applied.proxy && draft.proxy && applied.proxy.codexAutoStart !== draft.proxy.codexAutoStart) count += 1;
+  if (applied.shadowCall && draft.shadowCall && applied.shadowCall.enabled !== draft.shadowCall.enabled) count += 1;
+  if (applied.maMode !== null && draft.maMode !== null && applied.maMode !== draft.maMode) count += 1;
+  if (applied.injection && draft.injection) {
+    if (applied.injection.multiAgentGuidanceEnabled !== draft.injection.multiAgentGuidanceEnabled) count += 1;
+    if (applied.injection.syncCodexSubagentDefaults !== draft.injection.syncCodexSubagentDefaults) count += 1;
+  }
+  if (applied.effortCaps && draft.effortCaps) {
+    if (applied.effortCaps.effortCap !== draft.effortCaps.effortCap) count += 1;
+    if (applied.effortCaps.subagentEffortCap !== draft.effortCaps.subagentEffortCap) count += 1;
+  }
+  if (applied.policy && draft.policy) {
+    if (applied.policy.enabled !== draft.policy.enabled) count += 1;
+    if (applied.policy.schedule !== draft.policy.schedule) count += 1;
+  }
+  if (applied.debug && draft.debug) {
+    for (const key of ["debug", "usage", "injection", "claude"] as const) {
+      if (applied.debug[key] !== draft.debug[key]) count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * Apply one staged settings snapshot with at most one PUT per endpoint.
+ *
+ * The coordinator owns the only call site for this helper. It starts from the
+ * durable baseline, sends all changed fields for each endpoint together, trusts
+ * only parsed server echoes, and leaves a refused or failed field in `draft`.
+ * That makes a partial save retryable without pretending the rejected values
+ * landed or recording a revision for them.
+ *
+ * It also reports what it did in all three states — accepted, refused, failed —
+ * because leaving a field staged is the whole of what the user sees otherwise,
+ * and a control that stays dirty with no explanation reads as a broken Save
+ * rather than as a server that said no.
+ */
+export async function applySettingsDraft(
+  apiBase: string,
+  applied: SettingsSnapshot,
+  desired: SettingsSnapshot,
+): Promise<SettingsApplyResult> {
+  let nextApplied: SettingsSnapshot = { ...applied };
+  let nextDraft: SettingsSnapshot = { ...desired };
+  const accepted: AcceptedSettingsChange[] = [];
+  const refused: RefusedSettingsChange[] = [];
+  const failed: FailedSettingsWrite[] = [];
+
+  if (applied.proxy && desired.proxy) {
+    const names: Record<keyof ProxySettings, SettingsDraftField | undefined> = {
+      codexAutoStart: "codexAutoStart", port: undefined, hostname: undefined,
+    };
+    const fields = changed(applied.proxy, desired.proxy, ["codexAutoStart"]);
+    if (fields.length) {
+      try {
+        const data = await putSetting<SettingsResponse>(apiBase, "/api/settings", {
+          codexAutoStart: desired.proxy.codexAutoStart,
+        });
+        const echoed = readProxy(data);
+        nextApplied = { ...nextApplied, proxy: echoed };
+        nextDraft = { ...nextDraft, proxy: retainUnaccepted(echoed, desired.proxy, fields) };
+        accepted.push(...acceptedChanges(fields, applied.proxy, desired.proxy, echoed, names));
+        refused.push(...refusedChanges(fields, desired.proxy, echoed, names));
+      } catch (error) {
+        failed.push({
+          endpoint: "settings",
+          fields: requestedFields(fields, names),
+          reason: reasonOf(error, "/api/settings"),
+        });
+      }
+    }
+  }
+
+  if (applied.shadowCall && desired.shadowCall) {
+    const names: Record<keyof ShadowCallSettings, SettingsDraftField | undefined> = {
+      enabled: "shadowCall", model: undefined,
+    };
+    const fields = changed(applied.shadowCall, desired.shadowCall, ["enabled"]);
+    if (fields.length) {
+      try {
+        const data = await putSetting<ShadowCallResponse>(apiBase, "/api/shadow-call-settings", {
+          enabled: desired.shadowCall.enabled,
+        });
+        const echoed = readShadowCall(data);
+        nextApplied = { ...nextApplied, shadowCall: echoed };
+        nextDraft = { ...nextDraft, shadowCall: retainUnaccepted(echoed, desired.shadowCall, fields) };
+        accepted.push(...acceptedChanges(fields, applied.shadowCall, desired.shadowCall, echoed, names));
+        refused.push(...refusedChanges(fields, desired.shadowCall, echoed, names));
+      } catch (error) {
+        failed.push({
+          endpoint: "shadow",
+          fields: requestedFields(fields, names),
+          reason: reasonOf(error, "/api/shadow-call-settings"),
+        });
+      }
+    }
+  }
+
+  if (applied.maMode !== null && desired.maMode !== null && applied.maMode !== desired.maMode) {
+    try {
+      const data = await putSetting<V2Response>(apiBase, "/api/v2", { multiAgentMode: desired.maMode });
+      const echoed = readMode(data);
+      nextApplied = { ...nextApplied, maMode: echoed };
+      nextDraft = { ...nextDraft, maMode: echoed === desired.maMode ? echoed : desired.maMode };
+      if (echoed === desired.maMode) accepted.push({ field: "maMode", before: applied.maMode, after: echoed });
+      else refused.push({ field: "maMode", desired: desired.maMode, echoed });
+    } catch (error) {
+      failed.push({ endpoint: "mode", fields: ["maMode"], reason: reasonOf(error, "/api/v2") });
+    }
+  }
+
+  if (applied.injection && desired.injection) {
+    const names: Record<keyof InjectionSettings, SettingsDraftField | undefined> = {
+      multiAgentGuidanceEnabled: "multiAgentGuidanceEnabled",
+      syncCodexSubagentDefaults: "syncCodexSubagentDefaults",
+      model: undefined,
+      effort: undefined,
+    };
+    const fields = changed(applied.injection, desired.injection, [
+      "multiAgentGuidanceEnabled",
+      "syncCodexSubagentDefaults",
+    ]);
+    if (fields.length) {
+      try {
+        const body: Partial<Pick<InjectionSettings, "multiAgentGuidanceEnabled" | "syncCodexSubagentDefaults">> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.injection[field] });
+        const data = await putSetting<InjectionResponse>(apiBase, "/api/injection-model", body);
+        const echoed = readInjection(data);
+        nextApplied = { ...nextApplied, injection: echoed };
+        nextDraft = { ...nextDraft, injection: retainUnaccepted(echoed, desired.injection, fields) };
+        accepted.push(...acceptedChanges(fields, applied.injection, desired.injection, echoed, names));
+        refused.push(...refusedChanges(fields, desired.injection, echoed, names));
+      } catch (error) {
+        failed.push({
+          endpoint: "injection",
+          fields: requestedFields(fields, names),
+          reason: reasonOf(error, "/api/injection-model"),
+        });
+      }
+    }
+  }
+
+  if (applied.effortCaps && desired.effortCaps) {
+    const names: Record<keyof EffortCapSettings, SettingsDraftField | undefined> = {
+      effortCap: "effortCap", subagentEffortCap: "subagentEffortCap",
+    };
+    const fields = changed(applied.effortCaps, desired.effortCaps, ["effortCap", "subagentEffortCap"]);
+    if (fields.length) {
+      try {
+        const body: Partial<Record<keyof EffortCapSettings, string | null>> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.effortCaps[field] || null });
+        const data = await putSetting<EffortCapsResponse>(apiBase, "/api/effort-caps", body);
+        const echoed = readEffortCaps(data);
+        nextApplied = { ...nextApplied, effortCaps: echoed };
+        nextDraft = { ...nextDraft, effortCaps: retainUnaccepted(echoed, desired.effortCaps, fields) };
+        accepted.push(...acceptedChanges(fields, applied.effortCaps, desired.effortCaps, echoed, names));
+        refused.push(...refusedChanges(fields, desired.effortCaps, echoed, names));
+      } catch (error) {
+        failed.push({
+          endpoint: "effortCaps",
+          fields: requestedFields(fields, names),
+          reason: reasonOf(error, "/api/effort-caps"),
+        });
+      }
+    }
+  }
+
+  if (applied.policy && desired.policy) {
+    const names: Record<keyof CleanupPolicySettings, SettingsDraftField | undefined> = {
+      enabled: "policyEnabled",
+      schedule: "policySchedule",
+      mode: undefined,
+      archivedBytesOver: undefined,
+      removeOldestPercent: undefined,
+      reduceToBytes: undefined,
+    };
+    const fields = changed(applied.policy, desired.policy, ["enabled", "schedule"]);
+    if (fields.length) {
+      try {
+        const body: Partial<Pick<CleanupPolicySettings, "enabled" | "schedule">> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.policy[field] });
+        const data = await putSetting<{ policy?: PolicyResponse }>(apiBase, "/api/storage/cleanup-policy", body);
+        if (!data.policy) throw new Error("/api/storage/cleanup-policy");
+        const echoed = readPolicy(data.policy);
+        nextApplied = { ...nextApplied, policy: echoed };
+        nextDraft = { ...nextDraft, policy: retainUnaccepted(echoed, desired.policy, fields) };
+        accepted.push(...acceptedChanges(fields, applied.policy, desired.policy, echoed, names));
+        refused.push(...refusedChanges(fields, desired.policy, echoed, names));
+      } catch (error) {
+        failed.push({
+          endpoint: "policy",
+          fields: requestedFields(fields, names),
+          reason: reasonOf(error, "/api/storage/cleanup-policy"),
+        });
+      }
+    }
+  }
+
+  if (applied.debug && desired.debug) {
+    const names: Record<keyof DebugFlags, SettingsDraftField | undefined> = {
+      debug: "debug", usage: "usage", injection: "injection", claude: "claude",
+    };
+    const fields = changed(applied.debug, desired.debug, ["debug", "usage", "injection", "claude"]);
+    if (fields.length) {
+      try {
+        const body: Partial<DebugFlags> = {};
+        for (const field of fields) Object.assign(body, { [field]: desired.debug[field] });
+        const data = await putSetting<DebugResponse>(apiBase, "/api/debug", body);
+        const echoed = readDebug(data);
+        nextApplied = { ...nextApplied, debug: echoed };
+        nextDraft = { ...nextDraft, debug: retainUnaccepted(echoed, desired.debug, fields) };
+        accepted.push(...acceptedChanges(fields, applied.debug, desired.debug, echoed, names));
+        refused.push(...refusedChanges(fields, desired.debug, echoed, names));
+      } catch (error) {
+        failed.push({
+          endpoint: "debug",
+          fields: requestedFields(fields, names),
+          reason: reasonOf(error, "/api/debug"),
+        });
+      }
+    }
+  }
+
+  return {
+    applied: nextApplied,
+    draft: settingsSnapshotsEqual(nextApplied, nextDraft) ? null : nextDraft,
+    accepted,
+    refused,
+    failed,
+  };
+}

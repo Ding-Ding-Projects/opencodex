@@ -27,8 +27,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { Button, Card, Chip, Dialog, Empty, Field, TextInput } from "../shell/m3-ui";
+import { Banner, Button, Card, Chip, Dialog, Empty, Field, TextInput } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import {
   IconFilter, IconGlobe, IconHistory, IconKey, IconSearch,
   IconServer, IconShuffle, IconTag, IconUndo,
@@ -138,6 +140,14 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
   const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"`
+   * `filterTimeline` used to fall back to: the builder beside the field composes
+   * a pattern *and* its flags, and a field that pinned `i` let the panel's
+   * preview change under `m` or `s` while the timeline behind it did not move —
+   * so a pattern deliberately built as case-sensitive arrived case-insensitive.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [labelDraft, setLabelDraft] = useState("");
@@ -186,8 +196,15 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
       to: toValid ? to : "",
       query,
       useRegex,
+      // The flags the builder beside the field actually applied, so the popover's
+      // preview and this timeline cannot report different matches for one
+      // pattern. `filterTimeline` drops `g`/`y` before compiling: their
+      // `lastIndex` survives between calls, so one matcher reused down the merged
+      // timeline would keep every other row, in whatever order the two logs
+      // happened to interleave in.
+      flags,
     }),
-    [entries, scope, origins, from, to, fromValid, toValid, query, useRegex],
+    [entries, scope, origins, from, to, fromValid, toValid, query, useRegex, flags],
   );
 
   /**
@@ -411,8 +428,8 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
   const emptyState = entries.length === 0
     ? (serverLoading
       ? <p style={{ color: "var(--m3-on-surface-variant)" }}>{t("common.loading")}</p>
-      : <Empty title={t("history.empty")}>{t("history.emptyBody")}</Empty>)
-    : <Empty title={t("modal.noMatch")}>{t("changelog.noResultsBody")}</Empty>;
+      : <Empty title={t("history.empty")} icon={IconHistory}>{t("history.emptyBody")}</Empty>)
+    : <Empty title={t("modal.noMatch")} icon={IconSearch}>{t("changelog.noResultsBody")}</Empty>;
 
   return (
     <>
@@ -497,7 +514,10 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
           placeholder={t("history.search")}
           aria-label={t("history.search")}
           aria-invalid={!!patternError}
-          aria-describedby="history-regex-error"
+          // The flags state line joins the description only in regex mode, which
+          // is the only mode it is rendered in — naming an element that is not on
+          // the page would leave a screen reader announcing nothing for it.
+          aria-describedby={useRegex ? "history-regex-error history-regex-flags-state" : "history-regex-error"}
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -506,9 +526,13 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
         </Chip>
         <RegexBuilderButton
           value={query}
-          onApply={pattern => setQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          flags={flags}
           // Real timeline lines in the exact shape `filterTimeline` matches them,
           // taken from the whole timeline rather than the filtered rows.
           sample={historySample}
@@ -518,6 +542,17 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
       <p id="history-regex-error" role="alert" style={{ minHeight: 20, margin: "4px 0 var(--sp-2)", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
         {patternError ? t("regex.invalid") + ": " + patternError : ""}
       </p>
+
+      {/* Directly under the field it describes, and only in regex mode: in plain
+          text the search is a case-insensitive substring match whatever the chips
+          say, so a live-looking row there would change nothing. */}
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id="history-regex-flags-state"
+      />
+
       {useRegex && (
         <p style={{ margin: "0 0 var(--sp-2)", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
           {t("regex.patternCap", { used: String(Math.min(query.trim().length, PATTERN_CAP)), cap: String(PATTERN_CAP) })}
@@ -528,15 +563,24 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
         Sits above the timeline and stays visible even when local revisions render
         below it: "the git history could not be read" must never be silently
         swallowed by a list that happens to have client rows in it.
+
+        `Banner tone="error"` rather than a hand-rolled `<p>`: it was reinventing
+        the shared component's own error tone — same container/on-container
+        tokens, same `role="alert"` — one class of banner drawn two ways instead
+        of one, per the badge-drift audit that flagged this site as banner-shaped
+        duplication (out of scope for the Badge sweep itself, since this is a
+        banner, not a pill).
       */}
       {serverFailed && (
-        <p role="alert" style={{
-          margin: "0 0 var(--sp-2)", padding: "var(--sp-2) var(--sp-3)", borderRadius: "var(--r-m)",
-          background: "var(--m3-error-container)", color: "var(--m3-on-error-container)",
-          fontSize: "var(--t-body-s)",
-        }}>
-          {t("network.historyFailed")}
-        </p>
+        // The wrapper carries the bottom margin the hand-rolled `<p>` used to set
+        // on itself. `.m3-banner` declares none, and `.m3-page-inner` is a plain
+        // block container with no `gap`, so without this the banner sits flush
+        // against the timeline below it. Same shape as the conversion in
+        // `codex-account-pool-main-card.tsx`, kept identical so the two sites do
+        // not drift into two answers for one question.
+        <div style={{ marginBottom: "var(--sp-2)" }}>
+          <Banner tone="error">{t("network.historyFailed")}</Banner>
+        </div>
       )}
 
       {!selected ? emptyState : (

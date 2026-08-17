@@ -1,8 +1,52 @@
+export type ApiKeyPurpose = "github-copilot-desktop";
+
 export interface ApiKeyEntry {
   id: string;
   name: string;
   prefix: string;
   createdAt: string;
+  purpose?: ApiKeyPurpose;
+}
+
+export type CopilotCapabilityState = "supported" | "unsupported";
+
+export interface CopilotModelProfile {
+  id: string;
+  provider: string;
+  model: string;
+  adapter: string;
+  ready: boolean;
+  reason: string;
+  capabilities: {
+    chat: CopilotCapabilityState;
+    tools: CopilotCapabilityState;
+    images: CopilotCapabilityState;
+    reasoning: CopilotCapabilityState;
+    structuredOutput: CopilotCapabilityState;
+  };
+  sidecars: string[];
+  directModeExcluded: boolean;
+  cursorNativeExecution: "unavailable";
+}
+
+export interface CopilotDesktopProfile {
+  purpose: ApiKeyPurpose;
+  loopbackOnly: true;
+  baseUrl: string;
+  modelsEndpoint: string;
+  chatCompletionsEndpoint: string;
+  wireApi: "completions";
+  directModeExcluded: true;
+  sidecarDisclosure: string[];
+  lastRequest: {
+    at: string;
+    endpoint: "models" | "chat-completions";
+    status: number;
+    model?: string;
+    provider?: string;
+  } | null;
+  providers: Array<{ provider: string; configured: boolean; ready: boolean; reason: string }>;
+  models: CopilotModelProfile[];
 }
 
 export interface ApiEndpointInfo {

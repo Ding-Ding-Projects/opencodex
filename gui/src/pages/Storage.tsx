@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useI18n, type TFn, type TKey, type Locale } from "../i18n/shared";
 import { Button, Chip, Dialog, Empty, Field, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
-import { IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh } from "../icons";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
+import { IconAlert, IconBoxes, IconClock, IconDataUsage, IconHardDrive, IconList, IconRefresh, IconTrash } from "../icons";
 import { formatBytes } from "../format-bytes";
 import { useNotifications } from "../shell/notifications-context";
 import { recordRevision } from "../shell/revisions";
+import { SuperConfirmGate } from "../shell/super-confirm";
 
 interface StorageLargestEntry {
   path: string;
@@ -199,25 +202,26 @@ interface SettingEntry {
   value?: string;
 }
 
-const SETTINGS_PATTERN_CAP = 400;
-
 /**
  * Plain text by default; the regex engine is the browser's own `RegExp`, capped at
  * 400 characters exactly as the regex builder screen documents. An invalid pattern
  * matches nothing rather than throwing, and the caller shows the invalid notice.
+ *
+ * A thin adapter over the shared matcher rather than its own `new RegExp(query,
+ * "i")`, so the flags the anchored builder applied are the flags this card is
+ * filtered by. Compiling `i` regardless is what made the builder's own flag chips
+ * decorative here: they moved the preview inside the panel and nothing on the
+ * card behind it. The shared matcher also drops `g`/`y`, whose `lastIndex`
+ * survives between calls and would otherwise make one matcher reused across the
+ * policy rows keep every other one.
+ *
+ * Kept as a local function because this surface reports a bare "invalid" notice
+ * rather than the compiler's message, so it wants a boolean where the shared
+ * result carries a string.
  */
-function makeSettingsMatcher(query: string, useRegex: boolean): { test: (text: string) => boolean; invalid: boolean } {
-  if (!query) return { test: () => true, invalid: false };
-  if (useRegex) {
-    try {
-      const re = new RegExp(query.slice(0, SETTINGS_PATTERN_CAP), "i");
-      return { test: text => re.test(text), invalid: false };
-    } catch {
-      return { test: () => false, invalid: true };
-    }
-  }
-  const needle = query.toLowerCase();
-  return { test: text => text.toLowerCase().includes(needle), invalid: false };
+function makeSettingsMatcher(query: string, useRegex: boolean, flags: string): { test: (text: string) => boolean; invalid: boolean } {
+  const matcher = settingsMatcher(query, useRegex, flags);
+  return { test: matcher.test, invalid: matcher.error !== null };
 }
 
 function settingText(entry: SettingEntry): string {
@@ -242,45 +246,61 @@ const SEARCH_NOTE: CSSProperties = {
  * default, an explicit `.*` regex opt-in, and the full builder one click away —
  * anchored to the field it belongs to rather than hidden behind a menu.
  */
-function SettingsSearchRow({ query, onQuery, regexOn, onRegex, invalid, sample, t }: {
+function SettingsSearchRow({ query, onQuery, regexOn, onRegex, flags, onFlags, invalid, sample, t }: {
   query: string;
   onQuery: (next: string) => void;
   regexOn: boolean;
   onRegex: (next: boolean) => void;
+  /** The flags this row compiles with; the chip row underneath edits them. */
+  flags: string;
+  onFlags: (next: string) => void;
   invalid: boolean;
   /** The rows this row's query is run over, handed to the builder to test against. */
   sample: string;
   t: TFn;
 }) {
   return (
-    <div style={SEARCH_ROW}>
-      <TextInput
-        type="search"
-        value={query}
-        placeholder={t("settings.search")}
-        aria-label={t("settings.search")}
-        aria-invalid={invalid}
-        style={SEARCH_INPUT}
-        onChange={e => onQuery(e.target.value)}
-      />
-      <Chip
-        selected={regexOn}
-        title={t("regex.regexMode")}
-        aria-label={t("regex.regexMode")}
-        style={{ minHeight: 48, fontFamily: "var(--mono)" }}
-        onClick={() => onRegex(!regexOn)}
-      >
-        .*
-      </Chip>
-      <RegexBuilderButton
-        value={query}
-        onApply={pattern => onQuery(pattern)}
+    <>
+      <div style={SEARCH_ROW}>
+        <TextInput
+          type="search"
+          value={query}
+          placeholder={t("settings.search")}
+          aria-label={t("settings.search")}
+          aria-invalid={invalid}
+          aria-describedby={regexOn ? "storage-regex-flags-state" : undefined}
+          style={SEARCH_INPUT}
+          onChange={e => onQuery(e.target.value)}
+        />
+        <Chip
+          selected={regexOn}
+          title={t("regex.regexMode")}
+          aria-label={t("regex.regexMode")}
+          style={{ minHeight: 48, fontFamily: "var(--mono)" }}
+          onClick={() => onRegex(!regexOn)}
+        >
+          .*
+        </Chip>
+        <RegexBuilderButton
+          value={query}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { onQuery(pattern); onFlags(appliedFlags); }}
+          regex={regexOn}
+          onRegexChange={onRegex}
+          flags={flags}
+          sample={sample}
+          label={t("settings.openBuilder")}
+        />
+      </div>
+      <SearchFlagsRow
         regex={regexOn}
-        onRegexChange={onRegex}
-        sample={sample}
-        label={t("settings.openBuilder")}
+        flags={flags}
+        onFlagsChange={onFlags}
+        id="storage-regex-flags-state"
       />
-    </div>
+    </>
   );
 }
 
@@ -424,6 +444,11 @@ function ArchivedCleanupPanel({
   const [permanent, setPermanent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The destructive-action super-confirmation gate anchors beside the control
+  // that opened this flow — the button below, not the dialog's own confirm
+  // button, because that button is what the user actually pressed and where
+  // focus has to land back once the gate closes.
+  const previewButtonRef = useRef<HTMLButtonElement>(null);
 
   // The permanent switch lives on the card, not in the dialog, so closing the
   // dialog must not silently flip the mode the user already chose.
@@ -528,6 +553,54 @@ function ArchivedCleanupPanel({
     }
   };
 
+  /**
+   * The permanent half of cleanup, run only by the destructive-action gate
+   * below — never by the quarantine path, which stays on `runCleanup` and its
+   * ordinary confirm dialog because quarantine is recoverable from the
+   * Quarantine section underneath this card.
+   *
+   * Unlike `runCleanup`, this never closes the confirm surface itself: the
+   * gate owns that transition so its completion animation has something to
+   * play before the panel goes away, and it REJECTS on failure — rather than
+   * only setting local `error` state — because that is what lets the gate
+   * show the failure inline and offer a retry without walking back through
+   * both keys.
+   */
+  const runPermanentCleanup = async (): Promise<void> => {
+    if (!preview) throw new Error(t("storage.cleanup.cleanupFailed"));
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/api/storage/cleanup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ percent: preview.percent, mode: "permanent", digest: preview.digest }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({})) as CleanupResult;
+        if (json.error === "stale_preview") setPreview(null);
+        throw new Error(mapCleanupError(json.error, json.message, json.trashDir));
+      }
+      const json = await res.json() as CleanupResult;
+      if (!json.ok) {
+        if (json.error === "stale_preview") setPreview(null);
+        throw new Error(mapCleanupError(json.error, json.message, json.trashDir));
+      }
+      const done = t("storage.cleanup.donePermanent", { count: String(json.count), size: formatBytes(json.bytes, locale) });
+      // Archived sessions are a user-visible record, so the cleanup is listed in
+      // Version history — quarantine is recoverable, permanent delete is not.
+      recordRevision({ scope: "settings", label: t("storage.cleanup.title"), summary: done });
+      notify({ tone: "success", title: done, body: t("storage.cleanup.permanentWarn") });
+      onDone();
+    } catch (e) {
+      const message = localizedCatch(e, t("storage.cleanup.cleanupFailed"));
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="m3-card" style={SECTION_GAP} aria-labelledby="storage-cleanup-title">
       <header className="m3-card-head">
@@ -598,14 +671,33 @@ function ArchivedCleanupPanel({
           the share-of-storage wedge, which is exactly what the slider selects and
           the preview reports. Swap it for the real broom when one exists. */}
       <div className="m3-row" style={{ marginTop: "var(--sp-3)" }}>
-        <Button variant="filled" disabled={busy} onClick={() => void runPreview()}>
+        {/*
+          A native <button>, not the shared `Button` component: `Button` is a
+          plain function component with no `forwardRef`, so a `ref` handed to
+          it silently attaches to nothing. This renders the exact same markup
+          `Button` would (`m3-btn m3-btn--filled`) so it is indistinguishable
+          on screen, but the ref this anchors the destructive-action gate to —
+          and returns focus to — actually reaches the DOM.
+        */}
+        <button
+          ref={previewButtonRef}
+          type="button"
+          className="m3-btn m3-btn--filled"
+          disabled={busy}
+          onClick={() => void runPreview()}
+        >
           <IconDataUsage aria-hidden="true" /> {t("storage.cleanup.previewAndClean")}
-        </Button>
+        </button>
       </div>
 
       {error && !confirmOpen && <p style={ERROR_TEXT} role="alert">{error}</p>}
 
-      {confirmOpen && preview && (
+      {/* Quarantine stays on the ordinary confirm dialog: it is recoverable —
+          the Quarantine section below can restore exactly what this removes.
+          Permanent delete is the one genuinely irreversible action on this
+          screen, so it alone gets the destructive-action super-confirmation
+          gate rather than a single click on a red button. */}
+      {confirmOpen && preview && !permanent && (
         <Dialog
           // Escape and the scrim both arrive here, and neither may abandon a
           // cleanup that is already deleting — the same guard the hand-rolled
@@ -623,11 +715,11 @@ function ArchivedCleanupPanel({
                 {t("storage.cleanup.cancel")}
               </Button>
               <Button
-                variant={permanent ? "danger" : "filled"}
+                variant="filled"
                 disabled={busy || preview.count === 0}
                 onClick={() => void runCleanup()}
               >
-                {permanent ? t("storage.cleanup.confirmPermanent") : t("storage.cleanup.confirmQuarantine")}
+                {t("storage.cleanup.confirmQuarantine")}
               </Button>
             </>
           }
@@ -645,10 +737,49 @@ function ArchivedCleanupPanel({
           {/* No marginTop: the dialog body is a grid and owns the spacing the
               legacy modal card left to each child's own margin. */}
           <p style={{ fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)" }}>
-            {permanent ? t("storage.cleanup.permanentWarn") : t("storage.cleanup.quarantineNote")}
+            {t("storage.cleanup.quarantineNote")}
           </p>
           {error && <p style={ERROR_TEXT} role="alert">{error}</p>}
         </Dialog>
+      )}
+
+      {confirmOpen && preview && permanent && (
+        <SuperConfirmGate
+          anchorRef={previewButtonRef}
+          presentation="anchored"
+          title={t("storage.cleanup.confirmTitle")}
+          body={
+            <>
+              <p style={{ margin: 0 }}>
+                {t("storage.cleanup.confirmBody", {
+                  count: String(preview.count),
+                  size: formatBytes(preview.bytes, locale),
+                  percent: String(preview.percent),
+                })}
+              </p>
+              <p style={{ margin: "8px 0 0" }}>{t("storage.cleanup.permanentWarn")}</p>
+              {preview.candidates.length > 0 && (
+                <ul className="mono" style={{ maxHeight: 140, overflow: "auto", fontSize: "var(--t-label-m)", color: "var(--m3-on-surface-variant)", margin: "8px 0 0", paddingLeft: 20 }}>
+                  {preview.candidates.slice(0, 8).map(c => (
+                    <li key={c.relPath}>{c.relPath}</li>
+                  ))}
+                  {preview.count > 8 && (
+                    <li>{t("storage.cleanup.moreFiles", { n: String(Math.max(0, preview.count - 8)) })}</li>
+                  )}
+                </ul>
+              )}
+            </>
+          }
+          keyLabels={[
+            t("storage.cleanup.gateKey1", { count: String(preview.count) }),
+            t("storage.cleanup.gateKey2"),
+          ]}
+          sliderLabel={t("storage.cleanup.gateSlider")}
+          workingLabel={t("storage.cleanup.gateWorking", { count: String(preview.count) })}
+          doneLabel={t("storage.cleanup.donePermanent", { count: String(preview.count), size: formatBytes(preview.bytes, locale) })}
+          onAuthorize={runPermanentCleanup}
+          onClose={() => closeConfirm(true)}
+        />
       )}
     </section>
   );
@@ -795,7 +926,7 @@ function QuarantineTrashPanel({
       {loading ? (
         <p className="m3-card-sub" style={CARD_BODY}>{t("storage.trash.loading")}</p>
       ) : entries.length === 0 ? (
-        <div style={CARD_BODY}><Empty title={t("storage.trash.empty")} /></div>
+        <div style={CARD_BODY}><Empty title={t("storage.trash.empty")} icon={IconTrash} /></div>
       ) : (
         <div style={TABLE_WRAP}>
           <table className="m3-table">
@@ -897,6 +1028,13 @@ function AutoCleanupPolicyPanel({
   const { notify } = useNotifications();
   const [query, setQuery] = useState("");
   const [regexOn, setRegexOn] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this card
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` showed a panel where turning on `m` or `s`
+   * changed the preview and then changed nothing about which policy rows stayed.
+   */
+  const [regexFlags, setRegexFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [policy, setPolicy] = useState<CleanupPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1216,7 +1354,7 @@ function AutoCleanupPolicyPanel({
     ]
     : [];
 
-  const matcher = makeSettingsMatcher(query, regexOn);
+  const matcher = makeSettingsMatcher(query, regexOn, regexFlags);
   const hits = new Set(entries.filter(e => matcher.test(settingText(e))).map(e => e.id));
   const shows = (id: string) => query === "" || hits.has(id);
   const elsewhere = query === "" ? [] : otherSettings.filter(e => matcher.test(settingText(e)));
@@ -1229,6 +1367,8 @@ function AutoCleanupPolicyPanel({
         onQuery={setQuery}
         regexOn={regexOn}
         onRegex={setRegexOn}
+        flags={regexFlags}
+        onFlags={setRegexFlags}
         invalid={matcher.invalid}
         // The unfiltered policy settings, in the same words the search indexes them.
         sample={entries.map(settingText).join("\n")}
@@ -1522,10 +1662,10 @@ export default function Storage({ apiBase }: { apiBase: string }) {
       {loading && !data ? (
         <Empty title={t("storage.loading")} />
       ) : failed ? (
-        <Empty title={t("storage.error")} />
+        <Empty title={t("storage.error")} icon={IconAlert} />
       ) : empty ? (
         <>
-          <Empty title={t("storage.empty")} />
+          <Empty title={t("storage.empty")} icon={IconHardDrive} />
           <AutoCleanupPolicyPanel
             apiBase={apiBase}
             locale={locale}

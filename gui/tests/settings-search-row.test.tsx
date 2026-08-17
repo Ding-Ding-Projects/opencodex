@@ -19,7 +19,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { SettingsSearchRow } from "../src/shell/SettingsSearch";
 import { useSettingsSearch } from "../src/shell/use-settings-search";
 import type { SettingsOption } from "../src/shell/settings-search";
@@ -73,7 +73,7 @@ async function mount(node: React.ReactNode): Promise<{ container: HTMLElement; r
   let root!: Root;
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider>{node}</LanguageProvider>);
+    root.render(<TestLanguageProvider>{node}</TestLanguageProvider>);
   });
   return { container, root };
 }

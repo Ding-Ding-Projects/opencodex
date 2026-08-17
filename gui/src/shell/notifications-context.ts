@@ -7,6 +7,7 @@
  */
 
 import { createContext, useContext } from "react";
+import { VALID_PAGES, type Page } from "../app-routing";
 
 export type NoticeTone = "info" | "success" | "warn" | "error";
 
@@ -24,6 +25,13 @@ export interface Notice {
   /** Epoch ms — history is sorted and grouped on this. */
   at: number;
   read: boolean;
+  /**
+   * The screen whose action produced this notice — auto-stamped by `notify()`
+   * from `notification-source.ts` unless a caller supplies its own. Optional
+   * because history saved before this field existed carries none, and it
+   * degrades cleanly: a notice with no `source` just omits that detail.
+   */
+  source?: Page;
 }
 
 export interface NotificationsApi {
@@ -47,7 +55,33 @@ export function useNotifications(): NotificationsApi {
 
 export const HISTORY_KEY = "ocx-m3:notifications";
 export const HISTORY_CAP = 200;
-/** Errors are excluded: they persist until the user dismisses them. */
+
+/**
+ * Tones that hold their place on screen until the user dismisses them.
+ *
+ * A snackbar that fades on a timer is, in effect, a message the product has
+ * decided nobody has to read. That is a fair call for `info` and `success`:
+ * they report something that already went the way the user asked, and the
+ * notification centre keeps a copy for anyone who wants to look afterwards.
+ *
+ * It is the wrong call for `warn`. A warning exists precisely because something
+ * needs attention — a bulk run that stopped part-way with items left untouched,
+ * a key that is now gone — and six seconds only catches a user who happened to
+ * be looking at that corner of the window at that moment. Anyone reading at
+ * their own pace, tabbed away, or using a screen reader that had not yet
+ * reached the announcement is left with nothing to act on, because the history
+ * view records an unread warning exactly as it records an unread success. So
+ * warnings stay up alongside errors, and every snackbar carries a close button
+ * so staying up never means being stuck with one.
+ */
+export const PERSISTENT_TONES: readonly NoticeTone[] = ["warn", "error"];
+
+/** True when a notice of this tone should fade on its own after `AUTO_DISMISS_MS`. */
+export function autoDismisses(tone: NoticeTone): boolean {
+  return !PERSISTENT_TONES.includes(tone);
+}
+
+/** How long a self-dismissing notice stays on screen; see `PERSISTENT_TONES` for the ones that never do. */
 export const AUTO_DISMISS_MS = 6000;
 
 export function readHistory(): Notice[] {
@@ -57,7 +91,15 @@ export function readHistory(): Notice[] {
     // Actions are callbacks — they cannot survive a reload, so they are dropped on read.
     return raw
       .filter((n: unknown): n is Notice => !!n && typeof n === "object" && typeof (n as Notice).id === "string")
-      .map((n: Notice) => ({ ...n, action: undefined }))
+      .map((n: Notice) => ({
+        ...n,
+        action: undefined,
+        // A `source` that is not one of today's real pages — an older build's
+        // now-retired route, or plain storage corruption — must not survive
+        // the read: it is handed straight to `PAGE_META_BY_ID[source]` at
+        // render time, and an unrecognised id there is a crash, not a blank.
+        source: typeof n.source === "string" && VALID_PAGES.has(n.source as Page) ? n.source : undefined,
+      }))
       .slice(0, HISTORY_CAP);
   } catch {
     return [];
@@ -67,6 +109,6 @@ export function readHistory(): Notice[] {
 /** Strip the non-serializable action before writing history to storage. */
 export function serializeHistory(history: Notice[]): string {
   return JSON.stringify(history.map(n => ({
-    id: n.id, tone: n.tone, title: n.title, body: n.body, at: n.at, read: n.read,
+    id: n.id, tone: n.tone, title: n.title, body: n.body, at: n.at, read: n.read, source: n.source,
   })));
 }

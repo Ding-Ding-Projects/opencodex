@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import {
   collectPaths,
+  collectBuildIdentity,
+  collectDesktopCliPathStatus,
+  DESKTOP_CLI_PATH_STATUS_FILENAME,
   detectFsType,
   collectConfiguredProxy,
   collectProxyEnv,
@@ -72,6 +75,68 @@ describe("doctor", () => {
     rows = collectPaths();
     expect(auth().exists).toBe(true);
     expect(cfg().exists).toBe(true);
+  });
+
+  test("build identity reports the package this process actually is, not just a version number", () => {
+    const identity = collectBuildIdentity();
+    // This suite runs against the fork's own checkout, so the real values are
+    // asserted directly rather than injected — a stale "unknown" here would
+    // mean the shared src/lib/build-identity.ts reader broke.
+    expect(identity.name).toBe("@bitkyc08/opencodex");
+    expect(identity.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(identity.installRootExists).toBe(true);
+    // A local checkout has no build-info.json (that is written by CI right
+    // before packaging), so this must read honestly as unreleased rather
+    // than inventing a build number.
+    expect(identity.released).toBe(false);
+    expect(identity.build).toBe("dev");
+    // resolvedEntryPath() reports process.argv[1] — whatever script actually
+    // launched this process. Under `bun test` that is the test file itself
+    // (not src/cli/index.ts, which only argv[1] when ocx.mjs/dev spawns the
+    // CLI directly); asserting it matches the live process.argv[1] proves the
+    // reader is not hard-coding or guessing a path.
+    expect(identity.entryPath).toBe(process.argv[1]);
+  });
+
+  test("desktop CLI PATH status is absent until the desktop app has actually written one", () => {
+    expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toEqual({ present: false });
+  });
+
+  test("desktop CLI PATH status reports success, reading exactly the file the desktop app writes", () => {
+    writeFileSync(
+      join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
+      JSON.stringify({ ok: true, binDir: "C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin", at: "2026-08-13T00:00:00.000Z" }),
+    );
+    expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toEqual({
+      present: true,
+      ok: true,
+      binDir: "C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin",
+      reason: null,
+      manualCommand: null,
+      at: "2026-08-13T00:00:00.000Z",
+    });
+  });
+
+  test("desktop CLI PATH status carries the failure reason and manual fix instead of pretending it worked", () => {
+    writeFileSync(
+      join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
+      JSON.stringify({
+        ok: false,
+        binDir: "C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin",
+        reason: "the user PATH could not be updated",
+        manualCommand: "setx PATH \"%PATH%;C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin\"",
+        at: "2026-08-13T00:00:00.000Z",
+      }),
+    );
+    const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
+    expect(status.present).toBe(true);
+    expect(status).toMatchObject({ ok: false, reason: "the user PATH could not be updated" });
+    if (status.present) expect(status.manualCommand).toContain("setx PATH");
+  });
+
+  test("desktop CLI PATH status tolerates a corrupt file rather than throwing", () => {
+    writeFileSync(join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME), "{not json");
+    expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toEqual({ present: false });
   });
 
   test("resolveCodexHomeDir expands ~ like the hardened runtime paths", () => {

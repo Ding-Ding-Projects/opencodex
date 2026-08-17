@@ -1,5 +1,24 @@
 import { expect, test } from "bun:test";
 
+/**
+ * The source with whole-line comments dropped.
+ *
+ * Only whole-line ones — a line whose trimmed form starts `//`, `*` or `/*` — so
+ * this can never delete real code and turn a negative assertion into a false
+ * pass. It exists because a file that documents the construct it stopped using
+ * would otherwise fail a `not.toContain` on that construct's own name, which
+ * would punish the code for explaining itself.
+ */
+function codeOnly(source: string): string {
+  return source
+    .split("\n")
+    .filter(line => {
+      const trimmed = line.trimStart();
+      return !trimmed.startsWith("//") && !trimmed.startsWith("*") && !trimmed.startsWith("/*");
+    })
+    .join("\n");
+}
+
 async function apiKeysSources(): Promise<string> {
   const page = await Bun.file(new URL("../src/pages/ApiKeys.tsx", import.meta.url)).text();
   const panels = await Bun.file(new URL("../src/pages/api-keys-panels.tsx", import.meta.url)).text();
@@ -59,7 +78,8 @@ test("ApiKeys stacked layout keeps endpoint, generate, keys table, and usage pan
   expect(between).not.toContain('t("api.usageChatTitle")');
   expect(between).not.toContain('t("api.usageResponsesTitle")');
   expect(src).toContain("gatewayInboundProtocols(claudeCodeEnabled)");
-  expect(page).toContain("classifyExternalModel(row)");
+  expect(page).toContain('fetch(`${apiBase}/api/copilot-desktop`)');
+  expect(page).not.toContain('fetch(`${apiBase}/v1/models`)');
   expect(page).toContain('from "../api-access-models"');
 
   // Per-row delete still gates on a confirmation owned by this screen — now the
@@ -91,9 +111,24 @@ test("the model catalog search keeps plain text default with a regex opt-in and 
 
   // Plain text is what an untouched search bar does.
   expect(page).toContain("useState(false)");
-  // Locally evaluated, pattern-capped, and no `g` flag whose lastIndex would
-  // leak between rows and silently drop every other match.
-  expect(page).toContain('new RegExp(query.slice(0, 400), "i")');
+  // Locally evaluated through the shared matcher, which keeps the 400-character
+  // pattern bound this line used to assert directly and strips `g`/`y` — their
+  // `lastIndex` leaks between calls, and this search tests three fields per row,
+  // so a sticky pattern would keep whichever rows happened to be tested at the
+  // right offset.
+  expect(page).toContain("settingsMatcher(modelQuery, useRegex, modelFlags)");
+  // And never back to a hard-coded compile: pinning `i` is what made a pattern
+  // deliberately built as case-sensitive arrive case-insensitive here.
+  //
+  // Asserted against the code with whole-line comments dropped, because the
+  // source now *explains* what it stopped doing and the prose would otherwise
+  // fail the check that the prose is describing.
+  expect(codeOnly(page)).not.toContain("new RegExp(query");
+  // The flags the builder composed are the flags the catalog compiles, and the
+  // chip row makes them visible and correctable rather than silent.
+  expect(page).toContain("const [modelFlags, setModelFlags] = useState(DEFAULT_SEARCH_FLAGS)");
+  expect(panels).toContain("onModelFlagsChange(appliedFlags)");
+  expect(panels).toContain("<SearchFlagsRow");
 });
 
 test("key create and delete record past-tense revisions and announce themselves", async () => {

@@ -21,18 +21,22 @@
  * focus goes back to the element that opened it.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { INITIAL_PLACEMENT, computePlacement, fixedPanelStyle } from "../../../shared/m3/anchor";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { INITIAL_PLACEMENT, fixedPanelStyle } from "../../../shared/m3/anchor";
+import { computeViewportPlacement } from "./use-anchored-placement";
 import { clampToViewport } from "../../../shared/m3/tabs";
 import { labelFor, targetFor } from "../../../shared/m3/elements";
 import { Button, Field, SelectField, Slider, TextInput } from "./m3-ui";
 import { IconX } from "../icons";
-import { useI18n, useT } from "../i18n/shared";
-import { translateWithBilingualVars } from "../i18n/resolve";
+import { useT } from "../i18n/shared";
 import { onOutsidePress } from "./outside-press";
 import { ElementAppearanceContext, type ElementAppearanceApi } from "./element-appearance-context";
 import { ELEMENT_TARGETS, usePrefs } from "../theme/prefs-context";
 import { ELEMENT_SELECTORS, FONT_CHOICES, elementSelectorFor } from "../theme/m3";
+import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
+import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
+import { MenuItem } from "./MenuItem";
+import { matchesShortcut } from "./shortcuts";
 import type { TKey } from "../i18n/shared";
 
 /**
@@ -194,14 +198,15 @@ function targetName(id: string, node: Element | null, t: ReturnType<typeof useT>
 /**
  * "Edit appearance: <name>", with the name landing in the right language.
  *
- * `t(key, { name })` would paste the whole bilingual name into both halves of a
- * bilingual template — see `translateWithBilingualVars`. This is the surface
- * where that was first noticed, because every row of this menu is exactly that
- * shape.
+ * This is the surface where bilingual placeholders were first noticed going
+ * wrong, because every row of this menu is exactly that shape: a translated
+ * template with a translated name inside it. It used to reach past `t()` for an
+ * opt-in helper, which fixed this menu and nothing else — `translate` now
+ * resolves per track for every caller, so plain `t()` is the whole answer here.
  */
 function useTargetPhrase(): (key: TKey, name: string) => string {
-  const { locale, funny } = useI18n();
-  return (key, name) => translateWithBilingualVars(locale, funny, key, { name });
+  const t = useT();
+  return (key, name) => t(key, { name });
 }
 
 export default function ElementAppearanceHost({ children }: { children: ReactNode }) {
@@ -261,7 +266,7 @@ export default function ElementAppearanceHost({ children }: { children: ReactNod
     // have, so it is wired once here rather than per surface.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+      if (!matchesShortcut("contextMenu", event)) return;
       const node = (document.activeElement as HTMLElement | null) ?? null;
       if (node?.closest("[data-element-style-editor], [data-appearance-menu]")) return;
       if (inTopLayerModal(node)) return;
@@ -328,6 +333,13 @@ function AppearanceChainMenu(
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const filterId = useId();
+
+  const phrase = useTargetPhrase();
+  const nameOf = useCallback((entry: ChainEntry) => targetName(entry.id, entry.node, t), [t]);
+  // Bounded at four entries (`editableChain`'s own limit), and still every
+  // entry gets the filter — the rule draws no line at "the list is short".
+  const filter = useMenuFilter(menu.chain, nameOf);
 
   // Measured, then clamped, so a right-click near an edge shifts the menu onto
   // the screen rather than rendering it half off.
@@ -343,7 +355,7 @@ function AppearanceChainMenu(
   }, [menu]);
 
   /**
-   * Focus the first item — but only once the menu is actually visible.
+   * Focus the filter field — but only once the menu is actually visible.
    *
    * This used to sit at the end of the layout effect above, one line after
    * `setPos`. React does not flush that state update inside the effect body, so
@@ -361,33 +373,46 @@ function AppearanceChainMenu(
    */
   useEffect(() => {
     if (!pos) return;
-    ref.current?.querySelector<HTMLElement>("button")?.focus();
-  }, [pos]);
+    focusMenuFilterField(filterId);
+  }, [pos, filterId]);
 
   useEffect(() => {
     const stop = onOutsidePress(event => {
       if (!ref.current?.contains(event.target as Node)) onClose();
     });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { onClose(); return; }
+      if (event.key === "Escape") {
+        // The anchored regex builder is a nested dialog with its own Escape;
+        // the filter field's own first-stage clear is handled inside
+        // `MenuFilterField`. Only an Escape from neither reaches here.
+        if ((event.target as Element | null)?.closest?.('[role="dialog"]')) return;
+        onClose();
+        return;
+      }
       // Arrow keys, Home and End: a `role="menu"` promises them, and a screen
       // reader in application mode swallows Tab inside one — so without these
       // the second item of a two-item menu had no keyboard route at all.
+      // Scoped to `[role='menuitem']`, which is exactly the *visible* (filtered)
+      // rows — the filter field's own regex-builder trigger carries no such role.
       const items = [...(ref.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? [])];
       if (!items.length) return;
       const here = items.indexOf(document.activeElement as HTMLElement);
       const move = (to: number) => { event.preventDefault(); items[(to + items.length) % items.length].focus(); };
       if (event.key === "ArrowDown") move(here + 1);
-      else if (event.key === "ArrowUp") move(here - 1);
+      else if (event.key === "ArrowUp") {
+        // From the first item, back to the field rather than wrapping to the
+        // last row. From the field itself (`here === -1`) the arithmetic below
+        // already lands on the last row, which is the sensible "one step up
+        // from nothing selected" reading and needs no special case.
+        if (here === 0) { event.preventDefault(); focusMenuFilterField(filterId); }
+        else move(here - 1);
+      }
       else if (event.key === "Home") move(0);
       else if (event.key === "End") move(items.length - 1);
     };
     document.addEventListener("keydown", onKey);
     return () => { stop(); document.removeEventListener("keydown", onKey); };
-  }, [onClose]);
-
-  const phrase = useTargetPhrase();
-  const nameOf = (entry: ChainEntry) => targetName(entry.id, entry.node, t);
+  }, [onClose, filterId]);
 
   return (
     <div
@@ -406,18 +431,33 @@ function AppearanceChainMenu(
         visibility: pos ? "visible" : "hidden",
       }}
     >
-      {menu.chain.map((entry, index) => (
-        <button
-          key={entry.id}
-          type="button"
-          role="menuitem"
-          className="m3-menu-item"
-          onClick={() => onPick(entry)}
-        >
-          {index === 0
+      <MenuFilterField
+        id={filterId}
+        query={filter.query}
+        onQuery={filter.setQuery}
+        regex={filter.regex}
+        onRegexChange={filter.setRegex}
+            flags={filter.flags}
+            onFlags={filter.setFlags}
+        sample={filter.sample}
+        searchLabel={t("appearance.elementsFilterLabel")}
+        builderLabel={t("appearance.elementsFilterBuilder")}
+        onEnterSingle={() => onPick(filter.visible[0])}
+        resultCount={filter.visible.length}
+      />
+      <MenuFilterStatus matcher={filter.matcher} query={filter.query} resultCount={filter.visible.length} />
+      {/* No `shortcut` on any row, and that is the honest state rather than an
+          oversight. Shift+F10 and the Menu key *open* this menu; nothing
+          activates a row of it, and the one press that reaches an editor
+          directly does so only when the chain holds a single target — which is
+          precisely the case where this menu is never shown. Showing a chord here
+          would be advertising a key that lands on the menu, not on the row. */}
+      {filter.visible.map(entry => (
+        <MenuItem key={entry.id} role="menuitem" onClick={() => onPick(entry)}>
+          {entry === menu.chain[0]
             ? phrase("appearance.editElement", nameOf(entry))
             : phrase("appearance.editContainer", nameOf(entry))}
-        </button>
+        </MenuItem>
       ))}
     </div>
   );
@@ -450,7 +490,7 @@ function ElementAppearanceEditor({ id, anchor, onClose }: { id: string; anchor: 
       const rect = anchor?.getBoundingClientRect();
       const panel = panelRef.current?.getBoundingClientRect();
       if (!rect || !panel) return;
-      setPlacement(computePlacement(
+      setPlacement(computeViewportPlacement(
         { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
         { width: panel.width || PANEL_WIDTH, height: panel.height },
         { width: window.innerWidth, height: window.innerHeight },

@@ -5,7 +5,7 @@ import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ComboItem } from "../src/combo-workspace-data";
 import ComboWorkspace from "../src/components/ComboWorkspace";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { ConfirmProvider } from "../src/shell/confirm";
 import { NotificationsProvider } from "../src/shell/notifications";
 
@@ -63,7 +63,7 @@ function workspace(extra: Partial<Parameters<typeof ComboWorkspace>[0]> = {}) {
   return (
     // The detail panel reports a successful save through the notification system,
     // so the provider it reads has to exist even in the tests that never save.
-    <LanguageProvider>
+    <TestLanguageProvider>
       <NotificationsProvider>
             <ConfirmProvider>
         <ComboWorkspace
@@ -82,7 +82,7 @@ function workspace(extra: Partial<Parameters<typeof ComboWorkspace>[0]> = {}) {
         />
       </ConfirmProvider>
           </NotificationsProvider>
-    </LanguageProvider>
+    </TestLanguageProvider>
   );
 }
 

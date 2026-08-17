@@ -59,3 +59,40 @@ jobs:
           comment: false
           review-comments: false
           commit-status: false
+
+      - name: Collect React Doctor report
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $root = Join-Path $env:GITHUB_WORKSPACE "react-doctor-artifacts"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $report = Join-Path $root "react-doctor-report.json"
+          npm exec --yes --package react-doctor@0.9.2 -- react-doctor gui --scope changed --base $env:BASE_REF --no-telemetry --json --json-out $report --blocking error
+          [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            sha = $env:GITHUB_SHA
+            jobStatus = $env:JOB_STATUS
+            runnerOs = $env:RUNNER_OS
+            runnerArch = $env:RUNNER_ARCH
+            baseRef = $env:BASE_REF
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root "run-metadata.json")
+          if (-not (Test-Path -LiteralPath $report)) {
+            Set-Content -Encoding utf8 (Join-Path $root "NO_SAFE_ARTIFACTS.txt") "React Doctor did not emit a report; metadata records the original job status."
+          }
+
+      - name: Upload React Doctor artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: react-doctor-${{ github.run_id }}
+          path: react-doctor-artifacts
+          if-no-files-found: warn
+          retention-days: 14

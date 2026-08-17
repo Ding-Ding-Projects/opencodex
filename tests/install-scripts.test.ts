@@ -35,11 +35,20 @@ describe("install scripts", () => {
     expect(pkg.scripts?.["dev:proxy"]).toBe("bun run src/cli/index.ts start");
     expect(pkg.scripts?.["dev:gui"]).toBe("cd gui && bun run dev");
     expect(pkg.scripts?.["prepare:package"]).toBe("bun scripts/prepare-package.ts");
-    expect(pkg.scripts?.prepack).toBe("bun run prepare:package");
+    expect(pkg.scripts?.["verify:gui-dist"]).toBe("bun scripts/verify-gui-dist.ts");
+    expect(pkg.scripts?.prepack).toBe("bun run verify:gui-dist && bun run prepare:package");
     expect(pkg.files).toContain("assets/banner.png");
     expect(pkg.files).toContain("assets/architecture.png");
     expect(pkg.files).toContain("assets/claude-code-models.gif");
     expect(pkg.files).toContain("assets/codex-app-picker.png");
+  });
+
+  test("GUI builds stamp their source identity before packaging", async () => {
+    const guiPkg = JSON.parse(await readText("gui/package.json")) as { scripts?: Record<string, string> };
+    const index = await readText("gui/index.html");
+
+    expect(guiPkg.scripts?.build).toContain("bun ../scripts/stamp-gui-build.ts");
+    expect(index).toContain('<meta name="opencodex-ui-generation" content="material-3"');
   });
 
   test("Node can import the package main without executing the CLI", () => {
@@ -87,15 +96,247 @@ describe("install scripts", () => {
     expect(script).toContain("Get-Command ocx.cmd");
     expect(script).toContain("Get-Command ocx");
     expect(script).toContain("& $ocx.Source help");
+    expect(script).toContain("install-path.ps1");
     expect(script).not.toContain("bun install -g @bitkyc08/opencodex");
     expect(script).not.toContain("bun.sh/install.ps1");
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell installer repairs npm global PATH safely", async () => {
+    const script = await readText("scripts/install-path.ps1");
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $directory = 'C:\\Users\\tester\\AppData\\Roaming\\npm'
+      $state = @{ UserPath = 'C:\\Windows\\System32;C:\\Tools'; ProcessPath = 'C:\\Windows\\System32'; WrittenUserPath = $null; WrittenProcessPath = $null }
+      $result = Add-NpmGlobalBinToUserPath -NpmGlobalBin $directory -TestDirectory { param($path) $path -eq $directory } -ReadUserPath { $state.UserPath } -WriteUserPath { param($path) $state.WrittenUserPath = $path } -ReadProcessPath { $state.ProcessPath } -WriteProcessPath { param($path) $state.WrittenProcessPath = $path }
+      [pscustomobject]@{ UserPath = $state.WrittenUserPath; ProcessPath = $state.WrittenProcessPath; UserChanged = $result.UserPathChanged; ProcessChanged = $result.ProcessPathChanged } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      UserPath: "C:\\Windows\\System32;C:\\Tools;C:\\Users\\tester\\AppData\\Roaming\\npm",
+      ProcessPath: "C:\\Users\\tester\\AppData\\Roaming\\npm;C:\\Windows\\System32",
+      UserChanged: true,
+      ProcessChanged: true,
+    });
+    expect(script).toContain('[Environment]::SetEnvironmentVariable("Path", $Path, "User")');
+    expect(script).not.toContain('SetEnvironmentVariable("Path", $Path, "Machine")');
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell PATH repair is idempotent and case-insensitive", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $directory = 'C:\\Users\\tester\\AppData\\Roaming\\npm'
+      $state = @{ UserPath = 'C:\\Tools; c:\\users\\TESTER\\appdata\\roaming\\NPM\\;C:\\TOOLS;C:\\Users\\tester\\AppData\\Roaming\\npm'; ProcessPath = 'C:\\Tools; C:\\USERS\\tester\\AppData\\Roaming\\npm' ; WriteCount = 0 }
+      $result = Add-NpmGlobalBinToUserPath -NpmGlobalBin $directory -TestDirectory { $true } -ReadUserPath { $state.UserPath } -WriteUserPath { $state.WriteCount++ } -ReadProcessPath { $state.ProcessPath } -WriteProcessPath { $state.WriteCount++ }
+      [pscustomobject]@{ WriteCount = $state.WriteCount; UserChanged = $result.UserPathChanged; ProcessChanged = $result.ProcessPathChanged } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      WriteCount: 0,
+      UserChanged: false,
+      ProcessChanged: false,
+    });
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell PATH repair leaves the user update failure visible", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      try {
+        Add-NpmGlobalBinToUserPath -NpmGlobalBin 'C:\\Users\\tester\\AppData\\Roaming\\npm' -TestDirectory { $true } -ReadUserPath { 'C:\\Windows\\System32' } -WriteUserPath { throw 'access denied' } -ReadProcessPath { 'C:\\Windows\\System32' } -WriteProcessPath { throw 'should not run' }
+        'unexpected-success'
+      } catch {
+        $_.Exception.Message
+      }
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("access denied");
+  });
+
+  test.skipIf(process.platform !== "win32")("PowerShell PATH repair reports a process refresh failure without undoing the user repair", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ WrittenUserPath = $null }
+      $result = Add-NpmGlobalBinToUserPath -NpmGlobalBin 'C:\\Users\\tester\\AppData\\Roaming\\npm' -TestDirectory { $true } -ReadUserPath { 'C:\\Windows\\System32' } -WriteUserPath { param($path) $state.WrittenUserPath = $path } -ReadProcessPath { 'C:\\Windows\\System32' } -WriteProcessPath { throw 'process environment unavailable' }
+      [pscustomobject]@{ UserPath = $state.WrittenUserPath; UserChanged = $result.UserPathChanged; ProcessChanged = $result.ProcessPathChanged; ProcessRefreshFailed = $result.ProcessPathRefreshFailed } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      UserPath: "C:\\Windows\\System32;C:\\Users\\tester\\AppData\\Roaming\\npm",
+      UserChanged: true,
+      ProcessChanged: false,
+      ProcessRefreshFailed: true,
+    });
+  });
+
+  test.skipIf(process.platform !== "win32")("Get-OcxCommandPaths mirrors PATH resolution order, not PowerShell's own command table", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $files = @('C:\\Tools\\ocx.exe', 'C:\\Users\\tester\\AppData\\Roaming\\npm\\ocx.cmd')
+      $found = Get-OcxCommandPaths -PathValue 'C:\\Tools;C:\\Users\\tester\\AppData\\Roaming\\npm;C:\\Nothing' -TestFile { param($p) $files -contains $p }
+      ConvertTo-Json -InputObject $found -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual([
+      "C:\\Tools\\ocx.exe",
+      "C:\\Users\\tester\\AppData\\Roaming\\npm\\ocx.cmd",
+    ]);
+  });
+
+  test.skipIf(process.platform !== "win32")("Get-OcxCommandPaths returns nothing when no directory has an ocx binary", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $found = Get-OcxCommandPaths -PathValue 'C:\\Tools;C:\\Windows' -TestFile { $false }
+      ConvertTo-Json -InputObject $found -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("[]");
+  });
+
+  test.skipIf(process.platform !== "win32")("Resolve-OcxPathCollision does nothing when this fork's directory already wins", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $directory = 'C:\\Users\\tester\\AppData\\Roaming\\npm'
+      $writes = @{ User = $null; Process = $null }
+      $result = Resolve-OcxPathCollision -NpmGlobalBin $directory -ResolvedOcxPaths @('C:\\Users\\tester\\AppData\\Roaming\\npm\\ocx.cmd') -ReadMachinePath { 'C:\\Windows\\System32' } -ReadUserPath { $directory } -WriteUserPath { param($p) $writes.User = $p } -ReadProcessPath { $directory } -WriteProcessPath { param($p) $writes.Process = $p }
+      [pscustomobject]@{ Collision = $result.Collision; Reordered = $result.Reordered; MachineBlocked = $result.MachineBlocked; WroteUser = ($null -ne $writes.User); WroteProcess = ($null -ne $writes.Process) } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      Collision: false,
+      Reordered: false,
+      MachineBlocked: false,
+      WroteUser: false,
+      WroteProcess: false,
+    });
+  });
+
+  test.skipIf(process.platform !== "win32")("Resolve-OcxPathCollision reorders the user PATH ahead of a colliding user-scope install", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $directory = 'C:\\Users\\tester\\AppData\\Roaming\\npm'
+      $state = @{ User = 'C:\\Windows\\System32;C:\\Other\\ocx-install;' + $directory; Process = 'C:\\Other\\ocx-install;' + $directory }
+      $result = Resolve-OcxPathCollision -NpmGlobalBin $directory -ResolvedOcxPaths @('C:\\Other\\ocx-install\\ocx.cmd', ($directory + '\\ocx.cmd')) -ReadMachinePath { 'C:\\Windows\\System32' } -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p }
+      [pscustomobject]@{ Collision = $result.Collision; Reordered = $result.Reordered; MachineBlocked = $result.MachineBlocked; Winner = $result.Winner; User = $state.User; Process = $state.Process } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout.trim());
+    expect(parsed.Collision).toBe(true);
+    expect(parsed.Reordered).toBe(true);
+    expect(parsed.MachineBlocked).toBe(false);
+    expect(parsed.Winner).toBe("C:\\Other\\ocx-install\\ocx.cmd");
+    // Our directory is now first in both the persisted user PATH and this process's PATH,
+    // and the stray duplicate of our own directory further down is not doubled.
+    expect(parsed.User).toBe("C:\\Users\\tester\\AppData\\Roaming\\npm;C:\\Windows\\System32;C:\\Other\\ocx-install");
+    expect(parsed.Process).toBe("C:\\Users\\tester\\AppData\\Roaming\\npm;C:\\Other\\ocx-install");
+  });
+
+  test.skipIf(process.platform !== "win32")("Resolve-OcxPathCollision reports (never silently ignores) a collision it cannot fix on the machine PATH", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $directory = 'C:\\Users\\tester\\AppData\\Roaming\\npm'
+      $writes = @{ User = $null; Process = $null }
+      $result = Resolve-OcxPathCollision -NpmGlobalBin $directory -ResolvedOcxPaths @('C:\\Program Files\\upstream-ocx\\ocx.exe') -ReadMachinePath { 'C:\\Windows\\System32;C:\\Program Files\\upstream-ocx' } -ReadUserPath { $directory } -WriteUserPath { param($p) $writes.User = $p } -ReadProcessPath { $directory } -WriteProcessPath { param($p) $writes.Process = $p }
+      [pscustomobject]@{ Collision = $result.Collision; Reordered = $result.Reordered; MachineBlocked = $result.MachineBlocked; Winner = $result.Winner; WroteUser = ($null -ne $writes.User); WroteProcess = ($null -ne $writes.Process) } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      Collision: true,
+      Reordered: false,
+      MachineBlocked: true,
+      Winner: "C:\\Program Files\\upstream-ocx\\ocx.exe",
+      WroteUser: false,
+      WroteProcess: false,
+    });
+  });
+
+  test("PowerShell installer checks for and reports a colliding 'ocx' on PATH", async () => {
+    const script = await readText("scripts/install.ps1");
+
+    expect(script).toContain("Resolve-OcxPathCollision");
+    expect(script).toContain("Get-OcxCommandPaths");
+    // The collision check must simulate a fresh shell's PATH (machine + the
+    // now-repaired persisted user PATH), never the live process's $env:Path —
+    // Add-NpmGlobalBinToUserPath already prepends our directory there, which
+    // would hide a real collision that a brand-new shell would still hit.
+    expect(script).toContain('[Environment]::GetEnvironmentVariable("Path", "Machine")');
+    expect(script).not.toContain("-ResolvedOcxPaths (Get-OcxCommandPaths -PathValue $env:Path)");
+  });
+
+  test("PowerShell installer documentation explains current-user PATH repair", async () => {
+    const docs = await readText("docs-site/src/content/docs/getting-started/installation.md");
+
+    expect(docs).toContain(".\\scripts\\install.ps1");
+    expect(docs).toContain("current user's npm global");
+    expect(docs).toContain("does not require administrator");
   });
 
   test("Node launcher handles npm self-update before starting Bun", async () => {
     const launcher = await readText("bin/ocx.mjs");
 
     expect(launcher).toContain('process.argv[2] === "update"');
-    expect(launcher).toContain('["install", "-g", `${PKG}@${tag}`]');
+    expect(launcher).toContain('["install", "-g", `${PKG}@${latest}`]');
     expect(launcher).toContain('return String(currentVersion).includes("-preview.") ? "preview" : "latest"');
     expect(launcher).toContain("!isBunGlobalInstall()");
     expect(launcher).toContain("repairCodexShimIfNeeded()");

@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import LaunchCard from "../src/components/LaunchCard";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import SnackbarHost from "../src/shell/SnackbarHost";
 
@@ -118,12 +118,12 @@ async function mount() {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsProvider>
           <LaunchCard apiBase="" />
           <SnackbarHost />
         </NotificationsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise(r => setTimeout(r, 50)); });

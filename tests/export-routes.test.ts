@@ -58,7 +58,14 @@ test("capabilities reports every format with fidelity for the real rows", async 
     expect(res.status).toBe(200);
     const body = await res.json() as {
       datasets: Array<{ id: string; formats: Array<{ format: string; level: string; losses: string[] }> }>;
-      archives: { zip: { available: boolean }; sevenZip: { available: boolean } };
+      archives: {
+        zip: { available: boolean };
+        sevenZip: {
+          available: boolean;
+          encryptionAvailable: boolean;
+          encryptionUnavailableReason: string;
+        };
+      };
       vsCode: { available: boolean };
     };
 
@@ -76,6 +83,9 @@ test("capabilities reports every format with fidelity for the real rows", async 
     // reported honestly rather than assumed either way.
     expect(body.archives.zip.available).toBe(true);
     expect(typeof body.archives.sevenZip.available).toBe("boolean");
+    expect(body.archives.sevenZip).not.toHaveProperty("path");
+    expect(body.archives.sevenZip.encryptionAvailable).toBe(false);
+    expect(body.archives.sevenZip.encryptionUnavailableReason).toContain("protected password-input channel");
     expect(typeof body.vsCode.available).toBe("boolean");
   } finally {
     await server.stop(true);
@@ -246,6 +256,57 @@ test("the CLI and the route offer the same lists, from one registry", async () =
     const res = await managementFetch(new URL("/api/export/capabilities", server.url));
     const body = await res.json() as { datasets: Array<{ id: string }> };
     expect(body.datasets.map(d => d.id).sort()).toEqual(listDatasets().map(d => d.id).sort());
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("encrypted 7z requests are rejected before a password can reach process arguments", async () => {
+  const server = startServer(0);
+  try {
+    for (const sevenZip of [
+      { password: "one-use-secret" },
+      { encryptHeaders: true },
+    ]) {
+      const res = await managementFetch(new URL("/api/export", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset: "requests", format: "json", archive: "7z", sevenZip }),
+      });
+      expect(res.status, JSON.stringify(sevenZip)).toBe(400);
+      expect((await res.json() as { error: string }).error).toContain("process arguments");
+    }
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("7z options are runtime-validated instead of cast from request JSON", async () => {
+  const server = startServer(0);
+  try {
+    for (const sevenZip of [
+      { method: "shell" },
+      { level: 6 },
+      { dictionarySize: "999g" },
+      { wordSize: 274 },
+      { multithread: 33 },
+      { volumeSize: "1m" },
+      { binary: "C:\\attacker\\7z.exe" },
+    ]) {
+      const res = await managementFetch(new URL("/api/export", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset: "requests", format: "json", archive: "7z", sevenZip }),
+      });
+      expect(res.status, JSON.stringify(sevenZip)).toBe(400);
+    }
+
+    const wrongArchive = await managementFetch(new URL("/api/export", server.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset: "requests", format: "json", archive: "zip", sevenZip: {} }),
+    });
+    expect(wrongArchive.status).toBe(400);
   } finally {
     await server.stop(true);
   }

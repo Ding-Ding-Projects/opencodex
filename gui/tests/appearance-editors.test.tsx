@@ -27,7 +27,7 @@ import Appearance from "../src/pages/Appearance";
 import { ColorField } from "../src/components/appearance/ColorPicker";
 import { FontPicker } from "../src/components/appearance/FontPicker";
 import { TypographyEditor } from "../src/components/appearance/TypographyEditor";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { GUI_BUNDLED_FAMILIES, resetGuiFontCatalogue } from "../src/theme/fonts";
@@ -68,9 +68,9 @@ async function mount(node: ReactNode): Promise<{ container: HTMLElement; root: R
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsProvider>{node}</NotificationsProvider>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });

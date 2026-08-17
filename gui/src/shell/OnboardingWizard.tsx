@@ -36,7 +36,6 @@ import { IconCheck, IconDevices, IconServer, IconTranslate, IconX } from "../ico
 import { LOCALES, useI18n, useT, type Locale } from "../i18n/shared";
 import { Button, Chip, Dialog, TextInput, Toggle } from "./m3-ui";
 import { useNotifications } from "./notifications-context";
-import { recordRevision } from "./revisions";
 import {
   closeForLaunch,
   completeOnboarding,
@@ -44,6 +43,7 @@ import {
   deferOnboarding,
   isClosedForLaunch,
 } from "./onboarding-state";
+import { useAppDisplayName } from "../theme/use-app-name";
 
 const TOTAL_STEPS = 4;
 
@@ -57,6 +57,12 @@ type ExitReason = "finish" | "skip" | "provider";
 
 export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
   const t = useT();
+  // The wizard is the app literally introducing itself, so it introduces
+  // itself by the name the user has chosen. On a genuine first run that is the
+  // shipped name, since nothing has been renamed yet — but this surface also
+  // reopens from Help, and greeting a renamed app by its old name would be the
+  // one screen that had not been told.
+  const appName = useAppDisplayName();
   const { locale, setLocale } = useI18n();
   const { notify } = useNotifications();
 
@@ -129,16 +135,9 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
     }
   }, [dontShow, notify, t]);
 
-  const pickLocale = useCallback((next: Locale, name: string) => {
-    // An unchanged value is not a mutation, so it records nothing.
-    if (next === locale) return;
-    setLocale(next);
-    recordRevision({
-      scope: "settings",
-      label: t("nav.language"),
-      summary: t("lang.revisionSummary", { name }),
-    });
-  }, [locale, setLocale, t]);
+  const pickLocale = useCallback((next: Locale) => {
+    if (next !== locale) setLocale(next);
+  }, [locale, setLocale]);
 
   if (!open) return null;
 
@@ -153,7 +152,7 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
 
   return (
     <Dialog
-      title={t("onboard.title")}
+      title={t("onboard.title", { name: appName })}
       description={t("onboard.sub")}
       // Escape is the only key handled, and the native `<dialog>` raises it as
       // `cancel` — so it arrives here without a key listener of our own.
@@ -223,7 +222,7 @@ export default function OnboardingWizard({ apiBase }: { apiBase: string }) {
                   key={l.code}
                   lang={l.htmlLang}
                   selected={locale === l.code}
-                  onClick={() => pickLocale(l.code, l.name)}
+                  onClick={() => pickLocale(l.code)}
                 >
                   {l.name}
                 </Chip>

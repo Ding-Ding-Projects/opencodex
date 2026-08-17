@@ -63,22 +63,27 @@ bun run build
 
 GitHub Actions intentionally stay small:
 
-- **Cross-platform CI** (`.github/workflows/ci.yml`) runs on pull requests and `main` pushes that
-  touch runtime, tests, package, script, TypeScript, or workflow files. Its Bun matrix covers Linux,
-  Windows, and macOS with install, typecheck, tests, privacy scan, a release-helper build smoke, GUI
-  build, and `ocx help`. A second three-OS lane proves npm global install works without a separately
-  installed Bun by using the package's bundled runtime.
+- **Windows CI** (`.github/workflows/ci.yml`) runs on pull requests and `main` pushes that touch
+  runtime, tests, package, script, TypeScript, or workflow files. Its Windows jobs cover install,
+  typecheck, tests, privacy scan, a release-helper build smoke, GUI build, `ocx help`, and npm global
+  install without a separately installed Bun by using the package's bundled runtime.
 - **Release** (`.github/workflows/release.yml`) is manual. It does not act as a second full CI
   pipeline; before dry-run or publish it requires the exact release commit (`GITHUB_SHA`) to already
-  have a successful Cross-platform CI run.
-- **Super express release** (`.github/workflows/super-express-release.yml`) is manual and
-  `workflow_dispatch`-only. It builds the Windows installer and publishes a normal, full GitHub
-  release directly, intentionally without running any test jobs. Use it when an installable build
-  must be available immediately; use the regular CI and Auto release workflows for verification.
+  have a successful Windows CI run.
+- **Super express release** (`.github/workflows/super-express-release.yml`) is the manual Windows
+  packaging path. It resolves the selected ref to one immutable commit SHA and, like **Release**,
+  refuses publication unless Windows CI succeeded for that exact SHA. Its desktop release contains
+  an intentionally unsigned Squirrel.Windows `Setup.exe`, `RELEASES`, and the full `.nupkg`.
 - **Stale needs-info** (`.github/workflows/stale-needs-info.yml`) runs daily on the default branch.
   Open issues labeled `needs-info` with no activity for 14 days get a warning; after 7 more idle
   days they close as not planned. Any update clears the stale warning. To keep long-lived work open,
   remove `needs-info` (for example when promoting an issue to `roadmap`).
+
+Unsigned Windows installers may show an **Unknown Publisher** or Microsoft Defender SmartScreen
+warning. Relevant CI, packaging, and release jobs run defensive artifact collectors even after an
+earlier step fails. The collectors retain only explicitly safe installer/feed output and run metadata
+in GitHub Actions artifacts; collector failures are ignored so they cannot hide or replace the
+original job verdict. Retaining evidence never makes a failed build eligible for publication.
 
 Use the helper for releases:
 
@@ -87,12 +92,6 @@ bun run release <version>           # commits/pushes the bump; publish workflow 
 bun run release <version> --publish # publish after the CI-gated dry run is understood
 bun run release:watch               # watch the newest Release workflow run
 ```
-
-For the test-free packaging path, open **Actions → Super express release → Run workflow** and
-optionally provide the commit, branch or tag to build. The workflow attaches the Windows Squirrel
-installer and update feed, the dashboard bundle, the release's dim sum photo, and the generated line
-count. It does not make the release a prerelease; the absence of test jobs is deliberate and is
-called out in the release notes.
 
 ## Branches
 

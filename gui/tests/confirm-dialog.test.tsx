@@ -18,7 +18,7 @@ import type { Root } from "react-dom/client";
 
 import { ConfirmProvider } from "../src/shell/confirm";
 import { useConfirm, usePrompt, type ConfirmRequest, type PromptRequest } from "../src/shell/confirm-context";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 const globals = ["document", "window", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -96,7 +96,7 @@ async function mount(node: React.ReactNode): Promise<{ container: HTMLElement; r
 function mountProvider(children: React.ReactNode) {
   // The provider reads `common.cancel` through `useT`, so it needs the language
   // provider above it exactly as `main.tsx` gives it.
-  return mount(<LanguageProvider><ConfirmProvider>{children}</ConfirmProvider></LanguageProvider>);
+  return mount(<TestLanguageProvider><ConfirmProvider>{children}</ConfirmProvider></TestLanguageProvider>);
 }
 
 function dialogOf(container: HTMLElement): HTMLDialogElement | null {

@@ -8,7 +8,7 @@ import {
   sidecarSelectValue,
   type SidecarSelectValue,
 } from "./claude-code-sidecar";
-import { AutoConnectSetting, SettingRow, SettingToggle } from "./claude-code-settings";
+import { AutoConnectSetting, RichSelect, SettingRow, SettingToggle } from "./claude-code-settings";
 import type { ClaudeSettingId } from "./claude-settings-search";
 import type { ClaudeCodeState, MapRow } from "./claude-code-types";
 import { newClientId } from "./claude-code-types";
@@ -27,17 +27,32 @@ function authSourceLabel(source: string | undefined, t: TFn): string {
 
 export function ClaudeCodeSettingsCard({
   state,
+  persistedMaxContextTokens,
+  invalidStoredMaxContext = false,
+  contextWindowOptions = [],
   autoCompactOptions,
   onStateChange,
   match = () => true,
 }: {
   state: ClaudeCodeState;
+  persistedMaxContextTokens?: number | null;
+  invalidStoredMaxContext?: boolean;
+  contextWindowOptions?: readonly { value: string; label: string }[];
   autoCompactOptions: { value: string; label: string }[];
   onStateChange: (next: ClaudeCodeState) => void;
   /** Settings-search predicate; the default keeps the card whole when no search is wired. */
   match?: (id: ClaudeSettingId) => boolean;
 }) {
   const t = useT();
+  const savedMaxContextTokens = persistedMaxContextTokens === undefined ? state.maxContextTokens : persistedMaxContextTokens;
+  const hasMaxContextOverride = state.maxContextTokens !== null;
+  const savedMaxContextOverride = savedMaxContextTokens !== null;
+  const maxContextDraftChanged = state.maxContextTokens !== savedMaxContextTokens;
+  const maxContextDescriptionIds = [
+    "claude-max-context-description",
+    "claude-max-context-provenance",
+    ...(hasMaxContextOverride ? ["claude-max-context-warning"] : []),
+  ].join(" ");
 
   const sidecarKeys = ["webSearchSidecar", "visionSidecar"] as const;
 
@@ -45,7 +60,7 @@ export function ClaudeCodeSettingsCard({
   // filtering rows out of a card would otherwise leave it ending on a dangling border.
   const connectionRows = (["enabled", "effectiveMode", "authMode", "fastMode"] as const)
     .filter(id => (id !== "effectiveMode" || state.authModeOrigin) && match(id));
-  const behaviourRows = (["autoContext", "autoCompactWindow", "injectAgents", "systemEnv", "webSearchSidecar", "visionSidecar"] as const)
+  const behaviourRows = (["maxContext", "autoContext", "autoCompactWindow", "injectAgents", "systemEnv", "webSearchSidecar", "visionSidecar"] as const)
     .filter(id => (id !== "autoCompactWindow" || state.autoContext) && match(id));
   const isLast = (rows: readonly ClaudeSettingId[], id: ClaudeSettingId) => rows[rows.length - 1] === id;
 
@@ -133,13 +148,47 @@ export function ClaudeCodeSettingsCard({
 
     {behaviourRows.length > 0 && (
     <Card>
+      {match("maxContext") && (
+      <SettingRow
+        title={t("claude.maxContext")}
+        desc={
+          <>
+            <span id="claude-max-context-description">{t("claude.maxContextDesc")}</span>
+            {hasMaxContextOverride && <span id="claude-max-context-warning" style={{ display: "block", marginTop: 4, color: "var(--m3-error)" }}>{t("claude.maxContextWarn")}</span>}
+            <span id="claude-max-context-provenance" style={{ display: "block", marginTop: 4, color: "var(--m3-on-surface-variant)" }}>
+              {maxContextDraftChanged
+                ? t("claude.maxContextDraftProvenance", {
+                  value: invalidStoredMaxContext
+                    ? t("claude.maxContextInvalidStoredValue")
+                    : savedMaxContextOverride ? String(savedMaxContextTokens) : t("claude.maxContextAutomaticValue"),
+                })
+                : invalidStoredMaxContext
+                  ? t("claude.maxContextInvalidStoredProvenance")
+                  : savedMaxContextOverride ? t("claude.maxContextFileProvenance") : t("claude.maxContextDefaultProvenance")}
+            </span>
+          </>
+        }
+        last={isLast(behaviourRows, "maxContext")}
+        control={
+          <RichSelect
+            value={state.maxContextTokens === null ? "" : String(state.maxContextTokens)}
+            options={contextWindowOptions}
+            onChange={value => onStateChange({ ...state, maxContextTokens: value === "" ? null : Number(value) })}
+            label={t("claude.maxContext")}
+            describedBy={maxContextDescriptionIds}
+            style={{ minWidth: 190 }}
+          />
+        }
+      />
+      )}
+
       {match("autoContext") && (
       <SettingRow
         title={t("claude.autoContext")}
         desc={
           <>
             {t("claude.autoContextDesc")}
-            {state.maxContextTokens !== null && <span style={{ display: "block", marginTop: "4px" }}>{t("claude.autoContextInert")}</span>}
+            {hasMaxContextOverride && <span style={{ display: "block", marginTop: "4px" }}>{t("claude.autoContextInert")}</span>}
           </>
         }
         last={isLast(behaviourRows, "autoContext")}

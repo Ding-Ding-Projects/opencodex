@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import AddProviderModal from "../src/components/AddProviderModal";
 import { OAUTH_LOGIN_POLL_INTERVAL_MS } from "../src/components/use-add-provider-oauth";
 
@@ -86,9 +86,9 @@ async function mountModal(onAdded: (name: string) => void = () => {}) {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <AddProviderModal apiBase="" existingNames={[]} initialTier="paid" onClose={() => {}} onAdded={onAdded} />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });

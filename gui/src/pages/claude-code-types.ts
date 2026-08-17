@@ -43,7 +43,7 @@ export interface ClaudeCodeState {
   autoConnectSupported: boolean;
   systemEnv: boolean;
   fastMode: boolean | null;
-  /** Legacy config override (no GUI control anymore) — still disables auto-context when hand-set. */
+  /** Fixed context-window override selected in the GUI; null restores automatic client/model defaults. */
   maxContextTokens: number | null;
   autoContext: boolean;
   autoCompactWindow: number | null;
@@ -75,4 +75,25 @@ export function formatCompactWindow(value: number, locale = "en"): string {
     return `${Math.round(value / 1_000)}k`;
   }
   return `${Math.round(value / 1_000)}k`;
+}
+
+export function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function buildWindowOptions(current: number | null, automaticLabel: string, locale = "en"):
+  { value: string; label: string }[] {
+  const ladder = [100_000, 200_000, 250_000, 300_000, 350_000, 400_000, 500_000, 600_000, 750_000, 900_000, 1_000_000];
+  const values = current !== null && !ladder.includes(current)
+    ? [...ladder, current].sort((a, b) => a - b)
+    : ladder;
+  return [
+    { value: "", label: automaticLabel },
+    ...values.map(value => ({
+      value: String(value),
+      label: ladder.includes(value)
+        ? formatCompactWindow(value, locale)
+        : new Intl.NumberFormat(locale).format(value),
+    })),
+  ];
 }

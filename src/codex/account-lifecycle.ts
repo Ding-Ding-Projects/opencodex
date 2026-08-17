@@ -7,6 +7,7 @@ import { clearCodexUpstreamHealthForAccount, clearThreadAccountMapForAccount } f
 import { invalidateCodexWebSocketsForAccount } from "./websocket-registry";
 import { clearMainAccountInfoCache } from "./main-account-cache";
 import { forgetCodexAccountPause } from "./account-pause";
+import { clearWhamFetchThrottleForAccount } from "./wham-fetch-throttle";
 import type { OcxConfig } from "../types";
 import { recordStateSnapshot } from "../lib/state-history";
 
@@ -18,6 +19,10 @@ export function purgeCodexAccountRuntimeState(accountId: string): void {
   clearThreadAccountMapForAccount(accountId);
   clearCodexUpstreamHealthForAccount(accountId);
   if (accountId === MAIN_CODEX_ACCOUNT_ID) clearMainAccountInfoCache();
+  // See wham-fetch-throttle.ts: the passive WHAM-fetch cooldown is the same
+  // kind of account-scoped staleness protection as the caches above, and must
+  // not survive an identity change or account removal either.
+  clearWhamFetchThrottleForAccount(accountId);
 }
 
 /**

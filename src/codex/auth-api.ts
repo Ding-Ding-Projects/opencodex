@@ -1,4 +1,14 @@
 import { recordStateSnapshot, recordStateSnapshotBeforeDelete } from "../lib/state-history";
+import { rejectOnHardDeadline } from "../lib/hard-deadline";
+import {
+  WHAM_FETCH_RETRY_COOLDOWN_MS,
+  clearAllWhamFetchThrottleStateForTests,
+  clearWhamFetchQueueIfCurrent,
+  markWhamFetchAttemptStarted,
+  msSinceLastWhamFetchAttempt,
+  setWhamFetchQueueFor,
+  whamFetchQueueFor,
+} from "./wham-fetch-throttle";
 import { loadConfig, saveConfigPreservingClaudeCode } from "../config";
 import { withCodexAccountLogLabel } from "./account-label";
 import {
@@ -16,6 +26,7 @@ import { isCodexAccountPaused, setCodexAccountPaused } from "./account-pause";
 import {
   clearCodexAccountCooldown,
   clearThreadAccountMapForAccount,
+  getCodexSaturatedRoutingNotice,
   getEffectiveActiveCodexAccountId,
   reconcileCodexActiveAfterExclusion,
   resetCodexRoutingForManualSelection,
@@ -268,6 +279,105 @@ const MAIN_CACHE_TTL = 5 * 60_000;
 const POOL_CACHE_TTL = 5 * 60_000;
 const POOL_QUOTA_REFRESH_CONCURRENCY = 4;
 
+/** The WHAM usage fetch's own client-side abort budget. */
+const WHAM_FETCH_TIMEOUT_MS = 8_000;
+/**
+ * Independent backstop above `WHAM_FETCH_TIMEOUT_MS`. `AbortSignal.timeout`
+ * alone did not save us here (see `fetchWhamUsage` below) — this is kept as
+ * defense in depth for the ordinary case of a genuinely slow upstream, not as
+ * the fix for the freeze.
+ */
+const WHAM_FETCH_HARD_DEADLINE_MS = WHAM_FETCH_TIMEOUT_MS + 1_500;
+
+/**
+ * Every PASSIVE (non-forced) outbound call to the WHAM usage endpoint funnels
+ * through here, keyed per account: for a given key, this never has more than
+ * one `fetch()` in flight at a time, and refuses to start a new one too soon
+ * after the previous attempt for that SAME key began. Different keys (the
+ * main account vs. a pool account, or two different pool accounts) are never
+ * blocked by each other — priming several pool accounts' quotas concurrently
+ * is normal, expected traffic and stays exactly as concurrent as before. An
+ * explicit `forceRefresh` (a user pressing refresh, or the identity-change
+ * retry in `retryMainAccountInfoIfIdentityChanged`) bypasses the queue and
+ * cooldown entirely via `throttle: false` — those callers are either a direct
+ * user action or already mid-request and correctness-critical, and must reach
+ * the network every time exactly as before this existed.
+ *
+ * Reproduced live (2026-08-15, devlog b3-proxyhang): with the main account's
+ * quota primed once at startup and then `GET /api/codex-auth/accounts` firing
+ * a SECOND, PASSIVE (forceRefresh=false) WHAM fetch for that SAME main
+ * account roughly half a second later — ordinary dashboard-mount timing, no
+ * reload needed — while the proxy was also serving several other concurrent
+ * local requests, the second `fetch()`'s promise never settled. This
+ * reproduced even after every concurrent first-time TypeScript `import()` on
+ * that same burst was eliminated (see `warmDashboardMountModules` in
+ * `server/index.ts`) and even after the two calls were serialized so they
+ * could never literally overlap — the two attempts were never actually
+ * concurrent to begin with, only close together. Not merely uncancelled: an
+ * INDEPENDENT `setTimeout` raced against the stuck fetch (see
+ * `hard-deadline.ts`) never fired either, so this is not something the caller
+ * can time its way out of once triggered — the whole `Bun.serve()` event loop
+ * (Bun 1.3.14, Windows) stopped making progress from that point on, including
+ * brand-new connections from a process that had nothing to do with this fetch
+ * or the browser (a plain `GET /healthz`).
+ *
+ * What DID reliably avoid it: never starting a second real PASSIVE network
+ * attempt for the SAME account within a few seconds of the previous one for
+ * that account, regardless of whether that previous attempt succeeded,
+ * failed, or is still running. A caller inside the cooldown gets a clear,
+ * synchronous refusal instead — both call sites already treat any thrown
+ * error here as "no fresh data available right now" and fall back to their
+ * last-known state, so this needs no further caller-side changes. Every other
+ * route on the open management plane answers in well under a second, so a few
+ * seconds of staleness on THIS one endpoint's background polling, immediately
+ * after either a startup prime or another recent passive attempt for that
+ * account, costs nothing worth noticing next to what it prevents.
+ *
+ * The throttle state itself lives in `./wham-fetch-throttle` (a leaf module)
+ * rather than here, so `account-lifecycle.ts` can drop it the moment an
+ * account's identity changes or the account is removed — the same event that
+ * already drops that account's other cached state — without creating an
+ * import cycle back into this file.
+ */
+async function fetchWhamUsage(
+  key: string,
+  accessToken: string,
+  chatgptAccountId: string,
+  { throttle }: { throttle: boolean },
+): Promise<Response> {
+  const doFetch = () => rejectOnHardDeadline(
+    fetch("https://chatgpt.com/backend-api/wham/usage", {
+      headers: { Authorization: `Bearer ${accessToken}`, "ChatGPT-Account-Id": chatgptAccountId },
+      signal: AbortSignal.timeout(WHAM_FETCH_TIMEOUT_MS),
+    }),
+    WHAM_FETCH_HARD_DEADLINE_MS,
+    `WHAM usage fetch for ${key} exceeded the hard backstop deadline`,
+  );
+  if (!throttle) {
+    markWhamFetchAttemptStarted(key);
+    return doFetch();
+  }
+  const sinceLastAttempt = msSinceLastWhamFetchAttempt(key);
+  if (sinceLastAttempt < WHAM_FETCH_RETRY_COOLDOWN_MS) {
+    throw new DOMException(
+      `WHAM usage fetch for ${key} skipped: another attempt for this account started ${sinceLastAttempt}ms ago (cooldown ${WHAM_FETCH_RETRY_COOLDOWN_MS}ms)`,
+      "AbortError",
+    );
+  }
+  const waitFor = whamFetchQueueFor(key);
+  let release!: () => void;
+  const next = new Promise<void>(resolve => { release = resolve; });
+  setWhamFetchQueueFor(key, next);
+  await waitFor.catch(() => {});
+  markWhamFetchAttemptStarted(key);
+  try {
+    return await doFetch();
+  } finally {
+    release();
+    clearWhamFetchQueueIfCurrent(key, next);
+  }
+}
+
 function nonEmptyPlan(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
@@ -361,6 +471,11 @@ async function retryMainAccountInfoIfIdentityChanged(
 }
 
 async function fetchMainAccountInfoAttempt(forceRefresh: boolean, retriesRemaining: number): Promise<MainAccountInfoFetchResult> {
+  // A confirmed identity change drops the WHAM-fetch throttle along with the
+  // cached WHAM info and quota — see `purgeCodexAccountRuntimeState` in
+  // `account-lifecycle.ts` — so the very next passive poll after a login
+  // switch reaches the network rather than waiting out a cooldown measured
+  // against an account that no longer applies.
   reconcileMainCodexAccountRuntimeState();
   const tokenRead = readCodexTokensResult();
   if (tokenRead.status !== "ok") {
@@ -380,10 +495,12 @@ async function fetchMainAccountInfoAttempt(forceRefresh: boolean, retriesRemaini
     return { info: cached };
   }
   try {
-    const resp = await fetch("https://chatgpt.com/backend-api/wham/usage", {
-      headers: { Authorization: `Bearer ${tokens.access_token}`, "ChatGPT-Account-Id": tokens.account_id },
-      signal: AbortSignal.timeout(8000),
-    });
+    const resp = await fetchWhamUsage(
+      `main:${MAIN_CODEX_ACCOUNT_ID}`,
+      tokens.access_token,
+      tokens.account_id,
+      { throttle: !forceRefresh },
+    );
     if (!resp.ok) {
       const terminalAuthFailure = await isTerminalMainAuthResponse(resp);
       const retried = await retryMainAccountInfoIfIdentityChanged(requestAccountId, retriesRemaining);
@@ -462,10 +579,12 @@ async function fetchPoolAccountQuota(accountId: string, forceRefresh = false, co
   }
   try {
     const { accessToken, chatgptAccountId, generation } = await getValidCodexToken(accountId);
-    const resp = await fetch("https://chatgpt.com/backend-api/wham/usage", {
-      headers: { Authorization: `Bearer ${accessToken}`, "ChatGPT-Account-Id": chatgptAccountId },
-      signal: AbortSignal.timeout(8000),
-    });
+    const resp = await fetchWhamUsage(
+      `pool:${accountId}`,
+      accessToken,
+      chatgptAccountId,
+      { throttle: !forceRefresh },
+    );
     if (!resp.ok) return { quota: existing ?? null, needsReauth: resp.status === 401 };
     const data = (await resp.json()) as WhamUsageResponse;
     const freshPlan = nonEmptyPlan(data.plan_type) ?? undefined;
@@ -551,6 +670,7 @@ export async function primeCodexPoolQuotas(config: OcxConfig, reason: string): P
  * from another suite cannot coalesce into the next prime. */
 export function clearCodexQuotaPrimeState(): void {
   primeInFlight = null;
+  clearAllWhamFetchThrottleStateForTests();
 }
 
 export async function listCodexAuthAccounts(config: OcxConfig, forceRefresh = false): Promise<CodexAuthAccountDto[]> {
@@ -843,6 +963,11 @@ export async function handleCodexAuthAPI(
       upstreamFailoverThreshold: runtimeConfig.upstreamFailoverThreshold ?? 3,
       accountPoolStrategy: normalizeAccountPoolStrategy(runtimeConfig.accountPoolStrategy),
       accountPoolStickyLimit: normalizeAccountPoolStickyLimit(runtimeConfig.accountPoolStickyLimit),
+      // Honest routing state rather than a silent one: non-null means requests are
+      // currently going out on an account whose REPORTED usage has reached 100%
+      // because no cooler account exists. That is "still going, past reported
+      // quota" — not an error, and not a claim that upstream has refused anything.
+      routingPastReportedQuota: getCodexSaturatedRoutingNotice(),
     });
   }
 

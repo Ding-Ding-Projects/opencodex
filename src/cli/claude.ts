@@ -10,12 +10,15 @@ import { spawn } from "node:child_process";
 import { loadConfig } from "../config";
 import { injectClaudeAgentDefs } from "../claude/agents-inject";
 import { effectiveModelEnv, resolveAutoContext } from "../claude/context-windows";
+import { fixedContextEnv } from "../claude/context-env";
 import { refreshGatewayModelCacheFromProxy } from "../claude/gateway-cache";
 import { commandInvocation } from "../lib/win-exec";
 import { findLiveProxy } from "../server/proxy-liveness";
 import type { OcxConfig } from "../types";
 import { PROXY_MARKER, ownAdmissionTokens, defaultAuthDetectDeps, detectClaudeAuth, type AuthDetectDeps } from "../claude/auth-detect";
 import { resolveClaudeAuthMode } from "../claude/auth-mode";
+import { directProxyEnv, proxyStartArgv } from "../lib/proxy-launch";
+import { waitForProxyIdentity } from "./proxy-readiness";
 
 export interface ClaudeLaunchEnv {
   [key: string]: string | undefined;
@@ -120,10 +123,8 @@ export function buildClaudeEnv(
   }
   // Context-window override: the official pair — MAX_CONTEXT_TOKENS alone is ignored
   // for recognized claude-shaped ids unless DISABLE_COMPACT=1 rides along (devlog 135).
-  const maxCtx = config.claudeCode?.maxContextTokens;
-  if (typeof maxCtx === "number" && Number.isFinite(maxCtx) && maxCtx > 0) {
-    setDefault("CLAUDE_CODE_MAX_CONTEXT_TOKENS", String(Math.floor(maxCtx)));
-    setDefault("DISABLE_COMPACT", "1");
+  for (const [name, value] of Object.entries(fixedContextEnv(config.claudeCode?.maxContextTokens))) {
+    setDefault(name, value);
   }
   // Auto-context (devlog 260712 020): min(believed window, env) inside the CLI means
   // one global env acts as a per-model floor — [1m]-marked models compact here while
@@ -170,22 +171,19 @@ export async function fetchClaudeContextWindows(config: OcxConfig, port: number,
 async function ensureProxyForClaude(): Promise<number | null> {
   const live = await findLiveProxy();
   if (live) return live.port;
-  const cfgPort = loadConfig().port;
-  const pinPort = typeof cfgPort === "number" && cfgPort > 0 ? cfgPort : 10100;
-  const child = spawn(process.execPath, [process.argv[1], "start", "--port", String(pinPort)], {
+  const child = spawn(process.execPath, proxyStartArgv(process.argv[1]), {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
-    env: { ...process.env, OCX_SERVICE: "1" },
+    env: directProxyEnv(),
   });
+  child.on("error", () => { /* the bounded readiness probe reports the failure */ });
   child.unref();
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    const started = await findLiveProxy();
-    if (started) return started.port;
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
-  return null;
+  const started = await waitForProxyIdentity({ expectedPid: child.pid, intervalMs: 250 });
+  if (started) return started.port;
+  // A racing caller may have won the start lock while this child exited. Adopt only
+  // after the exact-child probe expires, and only through identity-checked liveness.
+  return (await waitForProxyIdentity({ intervalMs: 250 }))?.port ?? null;
 }
 
 const CLAUDE_INSTALL_HINT = "❌ `claude` CLI not found. Install it first: npm install -g @anthropic-ai/claude-code";

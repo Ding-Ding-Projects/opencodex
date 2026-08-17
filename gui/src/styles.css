@@ -24,6 +24,7 @@
 @import "./styles/login-url-block.css";
 @import "./styles/provider-overview-dashboard.css";
 @import "./styles/appearance-editors.css";
+@import "./styles/docs-browser.css";
 @import "./styles-combos-workspace.css";
 @import "./styles-models-workspace.css";
 @import "./styles-dashboard-workspace.css";
@@ -389,6 +390,148 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .api-test-note { font-size: var(--text-label); }
 .api-test-note--ok { color: var(--green, #22c55e); }
 .api-test-note--error { color: var(--red); }
+.api-copilot-panel {
+  position: relative;
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  overflow: visible;
+}
+.api-copilot-eyebrow {
+  margin: 0 0 3px;
+  color: var(--accent);
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.api-readiness-badge,
+.api-capability-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  background: var(--raised);
+  font-size: var(--text-label);
+  line-height: var(--leading-ui);
+}
+.api-readiness-badge { max-width: min(44ch, 100%); text-align: right; }
+.api-readiness-badge--error,
+.api-capability-chip--off { color: var(--muted); border-style: dashed; }
+.api-capability-chip--ok {
+  border-color: color-mix(in srgb, var(--green) 38%, var(--border));
+  background: color-mix(in srgb, var(--green) 7%, var(--surface));
+}
+.api-copilot-rail {
+  counter-reset: copilot-step;
+  display: grid;
+  gap: 0;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+.api-copilot-rail li {
+  counter-increment: copilot-step;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 8px 0 8px 42px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.api-copilot-rail li:last-child { border-bottom: 0; }
+.api-copilot-rail li::before {
+  content: counter(copilot-step);
+  position: absolute;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+}
+.api-copilot-rail li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 38px;
+  bottom: -8px;
+  width: 2px;
+  background: color-mix(in srgb, var(--accent) 34%, var(--border));
+}
+.api-copilot-rail li > div { display: grid; min-width: 0; gap: 3px; }
+.api-copilot-rail li span { color: var(--muted); font-size: var(--text-label); }
+.api-copilot-rail code { overflow-wrap: anywhere; color: var(--text); }
+.api-copilot-note,
+.api-copilot-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--raised);
+  font-size: var(--text-label);
+  line-height: var(--leading-relaxed);
+}
+.api-copilot-warning { display: grid; gap: 3px; border-color: color-mix(in srgb, var(--yellow) 38%, var(--border)); }
+.api-copilot-actions,
+.api-copilot-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.api-copilot-summary { color: var(--muted); font-size: var(--text-label); }
+.api-copilot-summary span + span::before { content: "·"; margin-right: 8px; }
+.api-key-prefix { padding: 4px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-xs); background: var(--raised); }
+.api-model-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.api-capability-list { display: flex; max-width: 360px; gap: 5px; flex-wrap: wrap; }
+.api-model-reason { max-width: 34ch; margin-top: 5px !important; }
+.regex-builder-anchor { position: relative; }
+.regex-builder-trigger--active { border-color: var(--accent); color: var(--accent); }
+.regex-builder-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 10px;
+  width: min(440px, calc(100vw - 48px));
+  max-height: min(640px, calc(100dvh - 140px));
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.regex-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.regex-builder-toggle { display: flex; align-items: center; gap: 8px; }
+.regex-builder-popover label:not(.regex-builder-toggle) { display: grid; gap: 5px; }
+.regex-builder-guides { display: flex; gap: 5px; flex-wrap: wrap; }
+.regex-builder-flags { display: flex; gap: 12px; margin: 0; padding: 9px 11px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+.regex-builder-flags legend { padding: 0 5px; color: var(--muted); font-size: var(--text-label); }
+.regex-builder-flags label { display: inline-flex; align-items: center; gap: 4px; }
+.regex-builder-sample { min-height: 86px; resize: vertical; }
+.regex-builder-error { margin: 0; color: var(--red); font-size: var(--text-label); }
+.regex-builder-results { display: block; max-height: 78px; padding: 8px; overflow: auto; border-radius: var(--radius-xs); background: var(--raised); overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .api-panel-head { align-items: flex-start; flex-direction: column; }
+  .api-readiness-badge { text-align: left; }
+  .api-copilot-rail li { grid-template-columns: 1fr; }
+  .api-copilot-rail li > .btn { justify-self: start; }
+  .api-model-search-row { grid-template-columns: 1fr; }
+  .regex-builder-popover { right: auto; left: 0; width: min(440px, calc(100vw - 32px)); }
+  .api-copilot-summary span + span::before { content: ""; margin: 0; }
+  .api-copilot-summary { align-items: flex-start; flex-direction: column; gap: 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .api-page { scroll-behavior: auto; }
+}
 
 /* ---- buttons ---- */
 .btn {
@@ -633,6 +776,10 @@ select.input { appearance: none; }
 
 /* ---- misc ---- */
 .muted { color: var(--muted); }
+/* Paired with `.muted` at five call sites (api-keys-panels.tsx, RegexBuilderButton.tsx)
+   for caption-sized helper text, and defined in no stylesheet until now -- so all five
+   rendered dimmed but at full body size, which is not what any of them meant. */
+.small { font-size: var(--t-body-s, 0.8125rem); }
 .faint { color: var(--faint); }
 .row { display: flex; align-items: center; gap: 10px; }
 .spread { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -1059,14 +1206,15 @@ button.prov-account-row.active { cursor: default; }
 .usage-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
 
 /* ── Toggle switch ── */
-.toggle { position: relative; display: inline-block; width: var(--toggle-w); height: var(--toggle-h); flex-shrink: 0; }
-.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-.toggle .slider { position: absolute; inset: 0; background: var(--toggle-off-bg); border-radius: var(--radius-pill); cursor: pointer; transition: background var(--motion-normal) ease; }
-.toggle .slider::after { content: ""; position: absolute; top: 50%; left: 3px; width: var(--toggle-dot); height: var(--toggle-dot); background: var(--toggle-dot-color); border-radius: var(--radius-round); transform: translateY(-50%); transition: transform var(--motion-normal) ease; }
-.toggle input:checked + .slider { background: var(--toggle-on-bg); }
-.toggle input:checked + .slider::after { transform: translate(calc(var(--toggle-w) - var(--toggle-dot) - 6px), -50%); }
-.toggle input:focus-visible + .slider { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
-.toggle input:disabled + .slider { opacity: 0.5; cursor: not-allowed; }
+/* The checkbox+`.slider` toggle pattern that used to live here is gone. It was
+   a second bare `.toggle {}` rule sharing the name with the button+knob switch
+   above, and NOTHING in gui/src ever rendered a `.slider` child for it -- so
+   every rule in the block was dead except `.toggle input { opacity: 0 }`,
+   which matched a real checkbox in OAuthAccountPoolSettings and made it
+   invisible, with no substitute drawn in its place. That label now carries its
+   own class below, and `.toggle` means one thing again. */
+.pool-toggle-label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.pool-toggle-label input { flex-shrink: 0; }
 
 /* ── Setting row (label left, control right) ── */
 .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; gap: 16px; }

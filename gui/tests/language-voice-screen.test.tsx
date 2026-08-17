@@ -1,12 +1,13 @@
 /**
  * Language & voice screen structure.
  *
- * The prototype's screen carries a body-large page lead, three titled cards —
- * interface language, narrator, dim sum — an untitled funny-level card holding
- * both per-language sliders and the five-level ladder, and a settings search.
- * Both switches must expose `role="switch"` + `aria-checked`, which is the
- * accessibility contract the shell's design handoff states. A card or control
- * silently dropping out of this screen is the failure these guard.
+ * The prototype's screen carries a body-large page lead, four titled cards —
+ * interface language, narrator, the emoji decoration toggle, dim sum — an
+ * untitled funny-level card holding both per-language sliders and the
+ * five-level ladder, and a settings search. Every switch must expose
+ * `role="switch"` + `aria-checked`, which is the accessibility contract the
+ * shell's design handoff states. A card or control silently dropping out of
+ * this screen is the failure these guard.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -14,9 +15,10 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import LanguageVoice from "../src/pages/LanguageVoice";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsProvider } from "../src/shell/notifications";
+import { ConfirmProvider } from "../src/shell/confirm";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -52,11 +54,13 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsProvider>
-            <LanguageVoice />
+            <ConfirmProvider>
+              <LanguageVoice />
+            </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });
@@ -75,18 +79,75 @@ function typeInto(el: HTMLInputElement, value: string): void {
   el.dispatchEvent(new testWindow.Event("input", { bubbles: true }) as never);
 }
 
-test("renders the language, narrator and dim sum cards with accessible switches", async () => {
+test("renders the language, narrator, emoji and dim sum cards with accessible switches", async () => {
   const { container, root } = await mount();
 
   const titles = [...container.querySelectorAll(".m3-card-title")].map(n => n.textContent);
-  expect(titles).toEqual(["Interface language", "Narrator", "Dim sum surprise"]);
+  expect(titles).toEqual([
+    "Interface language",
+    // The School Mode card sits right after the language picker: it is the
+    // control that forces every other card on this screen (and every other
+    // app sharing the switch) to render as if the rest of them were never
+    // installed, so it is discoverable before any of the things it can
+    // suppress.
+    "School Mode",
+    "Narrator",
+    "Show emojis in dialogs and message boxes",
+    "Dim sum surprise",
+    // The personal-vocabulary upload sits last on purpose: it is the only card
+    // here that does nothing at all until the user supplies a file, so it reads
+    // as an addition rather than as a setting they have skipped over.
+    "Personal vocabulary",
+  ]);
 
+  // Every switch on this screen belongs to the School Mode card, the narrator
+  // card or the emoji card, and every one of them is off on a fresh profile.
+  // This used to be a screen-wide count of one, which read as "the dim sum
+  // surprise has no off switch" — the real contract, and one the dim sum card
+  // asserts directly a few lines below. The count also silently asserted that
+  // no other switch could ever exist, so the narrator's Edge online-voice
+  // opt-in broke it by existing, the emoji toggle broke it again the same
+  // way, and School Mode's own toggle now does too.
+  //
+  // What is worth pinning instead is that none of the four defaults to on:
+  // School Mode is off on a fresh profile (and disabled — no unlock
+  // credential exists yet, so there would be no way to turn it back off), the
+  // narrator stays silent until asked, the network voice source — which sends
+  // the narrated text to Microsoft — must never arrive switched on, and emoji
+  // decoration stays off until a profile opts in.
+  const schoolModeCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "School Mode")!;
+  const narratorCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Narrator")!;
+  const emojiCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Show emojis in dialogs and message boxes")!;
   const switches = [...container.querySelectorAll('[role="switch"]')];
-  expect(switches).toHaveLength(2);
-  expect(switches.every(s => s.getAttribute("aria-checked") !== null)).toBe(true);
-  // The narrator is off by default; the dim sum surprise is on.
-  expect(switches[0].getAttribute("aria-checked")).toBe("false");
-  expect(switches[1].getAttribute("aria-checked")).toBe("true");
+  expect(switches).toHaveLength(4);
+  expect(switches.filter(s => schoolModeCard.contains(s))).toHaveLength(1);
+  expect(switches.filter(s => narratorCard.contains(s))).toHaveLength(2);
+  expect(switches.filter(s => emojiCard.contains(s))).toHaveLength(1);
+  expect(switches.map(s => s.getAttribute("aria-label"))).toEqual([
+    "School Mode",
+    "Enable narrator",
+    "Use Microsoft Edge online voices",
+    "Show emojis in dialogs and message boxes",
+  ]);
+  expect(switches.every(s => s.getAttribute("aria-checked") === "false")).toBe(true);
+  expect(schoolModeCard.querySelector('[role="switch"]')?.hasAttribute("disabled")).toBe(true);
+
+  // The preview rows are live output, not description: with the toggle off,
+  // none of them carry a mark, and the sample copy renders exactly as it would
+  // in a real snackbar with the same setting off.
+  expect(emojiCard.textContent).toContain("Proxy port changed");
+  expect(emojiCard.querySelector(".m3-emoji")).toBeNull();
+
+  // The card still owes the reader a way to see one on demand rather than waiting
+  // out 1-in-10 odds, so what replaced the switch is a preview and not a gap.
+  const dimSumCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector(".m3-card-title")?.textContent === "Dim sum surprise");
+  expect(dimSumCard).toBeTruthy();
+  expect(dimSumCard!.querySelector('[role="switch"]')).toBeNull();
+  expect(dimSumCard!.textContent).toContain("Show one now");
 
   // happy-dom exposes no speechSynthesis, so the narrator genuinely cannot run
   // here and the test button is disabled for that reason — not because the
@@ -111,19 +172,38 @@ test("leads with the body-large page lead the prototype opens on", async () => {
 
 // Two independent sliders, one per language, are a shipping requirement — a single
 // shared control does not satisfy it.
-test("ships one funny-level slider per language, each 1–5 and persisted", async () => {
+test("ships one funny-level slider per language, each 1–5 and staged as a draft", async () => {
   const { container, root } = await mount();
 
-  const sliders = [...container.querySelectorAll('input[type="range"]')] as unknown as HTMLInputElement[];
+  // Scoped to the funny-level card. It used to query the whole screen, which
+  // asserted "these are the only two sliders anywhere on Language & voice" —
+  // incidentally true at the time, and not the contract. The narrator's
+  // per-language speed and pitch sliders are also range inputs, so the
+  // screen-wide form would now fail on a screen that is more correct, not less.
+  const funnyCard = [...container.querySelectorAll(".m3-card")]
+    .find(card => card.querySelector('input[type="range"]#ocx-fun-en'))!;
+  const sliders = [...funnyCard.querySelectorAll('input[type="range"]')] as unknown as HTMLInputElement[];
   expect(sliders.map(s => s.id)).toEqual(["ocx-fun-en", "ocx-fun-yue"]);
   expect(sliders.every(s => s.min === "1" && s.max === "5")).toBe(true);
 
-  const labels = [...container.querySelectorAll(".m3-slider-row .m3-field-label")].map(n => n.textContent);
+  // Scoped for the same reason as the ids above: the narrator's per-language
+  // speed and pitch sliders are `.m3-slider-row`s too.
+  const labels = [...funnyCard.querySelectorAll(".m3-slider-row .m3-field-label")].map(n => n.textContent);
   expect(labels).toEqual(["Funny level — English", "Funny level — 廣東話"]);
 
   await act(async () => { typeInto(sliders[1], "5"); });
 
-  expect(JSON.parse(localStorage.getItem("ocx-m3:funny") ?? "{}")).toEqual({ en: 3, yue: 5 });
+  // Moving a slider used to write `ocx-m3:funny` on the spot. It no longer does,
+  // and the change is deliberate rather than a regression: the settings-draft
+  // coordinator owns the only durable write, and it happens in its `apply()` —
+  // reached from the app bar's Save action, which this screen does not mount. So
+  // the assertion moved from "it persisted" to the pair that actually holds now:
+  // the control repaints from the draft immediately, and nothing is written until
+  // the user applies. The English slider is untouched, which is the real point of
+  // shipping two of them.
+  expect(sliders[1].value).toBe("5");
+  expect(sliders[0].value).toBe("3");
+  expect(localStorage.getItem("ocx-m3:funny")).toBeNull();
 
   await act(async () => { root.unmount(); });
 });
@@ -166,13 +246,21 @@ test("show one now reveals a named dim sum dish without blocking anything", asyn
 
   const button = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Show one now"));
   expect(button).toBeTruthy();
-  expect(container.querySelector('[role="status"]')).toBeNull();
+
+  // Scoped to the dim sum card rather than the whole screen. This used to be a
+  // container-wide `toBeNull`, which quietly also asserted that no other card
+  // could ever carry a live region — and the personal-vocabulary card does, to
+  // announce its own no-file/loaded/invalid state. What this test is actually
+  // about is that the dish appears only after the button is pressed.
+  const dimSumCard = [...container.querySelectorAll(".m3-card")]
+    .find(c => c.contains(button!))!;
+  expect(dimSumCard.querySelector('[role="status"]')).toBeNull();
 
   await act(async () => {
     button!.dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true }) as never);
   });
 
-  const card = container.querySelector('[role="status"]');
+  const card = dimSumCard.querySelector('[role="status"]');
   expect(card).toBeTruthy();
   // The dish is named for screen readers too — the art alone is not the label.
   // The name is plain text now rather than an aria-label on a `role="img"`

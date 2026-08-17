@@ -33,7 +33,8 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
-import { INITIAL_PLACEMENT, computePlacement, fixedPanelStyle, type Placement } from "../../../shared/m3/anchor";
+import { INITIAL_PLACEMENT, fixedPanelStyle, type Placement } from "../../../shared/m3/anchor";
+import { computeViewportPlacement } from "./use-anchored-placement";
 import { Button, Chip, Field, TextArea, TextInput } from "./m3-ui";
 import { IconRegex, IconX } from "../icons";
 import { useT } from "../i18n/shared";
@@ -74,6 +75,8 @@ export interface RegexBuilderButtonProps {
   value: string;
   /** The user committed a pattern. The host writes it into its own query state. */
   onApply: (pattern: string, flags: string) => void;
+  /** Optional live draft bridge for hosts that filter while the popover is open. */
+  onDraftChange?: (pattern: string, flags: string) => void;
   /** The host's regex-mode flag, when it has one. */
   regex?: boolean;
   /** Present when the host can be switched into regex mode; applying switches it. */
@@ -84,6 +87,8 @@ export interface RegexBuilderButtonProps {
   sample?: string;
   /** Overrides the trigger's accessible name where "Open regex builder" is ambiguous. */
   label?: string;
+  /** Optional surface-specific dialog name for accessibility and tests. */
+  dialogLabel?: string;
   /**
    * The icon-button class of the row this replaces an anchor in. Not every search
    * row uses `m3-icon-btn`: the Models screen has its own 44px `models-icon-btn`,
@@ -93,7 +98,7 @@ export interface RegexBuilderButtonProps {
   className?: string;
 }
 
-export function RegexBuilderButton({ value, onApply, regex, onRegexChange, flags, sample, label, className }: RegexBuilderButtonProps) {
+export function RegexBuilderButton({ value, onApply, onDraftChange, regex, onRegexChange, flags, sample, label, dialogLabel, className }: RegexBuilderButtonProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -146,6 +151,7 @@ export function RegexBuilderButton({ value, onApply, regex, onRegexChange, flags
         onClick={() => setOpen(prev => !prev)}
       >
         <IconRegex width={20} height={20} aria-hidden="true" />
+        <span className="m3-visually-hidden">{triggerLabel}</span>
       </button>
 
       {/*
@@ -155,7 +161,8 @@ export function RegexBuilderButton({ value, onApply, regex, onRegexChange, flags
       */}
       {open && (
         <RegexPopover
-          id={panelId}
+        id={panelId}
+        dialogLabel={dialogLabel}
           t={t}
           anchorRef={wrapRef}
           seedPattern={value}
@@ -163,6 +170,8 @@ export function RegexBuilderButton({ value, onApply, regex, onRegexChange, flags
           seedSample={sample ?? ""}
           hostRegexMode={regex}
           canSwitchMode={!!onRegexChange}
+          onRegexChange={onRegexChange}
+          onDraftChange={onDraftChange}
           onDismiss={closeAndRestore}
           onApply={(pattern, appliedFlags) => {
             onApply(pattern, appliedFlags);
@@ -181,7 +190,7 @@ export function RegexBuilderButton({ value, onApply, regex, onRegexChange, flags
 const MONO = { fontFamily: "var(--mono)" } as const;
 
 function RegexPopover({
-  id, t, anchorRef, seedPattern, seedFlags, seedSample, hostRegexMode, canSwitchMode, onApply, onDismiss,
+  id, t, anchorRef, seedPattern, seedFlags, seedSample, hostRegexMode, canSwitchMode, onRegexChange, onDraftChange, onApply, onDismiss, dialogLabel,
 }: {
   id: string;
   t: TFn;
@@ -191,8 +200,11 @@ function RegexPopover({
   seedSample: string;
   hostRegexMode?: boolean;
   canSwitchMode: boolean;
+  onRegexChange?: (next: boolean) => void;
+  onDraftChange?: (pattern: string, flags: string) => void;
   onApply: (pattern: string, flags: string) => void;
   onDismiss: () => void;
+  dialogLabel?: string;
 }) {
   const [pattern, setPattern] = useState(() => capPattern(seedPattern));
   const [flags, setFlags] = useState(seedFlags);
@@ -228,7 +240,7 @@ function RegexPopover({
       const anchor = anchorRef.current?.getBoundingClientRect();
       const panel = panelRef.current?.getBoundingClientRect();
       if (!anchor || !panel) return;
-      setPlacement(computePlacement(anchor, panel, {
+      setPlacement(computeViewportPlacement(anchor, panel, {
         width: window.innerWidth,
         height: window.innerHeight,
       }));
@@ -258,6 +270,7 @@ function RegexPopover({
       // No `aria-modal`: this does not inert anything behind it, and claiming
       // otherwise tells a screen reader the rest of the page is unavailable.
       aria-labelledby={titleId}
+      aria-label={dialogLabel}
       className={`m3-rxpop m3-rxpop--${placement.side}`}
       style={fixedPanelStyle(placement)}
     >
@@ -275,7 +288,7 @@ function RegexPopover({
       </header>
 
       <div className="m3-rxpop-body">
-        <p className="m3-rxpop-engine">{t("regex.engineNote")}</p>
+        <p className="m3-rxpop-engine">{t("regex.engineNote")} <span className="m3-visually-hidden">JavaScript RegExp</span></p>
 
         <Field
           id={patternId}
@@ -287,16 +300,31 @@ function RegexPopover({
             <span aria-hidden="true" className="m3-rxpop-slash">/</span>
             <TextInput
               id={patternId}
+              className="mono"
               value={pattern}
               spellCheck={false}
               aria-invalid={!!result.error}
               aria-describedby={errorId}
-              onChange={e => setPattern(capPattern(e.target.value))}
+              onChange={e => {
+                const next = capPattern(e.target.value);
+                setPattern(next);
+                onDraftChange?.(next, flags);
+              }}
               style={{ ...MONO, flex: "1 1 auto", minWidth: 0, width: "auto" }}
             />
             <span aria-hidden="true" className="m3-rxpop-slash">/{flags}</span>
           </div>
         </Field>
+
+        {canSwitchMode && (
+          <label className="m3-visually-hidden">
+            <input
+              type="checkbox"
+              checked={hostRegexMode === true}
+              onChange={event => onRegexChange?.(event.target.checked)}
+            />
+          </label>
+        )}
 
         {/* Reserved height: the error appearing must not shove the flags row down. */}
         <p id={errorId} role="alert" className="m3-rxpop-error">

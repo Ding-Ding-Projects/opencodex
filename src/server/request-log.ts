@@ -38,7 +38,7 @@ export interface RequestLogContext {
   firstOutputMs?: number;
   /** Best-effort chat/session correlation for Logs grouping (#330). Opaque; omit when unknown. */
   conversationId?: string;
-  surface?: "claude" | "claude-desktop" | "grok";
+  surface?: "claude" | "claude-desktop" | "github-copilot-desktop" | "grok";
   requestedModel?: string;
   /** Internal structural combo identity; omitted from RequestLogEntry/JSONL. */
   comboId?: string;
@@ -52,8 +52,10 @@ export interface RequestLogContext {
   configuredSpeedLabel?: string;
   modelSupportsServiceTier?: boolean;
   responseServiceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
   resolvedModel?: string;
   usage?: OcxUsage;
+  /** Raw request prompt size persisted for pricing-context selection; not response usage. */
   usageLogInputTokens?: number;
   attempts?: PersistedUsageAttempt[];
   /** Internal mutable final attempt; omitted from RequestLogEntry/JSONL. */
@@ -91,7 +93,7 @@ export interface RequestLogEntry {
   provider: string;
   /** TTFT: ms from request start to the first non-empty model output delta; unset for non-streaming/tool-only. */
   firstOutputMs?: number;
-  surface?: "claude" | "claude-desktop" | "grok";
+  surface?: "claude" | "claude-desktop" | "github-copilot-desktop" | "grok";
   /** Best-effort chat/session correlation for Logs grouping (#330). */
   conversationId?: string;
   requestedModel?: string;
@@ -105,6 +107,9 @@ export interface RequestLogEntry {
   configuredSpeedLabel?: string;
   modelSupportsServiceTier?: boolean;
   responseServiceTier?: string;
+  cacheRetention?: "none" | "short" | "long";
+  /** Persisted raw prompt size used by price schedules; absent on historical logs. */
+  promptInputTokens?: number;
   resolvedModel?: string;
   status: number;
   durationMs: number;
@@ -174,6 +179,8 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
       ? { modelSupportsServiceTier: entry.modelSupportsServiceTier }
       : {}),
     ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
+    ...(entry.cacheRetention ? { cacheRetention: entry.cacheRetention } : {}),
+    ...(entry.promptInputTokens !== undefined ? { promptInputTokens: entry.promptInputTokens } : {}),
     ...(entry.resolvedModel ? { resolvedModel: entry.resolvedModel } : {}),
     status: entry.status,
     durationMs: entry.durationMs,
@@ -255,6 +262,8 @@ export function addRequestLog(entry: RequestLogEntry) {
         ? { modelSupportsServiceTier: entry.modelSupportsServiceTier }
         : {}),
       ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
+      ...(entry.cacheRetention ? { cacheRetention: entry.cacheRetention } : {}),
+      ...(entry.promptInputTokens !== undefined ? { promptInputTokens: entry.promptInputTokens } : {}),
       status: entry.status,
       durationMs: entry.durationMs,
       ...(entry.firstOutputMs !== undefined ? { firstOutputMs: entry.firstOutputMs } : {}),
@@ -707,6 +716,10 @@ export function addFinalRequestLog(
     ...(logCtx.configuredSpeedLabel ? { configuredSpeedLabel: logCtx.configuredSpeedLabel } : {}),
     ...(logCtx.modelSupportsServiceTier !== undefined ? { modelSupportsServiceTier: logCtx.modelSupportsServiceTier } : {}),
     ...(logCtx.responseServiceTier ? { responseServiceTier: logCtx.responseServiceTier } : {}),
+    ...(logCtx.cacheRetention ? { cacheRetention: logCtx.cacheRetention } : {}),
+    ...(typeof logCtx.usageLogInputTokens === "number" && Number.isFinite(logCtx.usageLogInputTokens) && logCtx.usageLogInputTokens >= 0
+      ? { promptInputTokens: logCtx.usageLogInputTokens }
+      : {}),
     ...(logCtx.resolvedModel ? { resolvedModel: logCtx.resolvedModel } : {}),
     status: effectiveStatus,
     durationMs: Date.now() - start,
@@ -803,9 +816,11 @@ export function beginRequestAttempt(
   provider: string,
   model: string,
   adapter: string,
+  timestamp = Date.now(),
 ): PersistedUsageAttempt {
   return {
     ordinal,
+    timestamp,
     provider,
     model,
     adapter,
@@ -838,6 +853,9 @@ export function noteAttemptSend(
     && Number.isFinite(inputTokenEstimate)
     && inputTokenEstimate >= 0) {
     attempt.inputTokenEstimate = inputTokenEstimate;
+    // The request-builder metric is retained separately from measured response
+    // usage so long-context pricing cannot reverse-engineer a threshold later.
+    attempt.promptInputTokens = inputTokenEstimate;
   }
   if (recovery && !attempt.recoveryKinds.includes(recovery)) {
     attempt.recoveryKinds.push(recovery);

@@ -238,7 +238,8 @@ opencodex 保持两种独立行为：
 
 ```bash
 ocx init                       # 交互式初始化
-ocx start [--port 10100]       # 启动代理
+ocx start                      # 自动启动；首选端口占用时改用空闲端口
+ocx start --port 10100         # 显式固定；不会切换到其他端口
 ocx stop                       # 停止并恢复原生 Codex 配置
 ocx restore                    # 仅恢复，不停止（别名：ocx eject）
 ocx uninstall                  # 移除 service/shim/config 并恢复原生 Codex
@@ -297,7 +298,9 @@ shim。仍在变化的启动器不会被改动，而会在后续命令中重试�
 失败；手动备用命令为 `ocx codex-shim install`。若要关闭自动恢复，请将
 `codexShimAutoRestore` 设为 `false`，或为进程设置
 `OPENCODEX_CODEX_SHIM_AUTO_RESTORE=0`。
-如果配置的代理端口已被占用，`ocx start` 会自动选择另一个空闲本地端口并更新 Codex 使用它。
+不带 `--port` 的自动启动会把配置端口视为首选值；被占用时会把另一个空闲端口写入 runtime state，
+并让 Codex 使用实际 listener。显式 `ocx start --port`、更新交接和仪表盘重启会固定同一端口，
+若不可用则失败，不会切换。
 
 ### 卸载
 
@@ -372,9 +375,9 @@ WebSocket 传输默认关闭。只有当你希望 Codex 使用 Responses WebSock
 
 ### 远程访问
 
-默认情况下 opencodex 绑定到 `127.0.0.1`（回环）且无需额外认证。
-如果你设置 `"hostname": "0.0.0.0"` 把代理暴露到局域网，opencodex 会要求一个 bearer token 来同时保护管理
-API（`/api/*`）和数据平面（`/v1/responses`、`/v1/images/generations`、`/v1/images/edits`）：
+默认情况下 opencodex 绑定到 `127.0.0.1`（回环）。如果设置 `"hostname": "0.0.0.0"` 暴露到
+局域网，数据平面（`/v1/responses`、`/v1/images/generations`、`/v1/images/edits`）需要独立的
+bearer credential：
 
 ```bash
 export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
@@ -388,7 +391,11 @@ ocx start
 x-opencodex-api-key: your-secret-token
 ```
 
-token 以常量时间比较，以防止时序攻击。
+仪表盘和 `/api/*` 使用单独的 ADMIN token。连接到另一台 OpenCodex 时，输入远端 IP/主机名及
+`ocx host status`（或 `ocx status`）显示的实际运行端口，再在目标仪表盘 prompt 中输入该代理的
+ADMIN token。data-plane key 不可用于 ADMIN
+认证，连接 dialog 也不会把 token 放入 URL 或保存它。HTTP 未加密，所以只应在可信 LAN 中直接
+使用；其他链路优先使用 SSH tunnel。token 以常量时间比较，以防止时序攻击。
 
 opencodex 会自动 remap Codex resume 历史，使旧的 OpenAI 对话和 opencodex 创建的项目线程在代理活动期间仍在
 Codex App 中可见。原始 provider/source 元数据记录在 `~/.opencodex/codex-history-backup.json`。`ocx stop` /

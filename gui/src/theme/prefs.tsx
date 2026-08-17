@@ -23,13 +23,22 @@ import {
   type Prefs,
   type PrefsContextValue,
 } from "./prefs-context";
+import { useViewportPreview } from "./viewport-preview";
 import type { ElementStyle } from "./m3";
 import type { TypographyStyle } from "../../../shared/m3/typography";
 
 export function PrefsProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefsState] = useState<Prefs>(readPrefs);
-  const [width, setWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  const [measuredWidth, setMeasuredWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [systemDark, setSystemDark] = useState(() => resolveDark("system"));
+
+  // The same emulated-width override the draft provider reads. Both subscribe to
+  // one module store rather than owning a copy, because `usePrefs` resolves
+  // through whichever of the two is mounted — a preview that only one of them
+  // knew about would make the two disagree about the shell's width depending on
+  // the provider stack a screen happened to be rendered under.
+  const previewWidth = useViewportPreview();
+  const width = previewWidth ?? measuredWidth;
 
   // Track the OS scheme so `theme: "system"` repaints without a reload.
   useEffect(() => {
@@ -41,7 +50,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 
   // Breakpoints are measured, not media-queried, so an emulated preview width works.
   useEffect(() => {
-    const onResize = () => setWidth(window.innerWidth);
+    const onResize = () => setMeasuredWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -131,7 +140,30 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 
   const resetAppearance = useCallback(() => {
     for (const target of ELEMENT_TARGETS) clearElementStyle(document.documentElement, target.id);
-    setPrefsState(prev => ({ ...DEFAULT_PREFS, narrator: prev.narrator, narratorLang: prev.narratorLang }));
+    // Narration survives an appearance reset, voices included. "Reset
+    // appearance" is a request about how the app looks; silently discarding the
+    // voice, rate and pitch somebody tuned by ear would be a different, unasked
+    // -for reset that leaves no trace of what the settings used to be.
+    //
+    // `showEmojis` lives on the same Language & voice screen as narration, not
+    // on Appearance, for the same reason: a "how the app looks" reset triggered
+    // from a different tab should not reach across and silently flip a switch
+    // that screen owns.
+    //
+    // `costRange` is the same case and was the one that got missed: the App Bar
+    // cost meter's 7d/30d/all filter, written only from `shell/CostMeter.tsx`,
+    // with no control anywhere on the Appearance screen. Without this line the
+    // `...DEFAULT_PREFS` spread put it back to "all" every time somebody reset
+    // their theme.
+    setPrefsState(prev => ({
+      ...DEFAULT_PREFS,
+      narrator: prev.narrator,
+      narratorLang: prev.narratorLang,
+      narratorVoices: prev.narratorVoices,
+      narratorEdge: prev.narratorEdge,
+      showEmojis: prev.showEmojis,
+      costRange: prev.costRange,
+    }));
   }, []);
 
   const value = useMemo<PrefsContextValue>(() => ({

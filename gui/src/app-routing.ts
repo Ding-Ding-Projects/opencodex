@@ -19,6 +19,7 @@ export type Page =
   // System pages introduced by the Material 3 shell.
   | "appearance"
   | "language"
+  | "schedule"
   | "regex"
   | "changelog"
   | "history"
@@ -26,7 +27,15 @@ export type Page =
   | "network"
   | "settings"
   | "terminal"
-  | "mobile";
+  | "mobile"
+  | "docs"
+  | "locks"
+  | "authenticator"
+  | "pdf"
+  | "converter"
+  | "ollama"
+  | "ollama-chat"
+  | "downloads";
 
 export const VALID_PAGES = new Set<Page>([
   "dashboard",
@@ -44,6 +53,7 @@ export const VALID_PAGES = new Set<Page>([
   "grok",
   "appearance",
   "language",
+  "schedule",
   "regex",
   "changelog",
   "history",
@@ -52,6 +62,14 @@ export const VALID_PAGES = new Set<Page>([
   "settings",
   "terminal",
   "mobile",
+  "docs",
+  "locks",
+  "authenticator",
+  "pdf",
+  "converter",
+  "ollama",
+  "ollama-chat",
+  "downloads",
 ]);
 
 /** Product pages sit above the system pages in the nav, separated by a divider. */
@@ -71,6 +89,7 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   startup: "product",
   appearance: "system",
   language: "system",
+  schedule: "system",
   regex: "system",
   changelog: "system",
   history: "system",
@@ -79,6 +98,14 @@ export const PAGE_GROUP: Record<Page, "product" | "system"> = {
   settings: "system",
   terminal: "system",
   mobile: "system",
+  docs: "system",
+  locks: "system",
+  authenticator: "system",
+  pdf: "system",
+  converter: "system",
+  ollama: "system",
+  "ollama-chat": "system",
+  downloads: "system",
 };
 
 /**
@@ -177,4 +204,9 @@ export function resolveAppHashChange(rawHash: string): AppHashChangeAction {
  */
 export function hashRouteFor(page: Page): string {
   return `#/${page}`;
+}
+
+/** Join an already validated remote origin to one application page route. */
+export function pageUrlForOrigin(origin: string, page: Page): string {
+  return `${origin.replace(/\/$/, "")}/${hashRouteFor(page)}`;
 }

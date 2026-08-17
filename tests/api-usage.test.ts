@@ -209,7 +209,12 @@ describe("GET /api/usage", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.surface).toBe("claude");
-      expect(body.summary.requests).toBe(0);
+      expect(body.summary).toMatchObject({
+        requests: 0,
+        unpricedRequests: 0,
+        unpricedReasons: {},
+        unmeteredRequests: 0,
+      });
       expect(body.error).toBe("read_failed");
     } finally {
       await server.stop(true);

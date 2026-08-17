@@ -72,4 +72,49 @@ contextBridge.exposeInMainWorld("opencodexDesktop", {
      */
     start: () => ipcRenderer.invoke("proxy:start"),
   },
+  /**
+   * The toy-lock recovery route: "delete this app's local application-data
+   * folder" (see `gui/src/shell/app-data-path.ts` and the Support Tickets
+   * surface). Two fixed channels, no caller-supplied argument — the renderer
+   * can ask where the folder is and ask to have it opened, and cannot name any
+   * other path for either call to act on.
+   */
+  appData: {
+    /** The real, resolved absolute path — named exactly, not guessed. */
+    path: () => ipcRenderer.invoke("appData:path"),
+    /** Opens it in the platform's own file manager. Never deletes anything itself. */
+    open: () => ipcRenderer.invoke("appData:open"),
+  },
+  /**
+   * The always-on-top Start-download / Download-complete popups (see
+   * `shell/DownloadsBridge.tsx`). One fixed channel, two caller-supplied
+   * strings: which of the two fixed popup kinds, and which download record —
+   * never an arbitrary URL or window configuration. The main process resolves
+   * the actual window position, size and `alwaysOnTop` flag; the renderer
+   * cannot ask for anything beyond "show me the decision/completion card for
+   * this id".
+   */
+  downloads: {
+    openPopup: (kind, id) => ipcRenderer.invoke("downloads:open-popup", { kind, id }),
+  },
+  /**
+   * The native file/folder picker behind every path text box.
+   *
+   * `mode` is a word this bridge chooses from -- "file", "directory" or "save"
+   * -- not an Electron `properties` array. The main process decides what each
+   * one means, so the renderer cannot ask for a picker the app never intended
+   * to offer, and cannot read anything: the dialog returns only what the user
+   * themselves selected.
+   *
+   * Always resolves. A cancelled dialog comes back `{ ok: true, canceled: true }`
+   * rather than rejecting, because changing your mind is a normal outcome and a
+   * caller should not have to tell it apart from a failure with a try/catch.
+   */
+  dialog: {
+    openPath: (options) => ipcRenderer.invoke("dialog:open-path", {
+      mode: options?.mode,
+      title: options?.title,
+      defaultPath: options?.defaultPath,
+    }),
+  },
 });

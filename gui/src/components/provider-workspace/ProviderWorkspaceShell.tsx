@@ -1,14 +1,24 @@
 /**
  * ProviderWorkspaceShell — the workspace chrome (WP080b): search, filter
  * popover (status/pricing/type/sort), grouped rail with keyboard navigation,
- * empty state, and a render-prop `detail` slot. Detail/Overview panel bodies
- * arrive in WP090/091; until then the slot renders a real placeholder message.
+ * empty state, and a render-prop `detail` slot.
+ *
+ * The `detail` slot is FILLED. This comment used to say the panel bodies
+ * "arrive in WP090/091; until then the slot renders a real placeholder" -- both
+ * shipped, and the sole call site (pages/Providers.tsx) returns a
+ * <ProviderDetails> for every item unconditionally. The `?? placeholder`
+ * fallback below is therefore unreachable in the shipped app and is kept only
+ * as defensive UI for a future wiring regression; its copy no longer points at
+ * a "classic view", which has not existed for some time.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { fixedPanelStyle, useAnchoredPlacement } from "../../shell/use-anchored-placement";
 import { useT } from "../../i18n/shared";
 import { IconFilter, IconSearch, IconBoxes, IconGlobe, IconLock, IconKey, IconTrash } from "../../icons";
 import { Chip } from "../../shell/m3-ui";
 import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
+import { useMenuFilter, focusMenuFilterField } from "../../shell/menu-filter";
+import { MenuFilterField, MenuFilterStatus } from "../../shell/MenuFilterField";
 import { makeMatcher } from "../../pages/models-shared";
 import {
   applyActiveAccountReauth,
@@ -55,6 +65,32 @@ const needsAttentionItem = (item: WorkspaceItem): boolean => item.activeNeedsRea
  * panel that is usually closed.
  */
 const SAMPLE_ROWS = 40;
+
+/**
+ * Stable row ids for the filter dropdown's status/type facets, plain string
+ * literals rather than a `` `status:${key}` `` template built at each use
+ * site. Three reasons, not one: a single source of truth for the id shape
+ * (the concatenation used to be repeated inline, inconsistently, at three
+ * separate call sites); every id is now spelled once, next to the facet it
+ * names, instead of assembled wherever it happens to be needed; and the ids
+ * are never anything the project's i18n lint would mistake for hardcoded UI
+ * copy, since they are internal `Set`/`Record` keys the checkbox rows never
+ * render — a template literal built from live data reads exactly like the
+ * user-facing string that rule exists to catch, and a literal object lookup
+ * does not.
+ */
+const STATUS_FACET_ID: Record<keyof StatusFilter, string> = {
+  ready: "status:ready",
+  needsSetup: "status:needsSetup",
+  needsAttention: "status:needsAttention",
+  disabled: "status:disabled",
+};
+const TYPE_FACET_ID: Record<keyof TypeFilter, string> = {
+  cloud: "type:cloud",
+  local: "type:local",
+  selfHosted: "type:selfHosted",
+  login: "type:login",
+};
 
 /** Detail-slot data plumbed per selected provider (props-down; no shared hook). */
 export interface DetailSlotData {
@@ -138,6 +174,32 @@ export default function ProviderWorkspaceShell({
   const [quotaReports, setQuotaReports] = useState<Record<string, ProviderQuotaReportView>>({});
   const [modelsLoadEpoch, setModelsLoadEpoch] = useState(0);
   const filterWrapRef = useRef<HTMLDivElement>(null);
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const filterPlacement = useAnchoredPlacement(filterWrapRef, filterPanelRef, filterOpen, 250);
+  const filterFieldId = useId();
+  const filterCheckboxRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  /**
+   * The filter dropdown's own facets, as rows a filter field can search — ten
+   * checkboxes across status, pricing and type. Labels only: the per-row counts
+   * shown beside each checkbox are cosmetic and never affect what a filter
+   * query matches, so they are left out of what gets searched.
+   */
+  const filterOptionRows = useMemo(() => ([
+    { id: STATUS_FACET_ID.ready, label: t("pws.status.ready") },
+    { id: STATUS_FACET_ID.needsSetup, label: t("pws.status.needsSetup") },
+    { id: STATUS_FACET_ID.needsAttention, label: t("pws.status.needsAttention") },
+    { id: STATUS_FACET_ID.disabled, label: t("prov.disabledBadge") },
+    { id: "pricing:free", label: t("modal.badge.free") },
+    { id: "pricing:paid", label: t("pws.paid") },
+    { id: TYPE_FACET_ID.cloud, label: t("pws.type.cloud") },
+    { id: TYPE_FACET_ID.local, label: t("pws.type.local") },
+    { id: TYPE_FACET_ID.selfHosted, label: t("pws.type.selfHosted") },
+    { id: TYPE_FACET_ID.login, label: t("pws.type.login") },
+  ]), [t]);
+  const labelOfFilterOption = useCallback((row: { id: string; label: string }) => row.label, []);
+  const optionFilter = useMenuFilter(filterOptionRows, labelOfFilterOption);
 
   const sections = useMemo(() => {
     const base = buildProviderWorkspace(hideRedundantChatGptForwardProviders(providers));
@@ -183,7 +245,7 @@ export default function ProviderWorkspaceShell({
     fetch(`${apiBase}/api/usage?range=30d`)
       .then(r => readJsonIfOk<{
         providers?: Array<{ provider: string; requests: number; totalTokens?: number }>;
-        models?: Array<{ provider: string; model: string; resolvedModel?: string; requests: number; totalTokens: number; inputTokens: number; outputTokens: number; shareRatio: number; estimatedCostUsd?: number }>;
+        models?: Array<{ provider: string; model: string; resolvedModel?: string; requests: number; totalTokens: number; inputTokens: number; outputTokens: number; shareRatio: number; estimatedCostUsd?: number; apiEquivalentCostUsd?: number }>;
       }>(r))
       .then((data) => {
         if (cancelled || !data) return;
@@ -204,6 +266,9 @@ export default function ProviderWorkspaceShell({
             outputTokens: m.outputTokens,
             shareRatio: m.shareRatio,
             ...(m.estimatedCostUsd !== undefined ? { estimatedCostUsd: m.estimatedCostUsd } : {}),
+            // Carried through so a subscription model row can show its
+            // API-equivalent figure rather than a bare em dash.
+            ...(m.apiEquivalentCostUsd !== undefined ? { apiEquivalentCostUsd: m.apiEquivalentCostUsd } : {}),
           });
         }
         setUsageModels(byProviderModels);
@@ -244,7 +309,15 @@ export default function ProviderWorkspaceShell({
     const onDoc = (e: MouseEvent) => {
       if (filterWrapRef.current && !filterWrapRef.current.contains(e.target as Node)) setFilterOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFilterOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // The anchored regex builder is a nested dialog with its own Escape; the
+      // filter field's own first-stage clear is handled inside
+      // `MenuFilterField`. Only an Escape from neither reaches here.
+      if ((e.target as Element | null)?.closest?.('[role="dialog"]')) return;
+      setFilterOpen(false);
+      filterTriggerRef.current?.focus();
+    };
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("keydown", onKey);
     return () => {
@@ -252,6 +325,13 @@ export default function ProviderWorkspaceShell({
       window.removeEventListener("keydown", onKey);
     };
   }, [filterOpen]);
+
+  // Opens focused on the filter field, matching every other converted menu —
+  // typing narrows the ten facets faster than scanning three headed groups.
+  useEffect(() => {
+    if (!filterOpen) return;
+    focusMenuFilterField(filterFieldId);
+  }, [filterOpen, filterFieldId]);
 
   const allItems = useMemo(
     () => [...sections.ready, ...sections.needsSetup, ...sections.disabled],
@@ -407,9 +487,17 @@ export default function ProviderWorkspaceShell({
           />
           <div className="pws-filter-wrap" ref={filterWrapRef}>
             <button
+              ref={filterTriggerRef}
               type="button"
               className={`m3-icon-btn pws-filter-btn${filterActive || filterOpen ? " pws-filter-btn--active" : ""}`}
-              onClick={() => setFilterOpen(open => !open)}
+              onClick={() => {
+                // A fresh search every time the popover opens, same as every
+                // other converted menu — a query left over from the last visit
+                // would silently hide facets the next time this is opened.
+                optionFilter.setQuery("");
+                optionFilter.setRegex(false);
+                setFilterOpen(open => !open);
+              }}
               aria-label={t("pws.filterAria")}
               aria-expanded={filterOpen}
               aria-controls="pws-provider-filters"
@@ -417,14 +505,50 @@ export default function ProviderWorkspaceShell({
               <IconFilter width={18} height={18} aria-hidden="true" />
               {filterActive && <span className="pws-filter-dot" aria-hidden="true" />}
             </button>
-            {filterOpen && (
-              <div id="pws-provider-filters" className="m3-menu pws-filter-menu" role="group" aria-label={t("pws.providerFiltersAria")}>
+            {filterOpen && (() => {
+              // Which of the ten facets the current query keeps. Not filtered
+              // out of the row arrays below — the checked/count wiring next to
+              // each facet stays exactly as it was — just whether the row
+              // renders at all, so a group whose every facet is filtered away
+              // drops its own heading rather than showing an empty one.
+              const visibleFacets = new Set(optionFilter.visible.map(row => row.id));
+              const statusGroupVisible = statusFilterOptions.some(({ key }) => visibleFacets.has(STATUS_FACET_ID[key]));
+              const pricingGroupVisible = visibleFacets.has("pricing:free") || visibleFacets.has("pricing:paid");
+              const typeGroupVisible = (["cloud", "local", "selfHosted", "login"] as const).some(key => visibleFacets.has(TYPE_FACET_ID[key]));
+              return (
+              <div
+                id="pws-provider-filters"
+                ref={filterPanelRef}
+                className="m3-menu pws-filter-menu"
+                role="group"
+                aria-label={t("pws.providerFiltersAria")}
+                style={{ ...fixedPanelStyle(filterPlacement), zIndex: 70 }}
+              >
                 <div className="pws-filter-title">{t("pws.filters")}</div>
-                <div className="pws-filter-head">{t("pws.filterStatus")}</div>
-                {statusFilterOptions.map(({ key, label, count }) => (
+                <MenuFilterField
+                  id={filterFieldId}
+                  query={optionFilter.query}
+                  onQuery={optionFilter.setQuery}
+                  regex={optionFilter.regex}
+                  onRegexChange={optionFilter.setRegex}
+            flags={optionFilter.flags}
+            onFlags={optionFilter.setFlags}
+                  sample={optionFilter.sample}
+                  searchLabel={t("pws.filterFacetsLabel")}
+                  builderLabel={t("pws.filterFacetsBuilder")}
+                  onArrowDown={() => {
+                    const first = optionFilter.visible[0];
+                    if (first) filterCheckboxRefs.current[first.id]?.focus();
+                  }}
+                  resultCount={optionFilter.visible.length}
+                />
+                <MenuFilterStatus matcher={optionFilter.matcher} query={optionFilter.query} resultCount={optionFilter.visible.length} />
+                {statusGroupVisible && <div className="pws-filter-head">{t("pws.filterStatus")}</div>}
+                {statusFilterOptions.filter(({ key }) => visibleFacets.has(STATUS_FACET_ID[key])).map(({ key, label, count }) => (
                   <label key={key} className="pws-filter-option">
                     <input
                       type="checkbox"
+                      ref={element => { filterCheckboxRefs.current[STATUS_FACET_ID[key]] = element; }}
                       checked={statusFilter[key]}
                       onChange={() => setStatusFilter(prev => ({ ...prev, [key]: !prev[key] }))}
                     />
@@ -432,27 +556,42 @@ export default function ProviderWorkspaceShell({
                     <span className="pws-filter-count">{count}</span>
                   </label>
                 ))}
-                <div className="pws-filter-head">{t("pws.pricing")}</div>
-                <label className="pws-filter-option">
-                  <input type="checkbox" checked={pricingFilter.free} onChange={() => setPricingFilter(prev => ({ ...prev, free: !prev.free }))} />
-                  <span className="pws-filter-label">{t("modal.badge.free")}</span>
-                  <span className="pws-filter-count">{freeCount}</span>
-                </label>
-                <label className="pws-filter-option">
-                  <input type="checkbox" checked={pricingFilter.paid} onChange={() => setPricingFilter(prev => ({ ...prev, paid: !prev.paid }))} />
-                  <span className="pws-filter-label">{t("pws.paid")}</span>
-                  <span className="pws-filter-count">{paidCount}</span>
-                </label>
-                <div className="pws-filter-head">{t("pws.filterType")}</div>
+                {pricingGroupVisible && <div className="pws-filter-head">{t("pws.pricing")}</div>}
+                {visibleFacets.has("pricing:free") && (
+                  <label className="pws-filter-option">
+                    <input
+                      type="checkbox"
+                      ref={element => { filterCheckboxRefs.current["pricing:free"] = element; }}
+                      checked={pricingFilter.free}
+                      onChange={() => setPricingFilter(prev => ({ ...prev, free: !prev.free }))}
+                    />
+                    <span className="pws-filter-label">{t("modal.badge.free")}</span>
+                    <span className="pws-filter-count">{freeCount}</span>
+                  </label>
+                )}
+                {visibleFacets.has("pricing:paid") && (
+                  <label className="pws-filter-option">
+                    <input
+                      type="checkbox"
+                      ref={element => { filterCheckboxRefs.current["pricing:paid"] = element; }}
+                      checked={pricingFilter.paid}
+                      onChange={() => setPricingFilter(prev => ({ ...prev, paid: !prev.paid }))}
+                    />
+                    <span className="pws-filter-label">{t("pws.paid")}</span>
+                    <span className="pws-filter-count">{paidCount}</span>
+                  </label>
+                )}
+                {typeGroupVisible && <div className="pws-filter-head">{t("pws.filterType")}</div>}
                 {([
                   { key: "cloud" as const, label: t("pws.type.cloud"), count: typeCounts.cloud },
                   { key: "local" as const, label: t("pws.type.local"), count: typeCounts.local },
                   { key: "selfHosted" as const, label: t("pws.type.selfHosted"), count: typeCounts.selfHosted },
                   { key: "login" as const, label: t("pws.type.login"), count: typeCounts.login },
-                ]).map(({ key, label, count }) => (
+                ]).filter(({ key }) => visibleFacets.has(TYPE_FACET_ID[key])).map(({ key, label, count }) => (
                   <label key={key} className="pws-filter-option">
                     <input
                       type="checkbox"
+                      ref={element => { filterCheckboxRefs.current[TYPE_FACET_ID[key]] = element; }}
                       checked={typeFilter[key]}
                       onChange={() => setTypeFilter(prev => ({ ...prev, [key]: !prev[key] }))}
                     />
@@ -460,6 +599,8 @@ export default function ProviderWorkspaceShell({
                     <span className="pws-filter-count">{count}</span>
                   </label>
                 ))}
+                {/* Sort is a set of buttons, not a filterable checkbox facet — it
+                    stays outside the filter's reach, like the reset action below it. */}
                 <div className="pws-filter-head">{t("pws.sort")}</div>
                 <div className="pws-sort-grid" role="group" aria-label={t("pws.sortProvidersAria")}>
                   {SORT_DEFS.map(opt => (
@@ -480,7 +621,8 @@ export default function ProviderWorkspaceShell({
                   </button>
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         </div>
         {/* The prototype reserves this line under the field so a half-typed pattern does

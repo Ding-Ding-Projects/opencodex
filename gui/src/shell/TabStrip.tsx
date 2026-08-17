@@ -35,12 +35,16 @@ import { useAppearanceTarget } from "./use-appearance-target";
 import TabSearchPanel from "./TabSearchPanel";
 import { useTabRegistry } from "./use-tab-registry";
 import {
-  IconChevron, IconCopy, IconFilter, IconPalette, IconPin, IconPlus, IconSearch, IconTrash, IconX,
+  IconBoxes, IconChevron, IconCopy, IconFilter, IconPalette, IconPin, IconPlus, IconSearch, IconTrash, IconX,
 } from "../icons";
 import { useT } from "../i18n/shared";
 import { PAGE_META, PAGE_META_BY_ID } from "./page-meta";
 import { SearchField } from "./RegexBuilderButton";
+import { MenuItem, MenuShortcut, menuShortcutProps } from "./MenuItem";
+import { matchesShortcut, type ShortcutId } from "./shortcuts";
 import TabAppearanceEditor from "./TabAppearanceEditor";
+import TabGroupPicker from "./TabGroupPicker";
+import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
 import { Button, Segmented, TextInput, Toggle } from "./m3-ui";
 import {
   TAB_MATCH_FLAGS, bulkCloseTargets, clampToViewport, closeOthersTargets, closeToRightTargets,
@@ -62,7 +66,7 @@ interface GroupTarget { id: string; x: number; y: number }
 type ContextAction =
   | "close" | "others" | "right" | "pin" | "duplicate"
   | "containing" | "notContaining" | "appearance"
-  | "newGroup" | "ungroupTab";
+  | "newGroup" | "moveToGroup" | "ungroupTab";
 
 /** Every command the group-header menu offers. */
 type GroupAction = "collapse" | "rename" | "appearance" | "ungroup";
@@ -85,6 +89,11 @@ interface BulkTarget { id: string; invert: boolean; x: number; y: number }
 /** An open appearance editor. The anchor is captured at open time rather than
  * read from the button map during render, so it cannot be a stale element. */
 interface StyleTarget { id: string; anchor: HTMLElement | null }
+
+/** An open "Move… into group…" picker: the tab it moves, and the button it sits
+ * beside. Same shape and same reasoning as `StyleTarget` — the anchor is the tab
+ * button captured when the menu entry was activated, not a render-time lookup. */
+type MoveTarget = StyleTarget;
 
 /**
  * The badge has no class of its own in `m3-shell.css`, so it is styled from the
@@ -170,6 +179,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const [bulkPinned, setBulkPinned] = useState(false);
   const [bulkSize, setBulkSize] = useState({ width: 0, height: 0 });
   const [styleTarget, setStyleTarget] = useState<StyleTarget | null>(null);
+  const [movePicker, setMovePicker] = useState<MoveTarget | null>(null);
   const [groupStyleTarget, setGroupStyleTarget] = useState<StyleTarget | null>(null);
   const [groupMenu, setGroupMenu] = useState<GroupTarget | null>(null);
   const [groupMenuSize, setGroupMenuSize] = useState({ width: 0, height: 0 });
@@ -185,8 +195,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
 
   const listRef = useRef<HTMLDivElement>(null);
   const newMenuWrapRef = useRef<HTMLDivElement>(null);
+  const newMenuRef = useRef<HTMLDivElement>(null);
   const newTriggerRef = useRef<HTMLButtonElement>(null);
   const overflowWrapRef = useRef<HTMLDivElement>(null);
+  const overflowMenuRef = useRef<HTMLDivElement>(null);
   const overflowTriggerRef = useRef<HTMLButtonElement>(null);
   const contextRef = useRef<HTMLDivElement>(null);
   const bulkRef = useRef<HTMLDivElement>(null);
@@ -200,6 +212,20 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const pageRefs = useRef<(HTMLButtonElement | null)[]>([]);
   /** Set by the handlers that move the active tab and want focus to follow it. */
   const focusActiveOnCommit = useRef(false);
+  /**
+   * Set by a handler that just re-parented a tab — into a group, out of one,
+   * anywhere its button moves to a different spot in the tree — and wants
+   * focus to land on that exact tab once the new DOM exists. A tab's button
+   * is keyed by id, but React only reuses a DOM node for a key that stays in
+   * the same parent across a render; moving into (or out of) a group changes
+   * the parent, so the old button unmounts and a new one mounts in its place.
+   * Focusing the old node synchronously is a no-op the moment that happens —
+   * the browser drops focus to `<body>` — so this holds the id to focus
+   * *after* the commit instead, the same shape `focusActiveOnCommit` already
+   * uses for "the tab I want focused is the active one"; this one is for "the
+   * tab I want focused is this specific one, active or not".
+   */
+  const focusTabOnCommit = useRef<string | null>(null);
 
   const pageSearchId = useId();
   const bulkQueryId = useId();
@@ -251,6 +277,8 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   // Derived, not stored: closing the last overflowed tab has to shut the menu,
   // and a stored flag would need an effect to correct itself afterwards.
   const menuOpen = overflowOpen && overflow.length > 0;
+  const newMenuPlacement = useAnchoredPlacement(newMenuWrapRef, newMenuRef, newMenuOpen, 300);
+  const overflowMenuPlacement = useAnchoredPlacement(overflowWrapRef, overflowMenuRef, menuOpen, 260);
   const menuIndex = Math.min(focusIndex, Math.max(0, overflow.length - 1));
   // Named for what the menu actually holds. It lists the tabs that did not fit and
   // its badge counts only those, so "All tabs" told the user the visible ones were
@@ -374,6 +402,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     setOverflowOpen(false);
     setBulk(null);
     setStyleTarget(null);
+    setMovePicker(null);
     setContextIndex(0);
     setContext({ id, x, y });
   };
@@ -392,7 +421,33 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
   const openStyleEditor = (id: string) => {
     setContext(null);
     setBulk(null);
+    setMovePicker(null);
     setStyleTarget({ id, anchor: tabButtons.current.get(id) ?? null });
+  };
+
+  /**
+   * "Move… into group…" — one menu entry opening one surface, never a list of
+   * groups grown into the menu itself.
+   *
+   * The anchor is read from the button map here, in an event handler, and then
+   * held as state: the picker outlives the menu that opened it, so a render-time
+   * lookup would be reading a ref map for an element the menu no longer has any
+   * claim on. See `TabGroupPicker.tsx` for what the surface itself promises.
+   */
+  const openMovePicker = (id: string) => {
+    setContext(null);
+    setBulk(null);
+    setStyleTarget(null);
+    setMovePicker({ id, anchor: tabButtons.current.get(id) ?? null });
+  };
+
+  /** Close the picker and hand focus back to the tab it was opened from —
+   * whether the tab moved or the user changed their mind. A panel that closes
+   * and drops focus to `<body>` restarts a keyboard user at the top of the page. */
+  const closeMovePicker = () => {
+    const anchor = movePicker?.anchor;
+    setMovePicker(null);
+    anchor?.focus();
   };
 
   const openBulkClose = (id: string, invert: boolean, x: number, y: number) => {
@@ -429,10 +484,31 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
    * Nothing is ever hidden. A close entry with nothing to close is disabled, so
    * the menu keeps one shape — a menu whose items move between openings is a
    * menu whose muscle memory is wrong.
+   *
+   * `shortcut` names a binding in `shortcuts.ts`, and only where that binding
+   * genuinely reaches *this* command from *this* surface. Most of these rows
+   * have no keyboard route at all and carry nothing, which is the right answer:
+   * a column of invented chords teaches keys that do nothing.
    */
-  const contextEntries: { action: ContextAction; label: string; Icon: typeof IconX; disabled?: boolean }[] = contextTab
+  const contextEntries: {
+    action: ContextAction; label: string; Icon: typeof IconX; disabled?: boolean; shortcut?: ShortcutId;
+  }[] = contextTab
     ? [
-      { action: "close", label: t("tabs.closeTab"), Icon: IconX, disabled: !closable },
+      {
+        action: "close",
+        label: t("tabs.closeTab"),
+        Icon: IconX,
+        disabled: !closable,
+        // Delete on the strip closes the *active* tab, and this menu acts on the
+        // tab that was right-clicked. Those are the same tab often enough that
+        // dropping the shortcut entirely would hide a real binding, and different
+        // often enough that printing it unconditionally would be a lie with
+        // consequences — press it after right-clicking a background tab and the
+        // tab you were looking at closes instead. So it is shown exactly when it
+        // is true. A shortcut that appears and disappears is a smaller surprise
+        // than one that closes the wrong thing.
+        shortcut: contextTab.id === tabs.activeTab ? "closeTab" : undefined,
+      },
       {
         action: "others",
         label: t("tabs.closeOthers"),
@@ -455,6 +531,12 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
       // collapsible group cannot promise that. `assignGroup` refuses it too, so
       // offering it enabled would be a menu entry that silently does nothing.
       { action: "newGroup", label: t("tabs.newGroup"), Icon: IconPlus, disabled: contextTab.pinned },
+      // One entry with an ellipsis, and it opens a picker. Never one entry per
+      // group: that list grows without bound and pushes the entries below it off
+      // the bottom of a menu whose shape is supposed to be stable. Enabled with
+      // no groups yet, because the picker's own create path is the way to the
+      // first one; disabled for a pinned tab, which `assignGroup` refuses.
+      { action: "moveToGroup", label: t("tabs.moveToGroup"), Icon: IconBoxes, disabled: contextTab.pinned },
       { action: "ungroupTab", label: t("tabs.removeFromGroup"), Icon: IconX, disabled: !contextTab.groupId },
     ]
     : [];
@@ -505,6 +587,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
         setContext(null);
         setNaming({ groupId: null, tabId: id, value: "" });
         break;
+      case "moveToGroup":
+        openMovePicker(id);
+        break;
       case "ungroupTab":
         tabs.assignGroup(id, undefined);
         setContext(null);
@@ -517,7 +602,14 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
 
   const menuGroup = groupMenu ? tabs.groups.find(group => group.id === groupMenu.id) : undefined;
 
-  const groupEntries: { action: GroupAction; label: string; Icon: typeof IconX }[] = menuGroup
+  // No row here carries a `shortcut` today: a group header answers Enter and
+  // Space, which are activation rather than a binding, and nothing else reaches
+  // collapse, rename, appearance or ungroup from the keyboard. The field is
+  // still here so that giving one of them a binding is a single edit in the same
+  // object the label lives in, rather than a second declaration to keep in step.
+  const groupEntries: {
+    action: GroupAction; label: string; Icon: typeof IconX; shortcut?: ShortcutId;
+  }[] = menuGroup
     ? [
       { action: "collapse", label: menuGroup.collapsed ? t("tabs.expand") : t("tabs.collapse"), Icon: IconChevron },
       { action: "rename", label: t("tabs.renameGroup"), Icon: IconCopy },
@@ -535,6 +627,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     setBulk(null);
     setContext(null);
     setStyleTarget(null);
+    setMovePicker(null);
     setGroupStyleTarget(null);
     setGroupMenu({ id, x, y });
   };
@@ -729,11 +822,21 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     tabButtons.current.get(tabs.activeTab)?.focus();
   }, [tabs.activeTab, tabs.tabs]);
 
+  // Same shape, a specific id instead of "whichever tab is active" — see
+  // `focusTabOnCommit`'s own comment for why a moved tab's button cannot be
+  // focused synchronously by the handler that moved it.
+  useLayoutEffect(() => {
+    const id = focusTabOnCommit.current;
+    if (!id) return;
+    focusTabOnCommit.current = null;
+    tabButtons.current.get(id)?.focus();
+  }, [tabs.tabs]);
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     // Shift+F10 and the ContextMenu key are the keyboard's right-click. Without
     // them the tab menu would be mouse-only, which is not a menu at all for
     // anyone driving this from the keyboard.
-    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+    if (matchesShortcut("contextMenu", e)) {
       e.preventDefault();
       openContextMenuFromKeyboard(tabs.activeTab);
       return;
@@ -750,7 +853,11 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     else if (e.key === "ArrowLeft") move(index - 1);
     else if (e.key === "Home") move(0);
     else if (e.key === "End") move(visible.length - 1);
-    else if (e.key === "Delete") { e.preventDefault(); requestClose(tabs.activeTab); }
+    // The binding the tab menu prints beside "Close tab". Matched through the
+    // registry rather than against `"Delete"` here, so the two cannot disagree —
+    // and the registry's chord requires a bare Delete, which is what the label
+    // says: Ctrl+Delete is a different press and was never being advertised.
+    else if (matchesShortcut("closeTab", e)) { e.preventDefault(); requestClose(tabs.activeTab); }
   };
 
   /* ---------------------------------------------------------- menu keys --- */
@@ -790,7 +897,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     else if (e.key === "End") moveRow(count - 1);
     else if (e.key === "ArrowRight" && closable) { e.preventDefault(); setFocusColumn("close"); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); setFocusColumn("item"); }
-    else if (e.key === "Delete" || e.key === "Backspace") {
+    // Printed beside the ✕ of whichever row currently has menu focus — which is
+    // the row this closes. Same registry entry drives both.
+    else if (matchesShortcut("closeMenuRow", e)) {
       e.preventDefault();
       closeFromMenu(overflow[menuIndex].id);
     }
@@ -1002,10 +1111,11 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           </button>
           {menuOpen && (
             <div
+              ref={overflowMenuRef}
               className="m3-menu"
               role="menu"
               aria-label={hiddenLabel}
-              style={{ top: "100%", right: 0, minWidth: 260 }}
+              style={{ ...fixedPanelStyle(overflowMenuPlacement), zIndex: 70, minWidth: "min(260px, calc(100vw - 16px))" }}
               onKeyDown={onMenuKeyDown}
             >
               <div className="m3-menu-heading">{hiddenLabel}</div>
@@ -1020,8 +1130,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                     className="m3-tab"
                     style={{ ...style.surface, maxWidth: "none", width: "100%", borderRadius: "var(--r-s)" }}
                   >
-                    <button
-                      type="button"
+                    {/* Activating a row switches to the tab, and no key does
+                        that beyond Enter on the focused item — so this half of
+                        the row carries no shortcut. Delete belongs to the ✕. */}
+                    <MenuItem
                       role="menuitem"
                       className="m3-tab-btn"
                       style={{ ...style.label, borderRadius: "var(--r-s)" }}
@@ -1033,7 +1145,15 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                       onClick={() => activateFromMenu(tab.id)}
                     >
                       <TabIdentity tab={tab} label={label} />
-                    </button>
+                    </MenuItem>
+                    {/* On the focused row only, because the menu's Delete acts on
+                        the focused row: printed on every row it would promise
+                        each of them a key that closes whichever other row the
+                        arrows happen to be sitting on. It renders outside the ✕
+                        rather than inside it — that button is a fixed 28px grid
+                        cell with an icon centred in it, and text pushed in there
+                        would either overflow it or shove the icon off centre. */}
+                    {closable && index === menuIndex && <MenuShortcut shortcut="closeMenuRow" />}
                     <button
                       type="button"
                       role="menuitem"
@@ -1045,6 +1165,9 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                       onClick={() => closeFromMenu(tab.id)}
                       aria-label={t("tabs.close", { name: label })}
                       title={t("tabs.close", { name: label })}
+                      // The announcement route for the same binding. The visible
+                      // chip above is `aria-hidden`, so the keys are stated once.
+                      {...menuShortcutProps("closeMenuRow")}
                     >
                       <IconX aria-hidden />
                     </button>
@@ -1083,7 +1206,18 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           <IconPlus aria-hidden />
         </button>
         {newMenuOpen && (
-          <div className="m3-menu" role="menu" aria-label={t("tabs.newTab")} style={{ top: "100%", right: 0, minWidth: 300 }}>
+          <div
+            ref={newMenuRef}
+            className="m3-menu"
+            role="menu"
+            aria-label={t("tabs.newTab")}
+            style={{
+              ...fixedPanelStyle(newMenuPlacement),
+              zIndex: 70,
+              width: "min(300px, calc(100vw - 16px))",
+              minWidth: 0,
+            }}
+          >
             <div className="m3-menu-heading">{t("tabs.newTab")}</div>
             <div style={{ padding: "0 4px 8px" }} onKeyDown={onPageSearchKeyDown}>
               <SearchField
@@ -1110,19 +1244,19 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
                   : t("tabs.searchNone", { query: pageQuery })}
               </p>
             ) : (
+              /* Opening a page in a new tab has no keyboard binding of its own,
+                 so no row here prints one. */
               pageResults.map((row, index) => (
-                <button
+                <MenuItem
                   key={row.meta.id}
-                  type="button"
                   role="menuitem"
-                  className="m3-menu-item"
                   ref={el => { pageRefs.current[index] = el; }}
                   onKeyDown={e => onPageResultKeyDown(e, index)}
                   onClick={() => openInNewTab(row.meta.id)}
                 >
                   <row.meta.Icon aria-hidden />
                   <span>{row.label}</span>
-                </button>
+                </MenuItem>
               ))
             )}
           </div>
@@ -1139,11 +1273,10 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           onKeyDown={onContextKeyDown}
         >
           {contextEntries.map((entry, index) => (
-            <button
+            <MenuItem
               key={entry.action}
-              type="button"
               role="menuitem"
-              className="m3-menu-item"
+              shortcut={entry.shortcut}
               disabled={entry.disabled}
               // Roving tabindex: the menu is one Tab stop, arrows move within it.
               tabIndex={index === contextFocus ? 0 : -1}
@@ -1152,7 +1285,7 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
             >
               <entry.Icon aria-hidden />
               <span>{entry.label}</span>
-            </button>
+            </MenuItem>
           ))}
         </div>
       )}
@@ -1265,6 +1398,59 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
         );
       })()}
 
+      {movePicker && (() => {
+        const tab = tabs.tabs.find(item => item.id === movePicker.id);
+        if (!tab) return null;
+        return (
+          <TabGroupPicker
+            groups={tabs.groups}
+            memberCount={id => tabs.tabs.filter(item => item.groupId === id).length}
+            tabLabel={labelOf(tab)}
+            currentGroupId={tab.groupId}
+            anchor={movePicker.anchor}
+            onPick={groupId => {
+              /* `assignGroup` never touches `collapsed`, so a move into a
+                 collapsed group leaves it collapsed — which is what the user
+                 asked for by collapsing it, and what the picker's "Collapsed"
+                 tag warns about before the choice is made.
+                 Every successful move re-parents the tab's button — from a
+                 loose run straight under `.m3-tablist` to inside the target
+                 group's `<div>` — so the button this panel is anchored to is
+                 never the node still on screen afterwards, even when the
+                 target group is not collapsed and the tab never left
+                 `visibleTabs`. Calling `anchor.focus()` here (what
+                 `closeMovePicker` does) would focus a node one commit away
+                 from being discarded; the browser drops focus to `<body>` the
+                 moment React swaps it, same as for a genuinely collapsed
+                 target. So every successful move — collapsed or not — routes
+                 through `focusTabOnCommit`/`focusActiveOnCommit` instead of
+                 `closeMovePicker`, and only the tab that actually vanished
+                 from the strip (a collapsed group swallowing a background
+                 tab, per `visibleTabs`) falls back to the active tab; every
+                 other move focuses the moved tab itself, wherever it landed. */
+              const collapsed = tabs.groups.find(group => group.id === groupId)?.collapsed;
+              const vanishes = !!collapsed && tab.id !== tabs.activeTab;
+              tabs.assignGroup(tab.id, groupId);
+              setMovePicker(null);
+              if (vanishes) focusActiveOnCommit.current = true;
+              else focusTabOnCommit.current = tab.id;
+            }}
+            /* One call, not create-then-assign: `createGroup` takes its members,
+               so the group and its first tab land in a single commit and there is
+               no frame in which an empty group exists. A fresh group is never
+               collapsed, so the tab can only ever move, never vanish — but move
+               is still a reparent, so this needs the same `focusTabOnCommit`
+               route as `onPick` above, not `closeMovePicker`'s stale anchor. */
+            onCreate={name => {
+              tabs.createGroup(name, [tab.id]);
+              setMovePicker(null);
+              focusTabOnCommit.current = tab.id;
+            }}
+            onClose={closeMovePicker}
+          />
+        );
+      })()}
+
       {groupStyleTarget && (() => {
         const group = tabs.groups.find(item => item.id === groupStyleTarget.id);
         if (!group) return null;
@@ -1293,18 +1479,17 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
           style={{ position: "fixed", left: groupMenuPosition.left, top: groupMenuPosition.top, minWidth: 240 }}
         >
           {groupEntries.map((entry, index) => (
-            <button
+            <MenuItem
               key={entry.action}
-              type="button"
               role="menuitem"
-              className="m3-menu-item"
+              shortcut={entry.shortcut}
               tabIndex={index === 0 ? 0 : -1}
               ref={el => { groupEntryRefs.current[index] = el; }}
               onClick={() => runGroupEntry(entry.action)}
             >
               <entry.Icon aria-hidden />
               <span>{entry.label}</span>
-            </button>
+            </MenuItem>
           ))}
         </div>
       )}

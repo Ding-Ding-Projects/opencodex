@@ -9,12 +9,14 @@
  */
 
 import {
-  DICTS, PARTIAL_DICTS, interpolate, voiceLangsFor,
+  DICTS, FUNNY_DEFAULT, PARTIAL_DICTS, interpolate, voiceLangsFor,
   type FunnyLevels, type Locale, type TKey, type Vars,
 } from "./shared";
 import { en } from "./en";
 import { M3_EN, M3_OVERRIDES, type M3Key } from "./m3";
 import { voiceFor, type FunnyLevel, type VoiceLang } from "./voice";
+import { applyVocabularyToTemplate, getActiveVocabularyEntries } from "./personal-vocabulary";
+import { isSchoolModeActive } from "../school-mode/client";
 
 /**
  * Resolution order for one voice track: the funny-level variant, then the
@@ -40,6 +42,18 @@ export function resolveTrack(locale: Locale, voice: VoiceLang, level: FunnyLevel
 }
 
 /**
+ * The one separator between the two halves of a bilingual string.
+ *
+ * It is a constant rather than a literal at each site because three separate
+ * pieces of code have to agree on it exactly — the one that joins the halves,
+ * the one that splits a value back apart, and the one that merges a list of
+ * them. A stray missing space in any of the three would not fail to compile; it
+ * would quietly stop a value being recognised as bilingual, which renders as the
+ * old doubled text rather than as an error.
+ */
+const BILINGUAL_SEP = " · ";
+
+/**
  * Bilingual mode renders both tracks, English first.
  *
  * English stays the primary reading and Cantonese follows it as a compact
@@ -59,7 +73,7 @@ export function resolveKey(locale: Locale, funny: FunnyLevels, key: TKey): strin
   }
   const english = resolveTrack("en", "en", funny.en, key);
   const cantonese = resolveTrack("yue", "yue", funny.yue, key);
-  return cantonese && cantonese !== english ? `${english} · ${cantonese}` : english;
+  return cantonese && cantonese !== english ? `${english}${BILINGUAL_SEP}${cantonese}` : english;
 }
 
 /**
@@ -80,45 +94,141 @@ export function bilingualParts(locale: Locale, funny: FunnyLevels, key: TKey): {
 }
 
 /**
- * A bilingual sentence whose *placeholder* is itself bilingual, joined once.
+ * The two halves of a value that already came out of `t()` in bilingual mode,
+ * or `null` when the value is not a bilingual pair.
  *
- * `t("appearance.editElement", { name })` resolves the template bilingually and
- * then substitutes `name` into both halves. When `name` came from `t()` too it is
- * already `English · 廣東話`, so the result reads
+ * Exactly one separator is required, not "at least one". A value with none is
+ * plainly not bilingual — a model id, a port, a count, a file path. A value with
+ * several is something else again, and the distinction matters: a list of
+ * bilingual labels naively joined with a comma reads
+ * `Language · 語言, Theme · 主題`, and taking the first and second pieces of that
+ * would put "Theme" in the Cantonese clause and drop it from the English one.
+ * Both of those cases are used unchanged in both halves, which is exactly what
+ * the old joined-template behaviour did for *every* value — so an unrecognised
+ * shape degrades to the previous rendering rather than to a mangled one.
+ *
+ * `joinBilingual` exists so that a caller building such a list produces a single
+ * well-formed pair instead of falling into that second case by accident.
+ */
+function bilingualHalves(value: string): [string, string] | null {
+  const halves = value.split(BILINGUAL_SEP);
+  return halves.length === 2 ? [halves[0]!, halves[1]!] : null;
+}
+
+/** The variables as one track sees them: each bilingual pair reduced to its half. */
+function trackVars(vars: Vars | undefined, index: 0 | 1): Vars | undefined {
+  if (!vars) return undefined;
+  const filled: Vars = {};
+  for (const [name, value] of Object.entries(vars)) {
+    const halves = typeof value === "string" ? bilingualHalves(value) : null;
+    filled[name] = halves ? halves[index] : value;
+  }
+  return filled;
+}
+
+/**
+ * Merge several possibly-bilingual strings into one bilingual string.
+ *
+ * A caller that lists translated names — the settings a save was refused for,
+ * say — cannot simply `join(", ")` them in bilingual mode, because the result
+ * carries one separator per item and is no longer a pair anything can split. It
+ * has to be regrouped: all the English, then all the Cantonese, with the single
+ * separator between the two groups.
+ *
+ *   ["Language · 語言", "Theme · 主題"]  ->  "Language, Theme · 語言, 主題"
+ *
+ * An item with no Cantonese half is used in both groups, and when no item has
+ * one — every single-track locale, and a bilingual list of untranslated names —
+ * the two groups come out identical and the plain join is returned, keeping the
+ * rule that the halves are only joined when they actually differ.
+ */
+export function joinBilingual(values: string[], separator: string): string {
+  const halves = values.map(bilingualHalves);
+  const english = values.map((value, i) => halves[i]?.[0] ?? value).join(separator);
+  const cantonese = values.map((value, i) => halves[i]?.[1] ?? value).join(separator);
+  return cantonese === english ? english : `${english}${BILINGUAL_SEP}${cantonese}`;
+}
+
+/**
+ * What `t()` returns: the resolved string with its placeholders filled in.
+ *
+ * In bilingual mode the template is resolved *per track* and each variable's
+ * matching half is interpolated into each, so English gets the English name and
+ * Cantonese gets the Cantonese one.
+ *
+ * Doing that here rather than in a helper a caller must remember to reach for is
+ * the point. The joined-then-interpolated form substituted the whole value into
+ * both halves, and when the value had itself come from `t()` it was already
+ * `English · 廣東話`, so the result read
  *
  *   Edit appearance: Filled buttons · 實心按鈕 · 改外觀：Filled buttons · 實心按鈕
  *
- * — the name twice in each half, and the English name sitting inside the
- * Cantonese clause. It was invisible until the screenshots moved to bilingual
- * mode and the element context menu was photographed saying exactly that.
+ * — the name twice in each half, with the English name sitting inside the
+ * Cantonese clause. That was first noticed on the element context menu and fixed
+ * there alone, behind an opt-in helper; by the time anyone looked again the same
+ * shape had reached the settings-save notices and a dozen other call sites,
+ * because the default was the broken path and the fix was the thing you had to
+ * know to ask for. Inverting that is the actual repair. Nothing has to opt in,
+ * and a call site added tomorrow is right without its author having read this.
  *
- * This resolves the template *per track* and interpolates the matching half of
- * each variable into each, so English gets the English name and Cantonese gets
- * the Cantonese one. Variables with no Cantonese half (a model id, a port, a
- * count) are used unchanged in both, which is right — those are not translated.
+ * Single-track locales keep the old path exactly: one template, one set of
+ * variables, and no separator to look for. Splitting there would be a new bug
+ * rather than a fix, because a value that happens to contain the separator
+ * character is a value, not a pair, and half of it would silently disappear.
+ *
+ * ## The personal-vocabulary boundary
+ *
+ * This is also the one place the user's local vocabulary — see
+ * `personal-vocabulary.ts` — is ever applied. It runs on the *resolved
+ * template*, after `resolveTrack`/`bilingualParts` but strictly before
+ * `interpolate`, which is what keeps it from ever touching a value that
+ * arrived through `vars`: a model id, a path, a command, a server's own error
+ * text. Those are substituted in afterwards, so a vocabulary term can only ever
+ * match the dictionary's own authored words. With no vocabulary loaded — the
+ * default, and the state every existing caller of `translate` was written
+ * against — `applyVocabularyToTemplate` is a same-string no-op, so this changes
+ * nothing about how any of the above behaves until a user actually uploads a
+ * file.
+ *
+ * ## The School Mode boundary
+ *
+ * This is also the one place School Mode (`../school-mode/client`) is ever
+ * applied. While it is active, every one of `locale`, `funny` and the
+ * personal vocabulary is overridden before anything below runs: `locale`
+ * forces `"en"` (the contract's "apps force English presentation", covering
+ * every shipped language, not only Cantonese/bilingual), `funny` forces the
+ * neutral house voice on both tracks (the contract's "funny-level...
+ * capabilities behave as if they are not installed" — not merely quieter,
+ * gone, which for a voice overlay means the default level rather than any
+ * level the user actually chose), and the vocabulary is dropped entirely
+ * (same reasoning as above). The caller's real `locale`/`funny` arguments,
+ * and whatever vocabulary file is loaded, are left completely untouched in
+ * storage — this only changes what one call renders, which is what lets "the
+ * user's prior choices remain stored and return only after the mode is
+ * turned off" hold without this function needing to know anything about
+ * persistence.
+ *
+ * Gating here rather than in each caller is deliberate: `settings-drafts.tsx`
+ * also calls `translate()` directly (for a settings-saved notification), and
+ * gating there too would be a second place this could quietly drift out of
+ * step with the first.
  */
-export function translateWithBilingualVars(
-  locale: Locale,
-  funny: FunnyLevels,
-  key: TKey,
-  vars: Record<string, string>,
-): string {
-  const parts = bilingualParts(locale, funny, key);
-  const half = (index: 0 | 1) => {
-    const filled: Vars = {};
-    for (const [name, value] of Object.entries(vars)) {
-      const halves = value.split(" · ");
-      filled[name] = halves.length > 1 ? (halves[index] ?? halves[0]!) : value;
-    }
-    return filled;
-  };
-  const english = interpolate(parts.primary, half(0));
-  if (!parts.secondary) return english;
-  const cantonese = interpolate(parts.secondary, half(1));
-  return cantonese === english ? english : `${english} · ${cantonese}`;
-}
-
-/** What `t()` returns: the resolved string with its placeholders filled in. */
 export function translate(locale: Locale, funny: FunnyLevels, key: TKey, vars?: Vars): string {
-  return interpolate(resolveKey(locale, funny, key), vars);
+  const forced = isSchoolModeActive();
+  const effectiveLocale: Locale = forced ? "en" : locale;
+  const effectiveFunny: FunnyLevels = forced ? { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT } : funny;
+  const vocabulary = forced ? null : getActiveVocabularyEntries();
+  const tracks = voiceLangsFor(effectiveLocale);
+  if (tracks.length === 1) {
+    const only = tracks[0]!;
+    const template = applyVocabularyToTemplate(resolveTrack(effectiveLocale, only, effectiveFunny[only], key), vocabulary);
+    return interpolate(template, vars);
+  }
+  const parts = bilingualParts(effectiveLocale, effectiveFunny, key);
+  const primary = applyVocabularyToTemplate(parts.primary, vocabulary);
+  const secondary = applyVocabularyToTemplate(parts.secondary, vocabulary);
+  const english = interpolate(primary, trackVars(vars, 0));
+  if (!secondary) return english;
+  const cantonese = interpolate(secondary, trackVars(vars, 1));
+  return cantonese === english ? english : `${english}${BILINGUAL_SEP}${cantonese}`;
 }

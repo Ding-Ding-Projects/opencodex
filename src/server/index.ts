@@ -27,7 +27,7 @@ import { runOpenAiTierStartupMigration } from "../providers/openai-tier-startup"
 import { runAlibabaRegionStartupMigration } from "../providers/alibaba-region-startup";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { providerCodexAccountMode } from "../providers/registry";
-import type { StorageCleanupPolicy } from "../types";
+import type { OcxConfig, StorageCleanupPolicy } from "../types";
 import {
   CodexAccountCooldownError,
   cooldownErrorMessage,
@@ -105,9 +105,11 @@ export {
 } from "./relay";
 import {
   assertServerAuthConfig,
+  classifyDataPlaneCredential,
   corsHeaders,
   managementCorsHeaders,
   hasValidApiAuth,
+  isAllowedDownloadCaptureOrigin,
   isAllowedRequestOrigin,
   isAllowedManagementOrigin,
   isApiAuthRequired,
@@ -130,9 +132,17 @@ export {
   safeConfigDTO,
 } from "./auth-cors";
 import { disableResponsesRequestTimeout, handleResponses, handleResponsesCompact } from "./responses";
-export { disableResponsesRequestTimeout, linkAbortSignal } from "./responses";
+export { disableResponsesRequestTimeout, linkAbortSignal, recordEffectiveCacheRetention } from "./responses";
 import { handleClaudeCountTokens, handleClaudeMessages } from "./claude-messages";
 import { handleChatCompletions } from "./chat-completions";
+import { chatCompletionsErrorResponse } from "../chat/outbound";
+import {
+  buildCopilotDesktopProfile,
+  callableCopilotModels,
+  GITHUB_COPILOT_DESKTOP_PURPOSE,
+  GITHUB_COPILOT_DESKTOP_SURFACE,
+  recordCopilotObservedRequest,
+} from "../chat/copilot-profile";
 import { anthropicErrorResponse } from "../claude/outbound";
 import { buildDesktop3pRegistry } from "../claude/desktop-3p";
 import { runClaudeAuthModeMigration } from "../claude/auth-mode-migration";
@@ -144,6 +154,25 @@ import { BUILD_STAMP, fetchAllModels, handleManagementAPI, VERSION } from "./man
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
 const LIVE_SIDEBAND_PENDING_MAX = 32;
+
+type CopilotProfileAdmission = { active: false } | { active: true; error?: Response };
+
+function copilotProfileAdmission(req: Request, config: OcxConfig): CopilotProfileAdmission {
+  const credential = classifyDataPlaneCredential(req, config);
+  if (credential?.purpose !== GITHUB_COPILOT_DESKTOP_PURPOSE) return { active: false };
+  if (isApiAuthRequired(config)) {
+    return {
+      active: true,
+      error: chatCompletionsErrorResponse(
+        403,
+        "GitHub Copilot Desktop integration keys are accepted only on a loopback OpenCodex bind.",
+        "permission_error",
+        "copilot_profile_loopback_only",
+      ),
+    };
+  }
+  return { active: true };
+}
 
 function closeLiveSideband(ws: ServerWebSocket<WsData>, code = 1000, reason = ""): void {
   try {
@@ -251,7 +280,60 @@ function attachLiveSidebandUpstream(ws: ServerWebSocket<WsData>): void {
 // trackSseForRequestLog(
 // export function relaySseWithHeartbeat
 
+/**
+ * Modules that the dashboard's very first mount reaches through a dynamic
+ * `import()`, warmed sequentially (one at a time, never concurrently with each
+ * other) before the listener opens for real traffic.
+ *
+ * Reproduced live (2026-08-15, devlog b3-proxyhang): loading the desktop
+ * dashboard for the first time fires a burst of a dozen-plus `/api/*` requests
+ * at once, several of which reach one of these modules through `await
+ * import(...)` for the very first time in the process's life. Under that
+ * concurrent load — several first-time dynamic imports and an outbound
+ * `fetch()` all in flight together — Bun 1.3.14 on Windows has been observed to
+ * permanently stop dispatching ANY further request on the `Bun.serve()`
+ * listener, including calls to unrelated synchronous routes (`/healthz`) made
+ * by a completely separate process. An independent `setTimeout` raced against
+ * the stuck operation never fired either, so this is a runtime-level freeze,
+ * not a bug in the awaited call's own error handling — nothing this project's
+ * TypeScript can catch or retry its way out of once it happens.
+ *
+ * The same imports, done ALONE (no concurrent request load) — exactly what
+ * happens here, at the moment `startServer` runs and before the listener has
+ * accepted a single connection — have never reproduced the freeze in dozens of
+ * runs. So the fix is not to change what these routes do; it is to make sure
+ * the very first time each module is touched is this quiet moment rather than
+ * the first real page load. A module already resolved in Bun's module registry
+ * costs nothing extra to `import()` again later. Best-effort: a warm failure
+ * here must never block startup or be treated as a real error, since the
+ * routes that use these modules already handle a failed import on their own.
+ */
+async function warmDashboardMountModules(): Promise<void> {
+  const specifiers = [
+    "../codex/inject",
+    "../claude/gateway-cache",
+    "./system-env",
+    "../claude/agents-inject",
+    "../lib/app-launcher",
+    "../lib/app-installer",
+    "../codex/auth-api",
+  ];
+  for (const specifier of specifiers) {
+    try {
+      await import(specifier);
+    } catch {
+      // Best-effort warm only — the real request handler's own import will
+      // surface (and handle) any genuine load failure.
+    }
+  }
+}
+
 export function startServer(port?: number) {
+  // Fire-and-forget, started before anything else: the whole point is that
+  // these first-time imports finish (or fail) with no concurrent request load
+  // to race against, well before the listener below can accept a connection.
+  void warmDashboardMountModules();
+
   const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()));
   applyProxyEnv(config);
   assertServerAuthConfig(config);
@@ -350,8 +432,13 @@ export function startServer(port?: number) {
 
       if (req.method === "OPTIONS") {
         const managementPreflight = url.pathname.startsWith("/api/");
+        // Extension fetches to a host covered by their own `host_permissions`
+        // are not normally preflighted at all, so this branch is a defensive
+        // fallback rather than the download-capture endpoint's real gate (that
+        // check is the one `handleManagementAPI` runs on the actual request).
+        const downloadsPreflight = url.pathname.startsWith("/api/downloads") && isAllowedDownloadCaptureOrigin(req, config);
         const allowed = managementPreflight
-          ? isAllowedManagementOrigin(req, config)
+          ? (isAllowedManagementOrigin(req, config) || downloadsPreflight)
           : isAllowedRequestOrigin(req, config);
         if (!allowed) {
           return new Response(null, { status: 403, headers: corsHeaders() });
@@ -417,6 +504,11 @@ export function startServer(port?: number) {
       }
 
       if (url.pathname === "/v1/models" && req.method === "GET") {
+        const copilotAdmission = copilotProfileAdmission(req, config);
+        if (copilotAdmission.active && copilotAdmission.error) {
+          recordCopilotObservedRequest({ endpoint: "models", status: copilotAdmission.error.status });
+          return withCors(copilotAdmission.error, req, config);
+        }
         // Model discovery never forwards Authorization upstream, so the broader admission
         // set (Authorization / x-api-key / x-opencodex-api-key) is safe here and required by
         // remote OpenAI-style bearer clients and Claude gateway discovery (anthropic-version).
@@ -440,7 +532,7 @@ export function startServer(port?: number) {
         // Codex catalog (client_version) and the OpenAI list shape below stay byte-identical.
         const wantsAnthropicList = req.headers.get("anthropic-version") !== null
           || url.searchParams.get("flavor") === "anthropic";
-        if (wantsAnthropicList && !url.searchParams.has("client_version")) {
+        if (!copilotAdmission.active && wantsAnthropicList && !url.searchParams.has("client_version")) {
           if (config.claudeCode?.enabled === false) return jsonResponse({ data: [] }, 200, req, config);
           // Build Desktop 3P registry so inbound alias resolution works for subsequent requests.
           buildDesktop3pRegistry(
@@ -464,7 +556,7 @@ export function startServer(port?: number) {
           const data = buildAnthropicModelInfos([...visibleNativeSlugs(config)], goOrdered, resolveAutoContext(config.claudeCode), idStyle, activeDesktop3pAlias);
           return jsonResponse({ data }, 200, req, config);
         }
-        if (url.searchParams.has("client_version")) {
+        if (!copilotAdmission.active && url.searchParams.has("client_version")) {
           // Codex client → Codex catalog shape: native gpt + namespaced routed models,
           // cloned from a native template so required fields (base_instructions, etc.) are present.
           // Pass the subagent picks so featured models lead by priority (matches the on-disk file).
@@ -476,10 +568,16 @@ export function startServer(port?: number) {
         }
         // OpenAI list shape: native gpt bare + routed models namespaced "<provider>/<id>"
         // (pure availability list — disabled natives are omitted entirely).
-        const data = [
+        let data = [
           ...visibleNativeSlugs(config).map(id => ({ id, object: "model", created: 0, owned_by: "openai" })),
           ...uniqueCatalogModelsForRawPublicList(goOrdered).map(m => ({ id: m.alias ?? `${m.provider}/${m.id}`, object: "model", created: 0, owned_by: m.owned_by ?? m.provider })),
         ];
+        if (copilotAdmission.active) {
+          const profile = await buildCopilotDesktopProfile(config);
+          const callable = callableCopilotModels(profile.models);
+          data = data.filter(model => callable.has(model.id));
+          recordCopilotObservedRequest({ endpoint: "models", status: 200 });
+        }
         return jsonResponse({ object: "list", data }, 200, req, config);
       }
 
@@ -672,15 +770,30 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireResponsesApiAuth(req, config);
+        const copilotAdmission = copilotProfileAdmission(req, config);
+        if (copilotAdmission.active && copilotAdmission.error) {
+          recordCopilotObservedRequest({ endpoint: "chat-completions", status: copilotAdmission.error.status });
+          return withCors(copilotAdmission.error, req, config);
+        }
+        const apiAuthError = copilotAdmission.active ? null : requireResponsesApiAuth(req, config);
         if (apiAuthError) return withCors(apiAuthError, req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
-        const response = await handleChatCompletions(req, config, logCtx, { requestId, start });
+        const logCtx: RequestLogContext = {
+          model: "unknown",
+          provider: "unknown",
+          ...(copilotAdmission.active ? { surface: GITHUB_COPILOT_DESKTOP_SURFACE } : {}),
+        };
+        const response = await handleChatCompletions(
+          req,
+          config,
+          logCtx,
+          { requestId, start },
+          copilotAdmission.active ? { profile: GITHUB_COPILOT_DESKTOP_PURPOSE } : {},
+        );
         return withCors(response, req, config);
       }
 

@@ -27,11 +27,12 @@ import type { Root } from "react-dom/client";
 import TabStrip from "../src/shell/TabStrip";
 import ElementAppearanceHost from "../src/shell/ElementAppearanceHost";
 import { useTabs, type Tab, type TabGroup } from "../src/shell/use-tabs";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { PAGE_META } from "../src/shell/page-meta";
 import { VALID_PAGES } from "../src/app-routing";
 import { computePlacement } from "../../shared/m3/anchor";
+import { computeViewportPlacement } from "../src/shell/use-anchored-placement";
 import { clampToViewport } from "../../shared/m3/tabs";
 import { elsewhereFor } from "../src/pages/settings-elsewhere";
 import { makeMatcher } from "../src/pages/models-shared";
@@ -95,19 +96,33 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <PrefsProvider>
           <ElementAppearanceHost>
             <Harness />
           </ElementAppearanceHost>
         </PrefsProvider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
   return { container, root };
 }
 
 /* ------------------------------------------------- every route reachable -- */
+
+test("the navigation footer stays in normal scroll flow for tall compact menus", () => {
+  const footer = SHELL_CSS.match(/\.m3-nav-foot\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(footer).toContain("margin-top: auto");
+  expect(footer).not.toContain("position: sticky");
+  expect(footer).not.toContain("bottom:");
+  expect(footer).not.toContain("z-index:");
+});
+
+test("shared menus have a narrow viewport width cap instead of a defeating minimum", () => {
+  const menu = SHELL_CSS.match(/\.m3-menu\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(menu).toContain("max-width: calc(100vw - 16px)");
+  expect(menu).toContain("min-width: min(220px, calc(100vw - 16px))");
+});
 
 test("every route the app has is offered by the new-tab search", async () => {
   seed([{ id: "t1", page: "dashboard", pinned: false }], "t1");
@@ -211,6 +226,36 @@ test("a panel with no room below flips above its trigger instead of running off 
   // Anchored by its bottom edge, so growing content cannot slide it over the
   // trigger it is supposed to sit above.
   expect(placed.viewportBottom).toBeGreaterThan(0);
+});
+
+test("viewport placement clamps a scrolled anchor and height to the visible side", () => {
+  const viewport = { width: 320, height: 240 };
+  const above = computeViewportPlacement(
+    { top: -100, bottom: -56, left: 20, right: 64 },
+    { width: 300, height: 400 },
+    viewport,
+  );
+  expect(above.viewportTop).toBeGreaterThanOrEqual(8);
+  expect(above.viewportTop).toBeLessThanOrEqual(viewport.height - 8);
+  expect(above.maxHeight).toBeLessThanOrEqual(viewport.height - 16);
+
+  const below = computeViewportPlacement(
+    { top: 244, bottom: 288, left: 20, right: 64 },
+    { width: 300, height: 400 },
+    viewport,
+  );
+  expect(below.viewportBottom).toBeGreaterThanOrEqual(8);
+  expect(below.viewportBottom).toBeLessThanOrEqual(viewport.height - 8);
+  expect(below.maxHeight).toBeLessThanOrEqual(viewport.height - 16);
+});
+
+test("viewport placement does not force the 220px minimum into a short edge gap", () => {
+  const placed = computeViewportPlacement(
+    { top: 20, bottom: 64, left: 20, right: 64 },
+    { width: 300, height: 400 },
+    { width: PHONE_WIDTH, height: 80 },
+  );
+  expect(placed.maxHeight).toBeLessThanOrEqual(8);
 });
 
 test("clampToViewport keeps a pointer-positioned menu on a phone screen", () => {
@@ -406,9 +451,15 @@ test("the coarse-pointer block lifts every named control to the 44px floor", () 
   expect(block).not.toBe("");
   const body = block.slice(0, block.indexOf("\n}"));
 
-  // The controls that were under the floor before this block existed.
-  for (const selector of [".m3-tab-close", ".m3-tab-btn", ".m3-tabgroup-head", ".m3-chip", ".m3-menu-item", ".m3-mob__navbtn", ".m3-mob__model", ".m3-nav-item"]) {
-    expect(body).toContain(selector);
+  // The controls that were under the floor before this block existed. This list
+  // is hand-written on purpose: a rule that only checked the selectors already
+  // present would pass on a block that had quietly lost one. The snackbar pair
+  // is here because it was missing from this block for exactly that reason —
+  // nothing failed while a phone's dismiss button sat at 36x36.
+  for (const selector of [".m3-tab-close", ".m3-tab-btn", ".m3-tabgroup-head", ".m3-chip", ".m3-menu-item", ".m3-mob__navbtn", ".m3-mob__model", ".m3-nav-item", ".m3-snack-close", ".m3-snack-action"]) {
+    // Anchored to a declaration position, so a selector merely mentioned in a
+    // comment inside the block cannot stand in for the rule itself.
+    expect(body).toMatch(new RegExp(`\\${selector}\\s*[,{]`));
   }
   // Every min-height in the block is at least 44px — a rule that named a
   // selector and then set 36px would pass a "contains" check and fail the user.

@@ -16,7 +16,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { M3_EN } from "../src/i18n/m3";
 import NotificationsPage from "../src/pages/Notifications";
 import { NotificationsContext, type Notice, type NotificationsApi } from "../src/shell/notifications-context";
@@ -79,11 +79,11 @@ async function mount(history: Notice[]): Promise<void> {
   root = createRoot(host as never);
   await act(async () => {
     root?.render(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <NotificationsContext.Provider value={api(history)}>
           <NotificationsPage />
         </NotificationsContext.Provider>
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
   });
 }
@@ -169,6 +169,16 @@ test("the search field describes itself by the error only while the error exists
 
   await clickRegexToggle();
   await search("([");
-  expect(searchField().getAttribute("aria-describedby")).toBe("notif-regex-error");
-  expect(testWindow.document.getElementById("notif-regex-error")).not.toBeNull();
+  const described = searchField().getAttribute("aria-describedby") ?? "";
+  // The error is one of the descriptions; the flags row this field compiles under
+  // is the other, and it exists only in regex mode.
+  expect(described.split(" ")).toContain("notif-regex-error");
+  expect(described.split(" ")).toContain("notif-regex-flags-state");
+  // Every referenced id has to resolve. A dangling `aria-describedby` points at
+  // nothing and quietly costs the field its accessible description, which is the
+  // whole defect this test exists for — asserting the literal attribute value
+  // would have caught the first description going missing and nothing else.
+  for (const id of described.split(" ")) {
+    expect(testWindow.document.getElementById(id)).not.toBeNull();
+  }
 });

@@ -32,7 +32,8 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { INITIAL_PLACEMENT, computePlacement, fixedPanelStyle } from "../../../shared/m3/anchor";
+import { INITIAL_PLACEMENT, fixedPanelStyle } from "../../../shared/m3/anchor";
+import { computeViewportPlacement } from "./use-anchored-placement";
 import { IconPin, IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { SearchField } from "./RegexBuilderButton";
@@ -178,7 +179,7 @@ export default function TabSearchPanel(props: TabSearchPanelProps) {
       const rect = anchor?.getBoundingClientRect();
       const panel = panelRef.current?.getBoundingClientRect();
       if (!rect || !panel) return;
-      setPlacement(computePlacement(
+      setPlacement(computeViewportPlacement(
         { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
         { width: panel.width || PANEL_WIDTH, height: panel.height },
         { width: window.innerWidth, height: window.innerHeight },

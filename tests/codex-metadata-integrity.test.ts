@@ -113,7 +113,7 @@ describe("Codex metadata integrity", () => {
       _codexAccountRequired: boolean;
     } = {
       adapter: "openai-responses",
-      baseUrl: "https://chatgpt.test/backend-api/codex",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
       authMode: "forward",
       _codexAccountRequired: true,
       _codexAccountOverride: {
@@ -138,7 +138,7 @@ describe("Codex metadata integrity", () => {
   test("adapter forward mode preserves genuine client metadata", () => {
     const provider: OcxProviderConfig = {
       adapter: "openai-responses",
-      baseUrl: "https://chatgpt.test/backend-api/codex",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
       authMode: "forward",
     };
     const adapter = createResponsesPassthroughAdapter(provider);

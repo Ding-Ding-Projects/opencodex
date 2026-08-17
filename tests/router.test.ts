@@ -326,7 +326,7 @@ describe("routeModel registry effort defaults", () => {
     expect(route.provider.modelReasoningEfforts?.["umans-kimi-k2.7"]).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
-  test("minimal persisted DeepSeek config inherits the registry text-only classification (issue #88)", () => {
+  test("minimal persisted DeepSeek config inherits the current text-only classification (issue #88)", () => {
     const config: OcxConfig = {
       port: 10100,
       defaultProvider: "deepseek",
@@ -342,7 +342,7 @@ describe("routeModel registry effort defaults", () => {
     const route = routeModel(config, "deepseek/deepseek-v4-flash");
 
     expect(route.provider.noVisionModels).toEqual([
-      "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", "deepseek-v4-flash",
+      "deepseek-v4-pro", "deepseek-v4-flash",
     ]);
   });
 

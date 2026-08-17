@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { formatErrorResponse } from "../bridge";
-// The socket that is actually listening, which is not always the one the config
-// names — see `isApiAuthRequired`. `lifecycle` imports nothing from here, so
-// this direction adds no cycle.
+// Request admission follows the socket that is actually listening. During a
+// restart the persisted bind and live bind can briefly disagree; the live one
+// is the security boundary for an incoming packet.
 import { getServerListenHostname } from "./lifecycle";
 import {
   apiKeyTransportConfigError,
@@ -18,7 +18,7 @@ import {
 import { providerDestinationConfigError } from "../lib/destination-policy";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "../providers/registry";
 import { providerConfigSeed } from "../providers/derive";
-import type { OcxConfig, OcxProviderConfig } from "../types";
+import type { DataPlaneApiKeyPurpose, OcxConfig, OcxProviderConfig } from "../types";
 import { providerConfigurationState, providerHasConfiguredApiKey } from "../providers/setup-status";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 
@@ -114,10 +114,65 @@ export function isAllowedManagementOrigin(req: Request, config: OcxConfig): bool
   return !origin || origin === requestOrigin;
 }
 
-export function browserSecurityHeaders(): Record<string, string> {
+/**
+ * Matches a `chrome-extension://`, `moz-extension://` or `edge-extension://`
+ * origin — the only kind of Origin header a browser attaches to a fetch made
+ * from an extension's own background/service-worker context, distinct from
+ * every ordinary web page's `https://`/`http://` origin.
+ */
+const EXTENSION_ORIGIN_PATTERN = /^(?:chrome|moz|edge)-extension:\/\/[a-z0-9-]+$/i;
+
+export function isExtensionOrigin(value: string | null): boolean {
+  return !!value && EXTENSION_ORIGIN_PATTERN.test(value);
+}
+
+/**
+ * The one widening of the management-origin gate: the opencodex browser
+ * extension, and only the browser extension, may reach `/api/downloads/*`
+ * even though its Origin is not the dashboard's own.
+ *
+ * This is safe to widen — rather than a hole in the CORS story the rest of the
+ * management plane relies on — for two reasons that both have to hold:
+ *
+ * 1. An ordinary web page can never forge this. `chrome-extension://<id>` is a
+ *    browser-assigned origin no page-context `fetch()` can set; only code
+ *    actually running as that installed extension's own background/service
+ *    worker sends it. A hostile page's `fetch()` to this same URL still
+ *    carries the page's real `https://` origin and is rejected exactly as
+ *    before by `isAllowedManagementOrigin`.
+ * 2. It only ever widens who may be ANSWERED, never who may reach the
+ *    process at all: the request still has to land on a loopback-bound
+ *    listener (`isLoopbackRequestHost`), which is the same boundary
+ *    `requireLoopbackListener` re-checks inside the handler for every route
+ *    that writes to the local filesystem.
+ */
+export function isAllowedDownloadCaptureOrigin(req: Request, config: OcxConfig): boolean {
+  if (!isExtensionOrigin(req.headers.get("Origin"))) return false;
+  if (isApiAuthRequired(config)) return false; // Non-loopback bind: no extension-origin exception.
+  return isLoopbackRequestHost(req.headers.get("Host"));
+}
+
+export function browserSecurityHeaders(scriptNonce?: string): Record<string, string> {
+  const scriptSources = ["'self'", ...(scriptNonce ? [`'nonce-${scriptNonce}'`] : [])].join(" ");
   return {
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "base-uri 'none'",
+      `script-src ${scriptSources}`,
+      // The React surface uses style props extensively; scripts still receive no
+      // unsafe-inline escape hatch and every production script is same-origin.
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "font-src 'self'",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "frame-src 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+    ].join("; "),
   };
 }
 
@@ -181,6 +236,11 @@ export function configuredApiAuthToken(_config: OcxConfig): string | undefined {
   return token || undefined;
 }
 
+export function configuredAdminAuthToken(): string | undefined {
+  const token = process.env.OPENCODEX_ADMIN_AUTH_TOKEN?.trim();
+  return token || undefined;
+}
+
 export function isLoopbackHostname(hostname: string | undefined): boolean {
   // A fully-qualified "localhost." is the same host as "localhost": curl and some clients
   // send the trailing dot verbatim, and refusing it 403s a legitimate loopback caller.
@@ -188,65 +248,20 @@ export function isLoopbackHostname(hostname: string | undefined): boolean {
   return normalized === "" || normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1" || normalized === "[::1]";
 }
 
-/**
- * Whether a data-plane request must carry a credential.
- *
- * Derived from **both** the configured bind and the socket actually listening,
- * because those two disagree for as long as it takes to restart — and one of the
- * two orders they disagree in is dangerous.
- *
- * `PUT /api/host { exposed: false }` sets `config.hostname = "127.0.0.1"` on the
- * live config object and answers `restartRequired: true`: the socket stays bound
- * to `0.0.0.0` until the proxy is restarted, which the dashboard says plainly.
- * Reading `config.hostname` alone therefore made this return false the instant
- * remote access was switched *off*, while every device on the network could
- * still reach the port — so `hasValidApiAuth` short-circuited to `true` and
- * `/v1/*` served the LAN with no credential at all, until a restart nobody was
- * required to perform.
- *
- * The action that is supposed to make the proxy more private was the one that
- * dropped its authentication.
- *
- * Either side being non-loopback means a credential is required. That is the
- * safe direction for both transitions: enabling demands one immediately (the
- * route mints a key first, so nothing is stranded), and disabling keeps
- * demanding one until the socket it was protecting has actually gone.
- *
- * `getServerListenHostname()` returns undefined before the server is up, and
- * that is treated as "unknown" rather than "safe" — a bare config read is the
- * fallback only when there is no socket to ask about, which is exactly the
- * CLI-and-tests case.
- */
 export function isApiAuthRequired(config: OcxConfig): boolean {
   if (isApiAuthRequiredByConfig(config)) return true;
   const live = getServerListenHostname();
   return live !== undefined && !isLoopbackHostname(live);
 }
 
-/**
- * The same question asked of the configuration alone, ignoring any live socket.
- *
- * This is the *intent* check, and the two must not be confused.
- * `assertServerAuthConfig` runs immediately before `Bun.serve`, deciding whether
- * the bind it is about to make is allowed — at that moment `getServerListenHostname()`
- * still describes the *previous* server in the process, if there was one, so the
- * live-aware version would refuse to start a loopback proxy purely because an
- * earlier one in the same process had been exposed.
- *
- * Request-time gates want the live-aware `isApiAuthRequired` above: they are
- * asking "can this packet have arrived from off-box", and the socket is what
- * answers that. Startup validation wants this one: it is asking "is the
- * configuration I am about to honour a safe one".
- */
+/** Configuration intent used immediately before opening a new socket. */
 export function isApiAuthRequiredByConfig(config: OcxConfig): boolean {
   return !isLoopbackHostname(config.hostname);
 }
 
 export function assertServerAuthConfig(config: OcxConfig): void {
   const hasConfiguredDataCredential = !!configuredApiAuthToken(config)
-    || (config.apiKeys ?? []).some(entry => !!entry.key.trim());
-  // By config, not by live socket: this runs immediately before `Bun.serve`, and
-  // the live reading still describes whichever server this process bound last.
+    || (config.apiKeys ?? []).some(entry => entry.purpose === undefined && !!entry.key.trim());
   if (isApiAuthRequiredByConfig(config) && !hasConfiguredDataCredential) {
     throw new Error(
       "A data-plane credential (OPENCODEX_API_AUTH_TOKEN or config.apiKeys) is required when binding opencodex to a non-loopback hostname",
@@ -262,15 +277,83 @@ function secretEquals(actual: string, expected: string | undefined): boolean {
   return expectedBytes.length === actualBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
-/** Whether `token` is a data-plane admission secret. */
+export type DataPlaneCredentialChannel = "x-opencodex-api-key" | "authorization" | "x-api-key";
+
+export interface ClassifiedDataPlaneCredential {
+  channel: DataPlaneCredentialChannel;
+  source: "environment" | "configured";
+  keyId?: string;
+  purpose?: DataPlaneApiKeyPurpose;
+}
+
+function requestCredentials(req: Request): Array<{ channel: DataPlaneCredentialChannel; value: string }> {
+  const candidates: Array<{ channel: DataPlaneCredentialChannel; value: string }> = [];
+  const dedicated = req.headers.get("x-opencodex-api-key")?.trim();
+  if (dedicated) candidates.push({ channel: "x-opencodex-api-key", value: dedicated });
+  const authorization = req.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (authorization) candidates.push({ channel: "authorization", value: authorization });
+  const apiKey = req.headers.get("x-api-key")?.trim();
+  if (apiKey) candidates.push({ channel: "x-api-key", value: apiKey });
+  return candidates;
+}
+
+/** Classify a recognized data-plane credential without returning or retaining its secret. */
+export function classifyDataPlaneCredential(req: Request, config: OcxConfig): ClassifiedDataPlaneCredential | null {
+  const candidates = requestCredentials(req);
+  if (candidates.length === 0) return null;
+
+  // A purpose credential in ANY accepted channel activates the stricter profile. This prevents a
+  // second generic admission header from masking a purpose bearer and letting Direct mode treat it
+  // as upstream ChatGPT identity. Compare every candidate to every scoped key before generic
+  // precedence; only the exact approved purpose literal is recognized.
+  let scopedMatch: { channel: DataPlaneCredentialChannel; keyId: string } | null = null;
+  for (const candidate of candidates) {
+    for (const entry of config.apiKeys ?? []) {
+      const matches = secretEquals(candidate.value, entry.key);
+      if (matches && entry.purpose === "github-copilot-desktop" && scopedMatch === null) {
+        scopedMatch = { channel: candidate.channel, keyId: entry.id };
+      }
+    }
+  }
+  if (scopedMatch) {
+    return {
+      channel: scopedMatch.channel,
+      source: "configured",
+      keyId: scopedMatch.keyId,
+      purpose: "github-copilot-desktop",
+    };
+  }
+
+  // Preserve the established dedicated-header → bearer → x-api-key precedence for generic keys.
+  for (const candidate of candidates) {
+    if (secretEquals(candidate.value, configuredApiAuthToken(config))) {
+      return { channel: candidate.channel, source: "environment" };
+    }
+    for (const entry of config.apiKeys ?? []) {
+      if (secretEquals(candidate.value, entry.key)) {
+        return { channel: candidate.channel, source: "configured", keyId: entry.id };
+      }
+    }
+  }
+  return null;
+}
+
+/** Whether `token` is a data-plane admission secret valid for the current bind. */
 export function isDataPlaneAdmissionSecret(token: string, config: OcxConfig): boolean {
   const actual = token.trim();
   if (!actual) return false;
   if (secretEquals(actual, configuredApiAuthToken(config))) return true;
-  for (const k of config.apiKeys ?? []) {
-    if (secretEquals(actual, k.key)) return true;
+  for (const entry of config.apiKeys ?? []) {
+    if (entry.purpose !== undefined && isApiAuthRequired(config)) continue;
+    if (secretEquals(actual, entry.key)) return true;
   }
   return false;
+}
+
+/** Whether `token` is the environment-provided management secret. */
+export function isManagementAdmissionSecret(token: string): boolean {
+  const actual = token.trim();
+  return !!actual && secretEquals(actual, configuredAdminAuthToken());
 }
 
 /** Whether `token` is one of the proxy's own admission secrets and must never reach an upstream. */
@@ -278,7 +361,7 @@ export function isProxyAdmissionSecret(token: string, config: OcxConfig): boolea
   const actual = token.trim();
   if (!actual) return false;
   if (/^ocx_(?:data|admin|session)_/.test(actual) || /^ocx_[0-9a-f]{40}$/.test(actual)) return true;
-  return isDataPlaneAdmissionSecret(actual, config);
+  return isDataPlaneAdmissionSecret(actual, config) || isManagementAdmissionSecret(actual);
 }
 
 export class ForwardAdmissionCredentialError extends Error {

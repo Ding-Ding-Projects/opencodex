@@ -42,8 +42,7 @@ be treated as implemented:
 
 ## API ownership
 
-`src/server/index.ts` routes unauthenticated `/api/*` requests to
-`src/server/management-api.ts`:
+`src/server/index.ts` routes unauthenticated `/api/*` requests to `src/server/management-api.ts`:
 
 | Endpoint area | Responsibility |
 | --- | --- |
@@ -136,6 +135,43 @@ OAuth polling API: submit request, waiting-for-login completion, and terminal su
 `POST /api/codex-auth/login/code` succeeds, the GUI must keep the input disabled, expose an
 `aria-live` status message that the code was accepted, and surface repeated `login-status` polling
 network failures as a visible warning instead of silently looking idle again.
+
+## The tab strip, and the invariants groups add to it
+
+Tab semantics are pure functions in `shared/m3/tabs.ts`, and both the dashboard (`gui/src/shell/`)
+and the documentation site consume them. Neither surface may re-implement a rule locally: the reason
+the module exists is that the two had already drifted, and for one rule in particular that is not
+cosmetic — `bulkCloseTargets` is the single answer to "what would this close", read by both the
+confirmation preview and the close itself, so a second copy is a dialog that shows four tabs and
+shuts five.
+
+Invariants a change must not break:
+
+- **The strip never empties.** Every close path spares one tab; a zero-tab shell has nothing to render.
+- **A pin means the tab stays on screen.** It is excluded from close-others, close-to-right and both
+  bulk closes by default, it is never overflowed, and it is never hidden by a group collapse.
+- **A pinned tab keeps its group.** Layout puts it ahead of every group run rather than inside one —
+  the pinned region must stay visible when everything else overflows, and a collapsible header around
+  it could not promise that. Membership survives anyway, because "pin this group" has to be
+  reversible: erasing it would empty the group as the pin was applied.
+- **Collapsing never hides the active tab.** `toggleGroupCollapsed` moves the selection out first, and
+  `visibleTabs` exempts the active tab regardless.
+- **A search reveals, it does not unfold.** Activating a result inside a collapsed group selects the
+  tab and leaves the group collapsed. Expanding would undo a preference the user set.
+- **Restore is verbatim.** `reviveTabs` replays a stored strip exactly as written rather than
+  re-sorting it; every reducer that can disturb the order re-orders already, so sorting on read only
+  ever rearranges a strip that arrived some other way. The renderer coalesces a group's members
+  itself, so a scattered stored order still draws one header.
+- **Decoration is never identity.** A group's accessible name is its name and member count; its icon,
+  badge, small caps and colours are additive. A group header is a button with `aria-expanded`, never a
+  `role="tab"` — everything that counts tabs counts that role.
+- **Each search field owns its own query.** The four tab searches each call `useSearchQuery`
+  separately; there is no shared object for two fields to drift through, and that is structural
+  rather than a convention to be remembered.
+
+The tab context menu offers exactly eight commands. Group membership is reached by drag, by
+<kbd>Alt</kbd>+Arrow, and from the search panel — not by growing a menu whose shape people have
+learned and whose destructive entries sit under the pointer's muscle memory.
 
 ## Logs on disk, and the undo that guards deleting them
 

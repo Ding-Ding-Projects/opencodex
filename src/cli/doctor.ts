@@ -11,6 +11,7 @@ import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getConfigDir, getConfigPath, readConfigDiagnostics, readPid, readRuntimePort, resolveEnvValue } from "../config";
+import { PACKAGE_ROOT, readCliBuildStamp, readPackageIdentity, resolvedEntryPath } from "../lib/build-identity";
 import { findLiveProxy } from "../server/proxy-liveness";
 import { gracefulStopHost } from "../lib/process-control";
 import { maskAccountId } from "../lib/privacy";
@@ -169,6 +170,100 @@ export async function collectOAuthDoctorChecks(
 
 const WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const PROBE_TIMEOUT_MS = 8000;
+
+export type BuildIdentity = {
+  name: string;
+  version: string;
+  build: string;
+  shortCommit: string;
+  released: boolean;
+  installRoot: string;
+  installRootExists: boolean;
+  entryPath: string;
+};
+
+/**
+ * Which install produced the `ocx` a user just ran `ocx doctor` with — the
+ * package name and version, the build/commit when this came off a release
+ * pipeline, and exactly where on disk it is running from. `ocx --version`
+ * stays a single script-friendly line (tests parse it with a regex), so the
+ * fuller identity — the fact that actually distinguishes this fork's build
+ * from a stale global install or an unrelated `ocx` elsewhere on PATH —
+ * lives here instead.
+ */
+export function collectBuildIdentity(): BuildIdentity {
+  const { name, version } = readPackageIdentity();
+  const stamp = readCliBuildStamp();
+  return {
+    name,
+    version,
+    build: stamp.build,
+    shortCommit: stamp.shortCommit,
+    released: stamp.released,
+    installRoot: PACKAGE_ROOT,
+    installRootExists: existsSync(PACKAGE_ROOT),
+    entryPath: resolvedEntryPath(),
+  };
+}
+
+/**
+ * The filename the desktop app's Squirrel install/update handler writes to
+ * report whether it managed to put its own `ocx` shim on the user's PATH
+ * (`electron/cli-path.mjs`). That file lives beside `package.json` is NOT
+ * where this looks — it lives in OPENCODEX_HOME (`getConfigDir()`), the same
+ * per-user state directory as `service-state.json` and `tray-state.json`,
+ * because it has to survive being overwritten by the next Squirrel update and
+ * be readable by a CLI install that has never touched the desktop app's own
+ * install directory.
+ *
+ * Kept as a bare string constant, not an import, on purpose:
+ * `electron/main.mjs` is plain JS loaded directly by Electron with no
+ * TypeScript build step, so it cannot import this file — the two sides agree
+ * on the filename by matching literal, exactly like `configDir()` is
+ * independently duplicated in `bin/ocx.mjs` for the same reason.
+ */
+export const DESKTOP_CLI_PATH_STATUS_FILENAME = "cli-path-status.json";
+
+export type DesktopCliPathStatus =
+  | { present: false }
+  | {
+      present: true;
+      ok: boolean;
+      binDir: string;
+      reason: string | null;
+      manualCommand: string | null;
+      at: string | null;
+    };
+
+/**
+ * Read-only: never writes, never repairs. Reports what the desktop app's
+ * install/update handler recorded the last time it ran, so a PATH failure
+ * captured during a silent Squirrel install (no window, no user watching)
+ * still surfaces the next time someone thinks to ask `ocx doctor`.
+ */
+export function collectDesktopCliPathStatus(configDir: string = getConfigDir()): DesktopCliPathStatus {
+  const statusPath = join(configDir, DESKTOP_CLI_PATH_STATUS_FILENAME);
+  if (!existsSync(statusPath)) return { present: false };
+  try {
+    const raw = JSON.parse(readFileSync(statusPath, "utf8")) as {
+      ok?: unknown;
+      binDir?: unknown;
+      reason?: unknown;
+      manualCommand?: unknown;
+      at?: unknown;
+    };
+    return {
+      present: true,
+      ok: raw.ok === true,
+      binDir: typeof raw.binDir === "string" ? raw.binDir : "",
+      reason: typeof raw.reason === "string" ? raw.reason : null,
+      manualCommand: typeof raw.manualCommand === "string" ? raw.manualCommand : null,
+      at: typeof raw.at === "string" ? raw.at : null,
+    };
+  } catch {
+    return { present: false };
+  }
+}
 
 export type PathRow = { label: string; path: string; exists: boolean };
 
@@ -654,6 +749,21 @@ export async function runDoctor(args: string[] = []): Promise<void> {
 
   // Ordering note: the memory/runtime section renders after "Running proxy
   // process proxy env" below; helpers live above runDoctor for testability.
+
+  const identity = collectBuildIdentity();
+  console.log("Build identity");
+  console.log(`  ok  ${identity.name}@${identity.version}${identity.released ? ` (build ${identity.build}${identity.shortCommit ? `, ${identity.shortCommit}` : ""})` : " (local build, not from a release)"}`);
+  console.log(`  ${identity.installRootExists ? "ok " : "!! "} Installed at: ${identity.installRoot}`);
+  console.log(`      Running as: ${identity.entryPath}`);
+  const cliPathStatus = collectDesktopCliPathStatus();
+  if (cliPathStatus.present) {
+    if (cliPathStatus.ok) {
+      console.log(`  ok  Desktop app PATH install: ocx is on PATH via ${cliPathStatus.binDir || "the desktop app's CLI shim"}`);
+    } else {
+      console.log(`  !!  Desktop app PATH install failed: ${cliPathStatus.reason ?? "unknown reason"}`);
+      if (cliPathStatus.manualCommand) console.log(`      Fix it manually: ${cliPathStatus.manualCommand}`);
+    }
+  }
 
   const paths = collectPaths();
   const mounts = readMounts();

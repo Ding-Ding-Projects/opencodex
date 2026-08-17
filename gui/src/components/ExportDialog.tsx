@@ -9,11 +9,11 @@
  *
  * Two other things it refuses to do quietly:
  *
- *  - **Offer an encrypted 7z on a machine that cannot produce one.** Availability
- *    is reported by the server and the option is disabled with the reason
- *    attached, rather than failing at the last step after the password is typed.
- *  - **Let "encrypted" mean half-encrypted.** Filename encryption is on by
- *    default and turning it off states, on screen, that the names stay readable.
+ *  - **Offer 7z on a machine that cannot produce one.** Availability is reported
+ *    by the server and the reason is shown before an export is attempted.
+ *  - **Pretend encryption is safe when the password transport is not.** The
+ *    server advertises encryption separately from unencrypted 7z; until it has
+ *    a protected password-input channel, the dialog explains why it is absent.
  *
  * A blocking dialog is correct here: this is a decision with irreversible
  * consequences on disk, which is exactly the carve-out the notification rules
@@ -44,7 +44,13 @@ interface Capabilities {
   datasets: DatasetCapability[];
   archives: {
     zip: { available: boolean; notes: string[] };
-    sevenZip: { available: boolean; notes: string[]; blocked?: string };
+    sevenZip: {
+      available: boolean;
+      encryptionAvailable?: boolean;
+      encryptionUnavailableReason?: string;
+      notes: string[];
+      blocked?: string;
+    };
   };
   vsCode: { available: boolean; label: string | null; downloadUrl: string | null };
 }
@@ -70,15 +76,13 @@ export default function ExportDialog({ apiBase, dataset, onClose }: ExportDialog
   const [archive, setArchive] = useState<"" | "zip" | "7z">("");
   const [openAfter, setOpenAfter] = useState(false);
 
-  // 7z knobs. Defaults match 7-Zip's own normal settings, except the one that
-  // does not — see `encryptHeaders`.
+  // Unencrypted 7z knobs. Encryption is a separate server capability because
+  // accepting a password safely requires a protected input channel.
   const [method, setMethod] = useState("LZMA2");
   const [level, setLevel] = useState("5");
   const [dictionarySize, setDictionarySize] = useState("");
   const [solid, setSolid] = useState(true);
   const [volumeSize, setVolumeSize] = useState("");
-  const [password, setPassword] = useState("");
-  const [encryptHeaders, setEncryptHeaders] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +133,6 @@ export default function ExportDialog({ apiBase, dataset, onClose }: ExportDialog
           ...(dictionarySize ? { dictionarySize } : {}),
           solid,
           ...(volumeSize ? { volumeSize } : {}),
-          ...(password ? { password, encryptHeaders } : {}),
         };
       }
       const res = await fetch(`${apiBase}/api/export`, {
@@ -170,7 +173,7 @@ export default function ExportDialog({ apiBase, dataset, onClose }: ExportDialog
     } finally {
       setBusy(false);
     }
-  }, [apiBase, archive, dataset, dictionarySize, encryptHeaders, level, method, onClose, openAfter, password, selected, solid, t, volumeSize]);
+  }, [apiBase, archive, dataset, dictionarySize, level, method, onClose, openAfter, selected, solid, t, volumeSize]);
 
   return (
     <Dialog
@@ -253,20 +256,10 @@ export default function ExportDialog({ apiBase, dataset, onClose }: ExportDialog
             <input className="m3-input" value={volumeSize} placeholder="100m"
               onChange={event => setVolumeSize(event.target.value)} />
           </Field>
-          <Field label={t("export.password")} hint={t("export.passwordHint")}>
-            <input className="m3-input" type="password" value={password} autoComplete="new-password"
-              onChange={event => setPassword(event.target.value)} />
-          </Field>
-          {password && (
-            <>
-              <Field label={t("export.encryptHeaders")} hint={t("export.encryptHeadersHint")}>
-                <Toggle on={encryptHeaders} onChange={setEncryptHeaders} label={t("export.encryptHeaders")} />
-              </Field>
-              {/* Said plainly, on screen, at the moment it stops being true. */}
-              {!encryptHeaders && (
-                <p role="alert" className="m3-banner m3-banner--warn">{t("export.headersReadable")}</p>
-              )}
-            </>
+          {caps?.archives.sevenZip.encryptionAvailable !== true && (
+            <p role="status" className="m3-banner m3-banner--warn">
+              {t("export.encryptionUnavailable")}
+            </p>
           )}
         </>
       )}

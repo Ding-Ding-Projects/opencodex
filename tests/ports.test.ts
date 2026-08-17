@@ -54,6 +54,10 @@ describe("port selection", () => {
     const selected = await findAvailablePort(port);
     expect(selected).not.toBe(port);
     expect(await isPortAvailable(selected)).toBe(true);
+    // Selection is observational: the foreign preferred-port listener is untouched,
+    // and the transient runtime port must not replace the configured preference.
+    expect(await isPortAvailable(port)).toBe(false);
+    expect(shouldPersistSelectedPort(port, selected, port)).toBe(false);
   });
 
   test("persists only the preferred port, not a transient fallback", () => {

@@ -63,6 +63,26 @@
  *     also makes the first-run surfaces deterministic instead of depending on
  *     whether someone dismissed the wizard on this machine last week.
  *
+ *   - It ALSO isolates `OPENCODEX_HOME`, `CODEX_HOME` and `GROK_HOME` — the
+ *     proxy's own state, not the renderer's. This one was missing for a long
+ *     time and cost two failed capture passes to find. Left unset,
+ *     `OPENCODEX_HOME` falls back to `~/.opencodex`: this machine's real
+ *     config, real usage history, real accounts. That is two bugs, not one —
+ *     the screenshots differ between machines from the same commit, and a
+ *     real profile has been observed to freeze the proxy solid (devlog
+ *     b3-proxyhang; see the doc comment on `fetchWhamUsage` in
+ *     `src/codex/auth-api.ts`). `scripts/capture-seed.ts` fills the isolated
+ *     `OPENCODEX_HOME` back up with synthetic-but-realistic providers and
+ *     usage history — an *empty* isolated profile does not freeze, but it
+ *     also does not show anything worth screenshotting (the app-bar cost
+ *     chip renders nothing at all with zero priced usage; see its own doc
+ *     comment). `CODEX_HOME` and `GROK_HOME` are isolated purely for safety:
+ *     without them, a normal `ocx start` unconditionally rewrites
+ *     `~/.grok/config.toml` if it exists, and can rewrite
+ *     `~/.codex/config.toml` if a prior real injection already pointed it at
+ *     a proxy — an earlier run of this exact script did that by accident and
+ *     needed `ocx restore` to undo it.
+ *
  *   - It forces a device scale factor and then fits the window to an exact pixel
  *     size, because otherwise identical code produces 1440x900 images on one
  *     machine and 2880x1800 on another, and that diff is unexplainable.
@@ -73,15 +93,89 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
+import { applyNeutralCaptureHome } from "./capture-env-privacy";
+import { type Rect, toDevicePixels, transientOutOfBounds } from "./capture-transient-bounds";
 
 const ROOT = join(import.meta.dir, "..");
 const OUT = join(ROOT, "assets", "shots");
 const PS_TOOL = join(ROOT, "scripts", "window-tools.ps1");
-const PROFILE = join(ROOT, "node_modules", ".cache", "ocx-capture-profile");
 const PROXY_PORT = Number(process.env.OCX_CAPTURE_PORT || 10188);
 const CDP_PORT = Number(process.env.CDP_PORT || 9223);
+
+/**
+ * Rehome the whole capture run onto `C:\Users\Public\...` BEFORE anything
+ * below derives a path from `os.homedir()`, `LOCALAPPDATA`, or `ROOT` — see
+ * `capture-env-privacy.ts`'s module doc comment for why this exists.
+ * `download-complete-popup.png` and `snackbar.png` shipped the operator's
+ * real Windows username to a public repository because this call was
+ * missing; `storage.png`, `logs.png` and `grok.png` shipped it too, because
+ * `CAPTURE_HOME`/`CAPTURE_CODEX_HOME`/`CAPTURE_GROK_HOME` below used to be
+ * built from `ROOT`, which is the checkout's own real path on disk — itself
+ * under the real profile. Everything derived from `NEUTRAL` instead now.
+ */
+const NEUTRAL = applyNeutralCaptureHome("ocx-capture-privacy-home");
+const PROFILE = join(NEUTRAL.root, "electron-profile");
+
+/**
+ * The proxy's own state, isolated the same way `PROFILE` above isolates the
+ * renderer. See the "Three details are load-bearing" section above for why
+ * this matters: an unset `OPENCODEX_HOME` silently falls back to this
+ * machine's real `~/.opencodex`, which is both non-deterministic and (per
+ * devlog b3-proxyhang) has been observed to freeze the proxy solid.
+ *
+ * Set on `process.env` here, at module scope, rather than only in `launch()`'s
+ * child `env:` — `scripts/capture-seed.ts` is imported and run in THIS
+ * process, before Electron ever starts, and it resolves `OPENCODEX_HOME`
+ * (via `src/config.ts`'s `getConfigDir()`) by reading `process.env` itself.
+ * Setting it here is what makes the seed and the launched child agree on
+ * which directory they mean.
+ *
+ * Built from `NEUTRAL.root`, not `ROOT`: the Storage and Logs & Debug pages
+ * render `OPENCODEX_HOME`/`CODEX_HOME` verbatim, and the Grok page renders
+ * `GROK_HOME`'s config path — a value built from the checkout's real
+ * on-disk path would still leak the operator's username even though it is
+ * never read from `os.homedir()` at all.
+ */
+const CAPTURE_HOME = join(NEUTRAL.root, "opencodex-home");
+const CAPTURE_CODEX_HOME = join(NEUTRAL.root, "codex-home");
+/**
+ * Deliberately never created (see the wipe step below). `injectGrokConfig()`
+ * no-ops on a `GROK_HOME` that is not a directory — that is its own
+ * documented, tested behavior, not something this script has to replicate —
+ * so pointing it at a path that never exists is the whole fix, regardless of
+ * whether the machine actually has Grok installed.
+ */
+const CAPTURE_GROK_HOME = join(NEUTRAL.root, "no-grok-home");
+process.env.OPENCODEX_HOME = CAPTURE_HOME;
+process.env.CODEX_HOME = CAPTURE_CODEX_HOME;
+process.env.GROK_HOME = CAPTURE_GROK_HOME;
+
+/**
+ * A one-file `ocx` shim, so the `terminal` target's embedded shell can find
+ * the command its own script types into it.
+ *
+ * `terminal.prepare` (below) submits `ocx --version` into the app's real
+ * Terminal feature, which spawns a genuine `powershell.exe -NoProfile` child
+ * (`src/lib/terminal-session.ts`) inheriting THIS process's environment. On a
+ * checkout that was never `npm install -g`'d — every fresh worktree, this one
+ * included — `ocx`/`opencodex` is not on `PATH` at all, so the shell answers
+ * "not recognized" and the capture fails with "the shell never printed a
+ * version line". Installing it for real is a machine-wide, persistent change
+ * this script has no business making just to take a screenshot; a shim
+ * confined to `CAPTURE_BIN_DIR` and only ever handed to the child processes
+ * THIS script spawns is the throwaway-profile treatment applied to one more thing
+ * the harness depends on. `bin/ocx.mjs` (the real npm `bin` entry, see
+ * `package.json`) already runs correctly via a bare `node`, verified directly:
+ * `node bin/ocx.mjs --version` prints `opencodex 2.7.42 (@bitkyc08/opencodex)`.
+ */
+const CAPTURE_BIN_DIR = join(ROOT, "node_modules", ".cache", "ocx-capture-bin");
+function ensureOcxShim(): void {
+  mkdirSync(CAPTURE_BIN_DIR, { recursive: true });
+  const target = join(ROOT, "bin", "ocx.mjs").replace(/\//g, "\\");
+  writeFileSync(join(CAPTURE_BIN_DIR, "ocx.cmd"), `@echo off\r\nnode "${target}" %*\r\n`);
+}
 
 /**
  * Committed geometry. The window is fitted to these exact pixel sizes so a
@@ -221,18 +315,26 @@ const PROBE = `
         heading: heading && visible(heading) ? text(heading) : "",
       };
     }),
-    transient: transient.map(text),
+    // The rect travels with the text now, not just the text: a corner surface
+    // can say the right thing and still sit somewhere PrintWindow will not
+    // show, which is exactly the shape of the dim sum card's clipped capture
+    // (see the doc comment on captureOne's geometry check, below).
+    transient: transient.map(el => {
+      const box = el.getBoundingClientRect();
+      return { text: text(el), rect: { x: box.x, y: box.y, w: box.width, h: box.height } };
+    }),
     body: (document.body && document.body.innerText) || "",
     busy: pick("[aria-busy=true]").length,
   };
 })()`;
 
 interface Overlay { label: string; heading: string }
+interface TransientSurface { text: string; rect: Rect }
 interface Probe {
   h1: string[];
   mobileTitle: string[];
   overlays: Overlay[];
-  transient: string[];
+  transient: TransientSurface[];
   body: string;
   busy: number;
 }
@@ -245,7 +347,7 @@ async function probe(): Promise<Probe> {
     h1: (raw?.h1 ?? []).map(norm),
     mobileTitle: (raw?.mobileTitle ?? []).map(norm),
     overlays: (raw?.overlays ?? []).map((o: Overlay) => ({ label: norm(o.label), heading: norm(o.heading) })),
-    transient: (raw?.transient ?? []).map(norm),
+    transient: (raw?.transient ?? []).map((t: TransientSurface) => ({ text: norm(t.text), rect: t.rect })),
     body: norm(raw?.body),
     busy: Number(raw?.busy ?? 0),
   };
@@ -321,13 +423,13 @@ function assertMatches(target: Target, seen: Probe): void {
     if (seen.transient.length !== 1) {
       fail(`expected exactly one corner surface containing "${e.transient}", saw ${seen.transient.length}`);
     }
-    if (!seen.transient[0].toLowerCase().includes(e.transient.toLowerCase())) {
-      fail(`the corner surface reads ${JSON.stringify(seen.transient[0])}, expected it to contain "${e.transient}"`);
+    if (!seen.transient[0].text.toLowerCase().includes(e.transient.toLowerCase())) {
+      fail(`the corner surface reads ${JSON.stringify(seen.transient[0].text)}, expected it to contain "${e.transient}"`);
     }
   } else if (seen.transient.length > 0) {
     // The rule that would have caught the "Skip setup" toast sitting in the
     // corner of the Startup and Dashboard shots, clipping a button.
-    fail(`${seen.transient.length} toast/corner surface(s) are loitering: ${JSON.stringify(seen.transient)}`);
+    fail(`${seen.transient.length} toast/corner surface(s) are loitering: ${JSON.stringify(seen.transient.map(t => t.text))}`);
   }
 
   for (const needle of e.contains ?? []) {
@@ -522,7 +624,13 @@ async function primeProfile(): Promise<void> {
       localStorage.setItem(${JSON.stringify(LANG_KEY)}, ${JSON.stringify(CAPTURE_LOCALE)});
       return true;
     })()`);
-  await send("Page.reload");
+  // `ignoreCache: true`: defense in depth against a stale cached GET
+  // surviving the reload. Not the fix for the stale-`dashboard.png` defect
+  // this file's `Page.reload` calls once carried a long explanation of —
+  // that turned out to be the long-lived proxy process itself holding a
+  // startup-time config in memory, unrelated to what the browser cached; see
+  // `seedRichCaptureHome()`'s doc comment in `capture-seed.ts`.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2500);
   await settle();
 }
@@ -539,7 +647,8 @@ async function setCaptureLocale(): Promise<void> {
       localStorage.setItem(${JSON.stringify(LANG_KEY)}, ${JSON.stringify(CAPTURE_LOCALE)});
       return true;
     })()`);
-  await send("Page.reload");
+  // See the comment on primeProfile's reload above.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2500);
   await settle();
 }
@@ -561,7 +670,8 @@ async function clearOverlays(): Promise<void> {
     await Bun.sleep(450);
   }
   // Neither Escape nor a close button shifted it; a reload always does.
-  await send("Page.reload");
+  // See the comment on primeProfile's reload above.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2500);
   await settle();
 }
@@ -585,6 +695,11 @@ const ROUTE_HEADINGS: Record<string, string> = {
   logs: "Logs & Debug",
   usage: "Usage",
   storage: "Storage",
+  pdf: "PDF tools",
+  converter: "File converter",
+  ollama: "Ollama",
+  "ollama-chat": "Ollama Chat",
+  downloads: "Downloads",
   "codex-auth": "Codex Auth",
   api: "API",
   claude: "Claude",
@@ -648,6 +763,24 @@ terminal.prepare = async () => {
 };
 
 const TAB = ".m3-tab[data-tab-id]";
+
+/**
+ * The filename `download-history`'s seeded record ships as. No committed
+ * script produced `assets/shots/download-history.png` before this — the
+ * original was captured through a real unpacked browser extension in a real
+ * Edge instance, built as a one-off "throwaway orchestrator" per the commit
+ * that added it, and never saved. Reproducing that whole flow just to keep a
+ * screenshot's Downloads history non-empty would be a lot of surface for
+ * very little: the History section renders identically regardless of
+ * whether the record's `source` is `"extension"` or came from a direct API
+ * call, and `recapture-download-popups.ts` already establishes that a real
+ * same-origin `fetch()` through `/api/downloads/capture` is "the SAME way
+ * the extension does" it. So this target seeds one real, real completed
+ * transfer the same way, then captures the already-shipped `downloads`
+ * route showing it — a real transfer through the real engine, just not
+ * through a real browser chrome around it.
+ */
+const DOWNLOAD_HISTORY_FILENAME = "ocx-capture-history-demo.png";
 
 const surfaces: Target[] = [
   {
@@ -716,7 +849,13 @@ const surfaces: Target[] = [
   {
     id: "cost-meter",
     hash: "dashboard",
-    expect: { h1: "Dashboard", overlay: "Estimated cost range" },
+    // "Cost basis" (`usage.cost.laneHeading`), not "Estimated cost range"
+    // (`cost.menuTitle`): CostMeter.tsx now renders a lane-breakdown section
+    // ABOVE the range picker (direct vs. api-equivalent $, added after this
+    // target was first written), so the panel's first `.m3-menu-heading` in
+    // DOM order — the one PROBE's overlay-heading query finds — is the lane
+    // heading. The range picker is still there, just no longer first.
+    expect: { h1: "Dashboard", overlay: "Cost basis" },
     prepare: () => clickSelector("header.m3-appbar button.m3-cost-chip"),
   },
   {
@@ -731,12 +870,80 @@ const surfaces: Target[] = [
     expect: { h1: "Language & voice", transient: "Narrator is off" },
     prepare: () => clickText("button", "Speak a test message"),
     note: "A real non-blocking toast, pushed by a real action rather than injected.",
+    // KNOWN GAP, 2026-08-15. The `transient` probe passes -- the harness will not
+    // write this file otherwise -- and yet the committed `snackbar.png` shows the
+    // Language & voice page with no toast anywhere in frame. Opened and looked at,
+    // twice, rather than inferred.
+    //
+    // So the probe and the shutter disagree, and only one of them is telling the
+    // truth about what a reader sees. Two candidates, neither confirmed: the toast
+    // auto-dismisses between the probe and `PrintWindow`, or it renders outside the
+    // captured region. Whichever it is, this target currently produces an image
+    // whose filename promises something the picture does not contain -- the exact
+    // failure the visibility probe was added to prevent, arriving through the one
+    // gap the probe does not cover.
+    //
+    // Left as a named gap rather than "fixed" by relaxing the probe, which would
+    // only make the disagreement quieter. Whoever picks this up: measure the toast's
+    // rect at shutter time, do not reason about it.
   },
   {
     id: "dimsum",
     hash: "dashboard",
     expect: { h1: "Dashboard", transient: "Dim sum time!" },
     note: "The 1%-per-launch surprise, made deterministic. See forceDimSum().",
+  },
+  {
+    id: "download-history",
+    hash: "downloads",
+    expect: { h1: "Downloads", contains: [DOWNLOAD_HISTORY_FILENAME] },
+    prepare: async () => {
+      const id: string = await evaluate(`(async () => {
+        const res = await fetch("/api/downloads/capture", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            url: window.location.origin + "/favicon.png",
+            suggestedFilename: ${lit(DOWNLOAD_HISTORY_FILENAME)},
+            pageUrl: window.location.href,
+            mimeType: "image/png",
+          }),
+        });
+        if (!res.ok) throw new Error("capture failed: " + res.status + " " + await res.text());
+        const record = await res.json();
+        const confirmRes = await fetch("/api/downloads/" + record.id + "/confirm", { method: "POST" });
+        if (!confirmRes.ok) throw new Error("confirm failed: " + confirmRes.status + " " + await confirmRes.text());
+        return record.id;
+      })()`);
+      // A real transfer through the real engine, same as
+      // recapture-download-popups.ts's "complete" popup — poll the real
+      // record rather than assuming a same-origin favicon-sized fetch
+      // finishes instantly.
+      for (let i = 0; i < 40; i++) {
+        const state: string = await evaluate(`(async () => {
+          const res = await fetch(${lit("/api/downloads/")} + ${lit(id)});
+          const record = await res.json();
+          return record.state;
+        })()`);
+        if (state === "completed") break;
+        if (state === "error") throw new Error("download-history seed download errored");
+        await Bun.sleep(150);
+      }
+      // The already-mounted Downloads page fetched its record list before
+      // this record existed and would not otherwise refetch for up to
+      // IDLE_POLL_MS (6s) — press the page's own real Refresh button rather
+      // than waiting out the poll or reaching past the UI into React state.
+      await clickText("button", "Refresh");
+      await settle();
+    },
+    note:
+      "No committed script produced the original of this image — it came from a one-off "
+      + "\"throwaway orchestrator\" (real unpacked browser extension, real Edge instance) that "
+      + "was never saved. This target reproduces the History section with a real completed "
+      + "transfer instead, seeded the same way recapture-download-popups.ts's popups are: a real "
+      + "same-origin fetch through /api/downloads/capture, which is documented there as "
+      + "\"the SAME way the extension does it\" for the History section's own rendering, which "
+      + "does not care whether a record's source was \"extension\" or a direct API call.",
   },
 ];
 
@@ -763,24 +970,84 @@ function pinnedElectronVersion(): string {
 }
 
 /**
+ * Where npx unpacks a `-p` package. Each invocation gets a content-addressed
+ * directory, so several Electron versions can sit here side by side and the
+ * version has to be checked rather than assumed.
+ */
+function npxCacheRoot(): string {
+  // The REAL LOCALAPPDATA, not the neutral one: `applyNeutralCaptureHome()` has
+  // already rehomed this process by the time anything calls in here, and the
+  // npm cache belongs to the operator's actual profile. Nothing identifying is
+  // read out of it -- only whether an electron.exe of the pinned version exists.
+  const local = NEUTRAL.realLocalAppData || process.env.LOCALAPPDATA || "";
+  return join(local, "npm-cache", "_npx");
+}
+
+/**
+ * The pinned Electron binary already unpacked in npx's cache, or `null`.
+ *
+ * Checked against `dist/version` rather than against the directory name, which
+ * is a hash of the install request and says nothing about what is inside it.
+ */
+function electronFromNpxCache(version: string): string | null {
+  const root = npxCacheRoot();
+  if (!root || !existsSync(root)) return null;
+  for (const entry of readdirSync(root)) {
+    const dist = join(root, entry, "node_modules", "electron", "dist");
+    const exe = join(dist, "electron.exe");
+    const stamp = join(dist, "version");
+    if (!existsSync(exe) || !existsSync(stamp)) continue;
+    if (readFileSync(stamp, "utf8").trim() === version) return exe;
+  }
+  return null;
+}
+
+/**
  * Electron is deliberately not a repo dependency: electron-builder downloads the
- * runtime itself from the pinned version. Asking npx for the package's own
- * exported path beats guessing at its cache layout, and gives us the binary
- * directly so the spawned pid is Electron's rather than a wrapper's — which
- * matters because the window is found by owning process.
+ * runtime itself from the pinned version. We want the binary directly rather
+ * than a wrapper, because the window is found by owning process id.
+ *
+ * Three routes, in order, because the first two each fail in their own way:
+ *
+ *   1. `OCX_ELECTRON`, for a caller who already knows.
+ *   2. npx's own cache, read directly. This is the route that works.
+ *   3. `npx -p electron@<v> node -e "console.log(require('electron'))"`, the
+ *      original approach, kept last because it still resolves on setups where
+ *      the cache layout differs.
+ *
+ * Route 3 was route 1 until npm 12, and it now fails on this machine with
+ * `Cannot find module 'electron'` even though `-p` installed the package
+ * perfectly: the `node` child resolves `require()` from the CURRENT directory's
+ * `node_modules`, not from the temporary prefix npx installed into, and this
+ * repo has no `electron` there on purpose. The failure is indistinguishable
+ * from "Electron is not installed" -- it took reading npx's cache by hand to
+ * find a complete, correct 43.2.0 already sitting on disk. So the cache is
+ * tried BEFORE the subprocess: it is faster, it needs no network, and it does
+ * not depend on npm's resolution behaviour staying still.
  */
 function resolveElectron(): string {
   if (process.env.OCX_ELECTRON) return process.env.OCX_ELECTRON;
   const version = pinnedElectronVersion();
+
+  const cached = electronFromNpxCache(version);
+  if (cached) return cached;
+
   const probe = spawnSync(
     "npx",
     ["--yes", "-p", `electron@${version}`, "node", "-e", "console.log(require('electron'))"],
     { encoding: "utf8", shell: true },
   );
+  // npx may have just populated the cache even though the `require` failed --
+  // which is exactly the npm 12 shape above, and is worth one more look before
+  // giving up.
+  const nowCached = electronFromNpxCache(version);
+  if (nowCached) return nowCached;
+
   const path = (probe.stdout || "").trim().split(/\r?\n/).filter(Boolean).pop();
   if (!path || !existsSync(path)) {
     throw new Error(
-      `could not resolve electron@${version} via npx.\n`
+      `could not resolve electron@${version}.\n`
+      + `  npx cache searched: ${npxCacheRoot()}\n`
       + `  stdout: ${(probe.stdout || "").trim()}\n  stderr: ${(probe.stderr || "").trim()}\n`
       + "  Set OCX_ELECTRON to an electron binary to skip this lookup.",
     );
@@ -843,7 +1110,13 @@ async function launch(viewport: Viewport): Promise<void> {
     `--user-data-dir=${PROFILE}`,
   ], {
     cwd: ROOT,
-    env: { ...process.env, OPENCODEX_PORT: String(PROXY_PORT) },
+    env: {
+      ...process.env,
+      OPENCODEX_PORT: String(PROXY_PORT),
+      // Prepended, not appended: a real `ocx` earlier on PATH must win over
+      // the shim, but the shim must still be found when there is none.
+      PATH: `${CAPTURE_BIN_DIR}${delimiter}${process.env.PATH ?? ""}`,
+    },
     stdio: "ignore",
   });
 
@@ -886,19 +1159,24 @@ async function forceDimSum(): Promise<() => Promise<void>> {
       try {
         localStorage.setItem("ocx-m3:launched", "1");
         localStorage.setItem("ocx-m3:last-version", ${lit(version)});
-        const KEY = "ocx-m3:v1";
-        const prefs = JSON.parse(localStorage.getItem(KEY) || "{}");
-        prefs.dimsum = true;
-        localStorage.setItem(KEY, JSON.stringify(prefs));
       } catch (err) { /* storage disabled */ }
+      // Nothing seeds a preference here any more: the surprise has no off
+      // switch, so seeding the launch markers is the whole of the setup.
     `,
   });
-  await send("Page.reload");
+  // `ignoreCache: true`: defense in depth against a stale cached GET
+  // surviving the reload. Not the fix for the stale-`dashboard.png` defect
+  // this file's `Page.reload` calls once carried a long explanation of —
+  // that turned out to be the long-lived proxy process itself holding a
+  // startup-time config in memory, unrelated to what the browser cached; see
+  // `seedRichCaptureHome()`'s doc comment in `capture-seed.ts`.
+  await send("Page.reload", { ignoreCache: true });
   await Bun.sleep(2600);
   await settle();
   return async () => {
     await send("Page.removeScriptToEvaluateOnNewDocument", { identifier: injected.identifier });
-    await send("Page.reload");
+    // See the comment on the reload above.
+    await send("Page.reload", { ignoreCache: true });
     await Bun.sleep(2600);
     await settle();
   };
@@ -906,10 +1184,25 @@ async function forceDimSum(): Promise<() => Promise<void>> {
 
 // -------------------------------------------------------------------- capture
 
-/** Take the picture. Only ever called after `assertMatches` has passed. */
-async function writeShot(target: Target): Promise<void> {
+/**
+ * Take the picture. Only ever called after `assertMatches` has passed.
+ *
+ * `region` is the corner surface's own claimed box, in *device* pixels — see
+ * `captureOne` for why it exists. Forwarded to `-Action capture` so the same
+ * PowerShell call that photographs the window also samples that one
+ * sub-rectangle and refuses to write a file where it is blank, the same way
+ * `assertMatches` already refuses to write one whose DOM claim does not match.
+ */
+async function writeShot(target: Target, region?: Rect): Promise<void> {
   const file = join(OUT, `${target.id}.png`);
-  const line = powershell(["-Action", "capture", "-Hwnd", String(hwnd), "-Out", file]);
+  const args = ["-Action", "capture", "-Hwnd", String(hwnd), "-Out", file];
+  if (region) {
+    args.push(
+      "-CheckX", String(region.x), "-CheckY", String(region.y),
+      "-CheckW", String(region.w), "-CheckH", String(region.h),
+    );
+  }
+  const line = powershell(args);
   const [, w, h] = line.split(/\s+/);
 
   const [wantW, wantH] = pixels(target.viewport ?? DESKTOP);
@@ -929,8 +1222,33 @@ async function captureOne(target: Target): Promise<void> {
   // a half-faded panel that reads as a rendering bug.
   await Bun.sleep(700);
 
-  assertMatches(target, await probe());
-  await writeShot(target);
+  const seen = await probe();
+  assertMatches(target, seen);
+
+  // The DOM claim just passed: something visible, opaque, un-hidden reads the
+  // right text. `assets/shots/dimsum.png` shipped with the dim sum card
+  // clipped by the bottom of the window despite that exact claim passing —
+  // `position: fixed; bottom: 16px` cannot geometrically produce a box past
+  // the viewport's own bottom edge, and yet there it was. So a passing DOM
+  // claim is necessary and not sufficient: also ask whether the corner
+  // surface's own measured rect actually fits inside the window PrintWindow
+  // is about to photograph, and refuse to write the file if it does not —
+  // exactly the same "prove it, don't infer it" rule this harness already
+  // applies to text content, just applied to geometry too.
+  let region: Rect | undefined;
+  if (target.expect.transient !== undefined) {
+    const vp = target.viewport ?? DESKTOP;
+    const rect = seen.transient[0].rect;
+    const reason = transientOutOfBounds(rect, { width: vp.css[0], height: vp.css[1] });
+    if (reason) {
+      throw new Error(
+        `the "${target.expect.transient}" corner surface ${reason} — refusing to write a shot that would clip it`,
+      );
+    }
+    region = toDevicePixels(rect, vp.scale);
+  }
+
+  await writeShot(target, region);
 }
 
 // ----------------------------------------------------------------------- main
@@ -954,7 +1272,37 @@ mkdirSync(OUT, { recursive: true });
 // depending on what someone dismissed on this machine last week.
 rmSync(PROFILE, { recursive: true, force: true });
 
+// Same wipe-then-seed treatment for the proxy's own state (see the module doc
+// comment and the CAPTURE_HOME block above). CAPTURE_GROK_HOME is removed but
+// deliberately never recreated — see its own comment.
+rmSync(CAPTURE_HOME, { recursive: true, force: true });
+mkdirSync(CAPTURE_HOME, { recursive: true });
+rmSync(CAPTURE_CODEX_HOME, { recursive: true, force: true });
+mkdirSync(CAPTURE_CODEX_HOME, { recursive: true });
+rmSync(CAPTURE_GROK_HOME, { recursive: true, force: true });
+// Wipe the neutral Downloads folder too, so a completed `download-history`
+// capture never accumulates stale files across repeated runs.
+rmSync(NEUTRAL.downloads, { recursive: true, force: true });
+mkdirSync(NEUTRAL.downloads, { recursive: true });
+ensureOcxShim();
+const { seedMinimalCaptureHome, seedRichCaptureHome } = await import("./capture-seed");
+// Minimal (no configured providers) so the `onboarding` target's wizard has
+// something to show; `seedRichCaptureHome()` is layered on right after,
+// either immediately below (no firstRunOnly target in this run) or once the
+// wizard itself has been captured and dismissed (see the loop below and
+// capture-seed.ts's module doc comment for why the order is load-bearing).
+await seedMinimalCaptureHome();
+
 const failures: string[] = [];
+// Config persists to disk from the very first `seedRichCaptureHome()` call
+// (the management API writes through), so a later viewport's fresh proxy
+// process boots already "configured" — `hasFirstRun` false, straight into
+// the `else` branch below — and would otherwise seed the providers and 22
+// usage rows a SECOND time, doubling every number `dimsum`/`mobile` show
+// next to what `dashboard`/`cost-meter` showed a moment earlier. Reproduced
+// live: the app-bar chip read "$0.336" on the desktop pass and "$0.672" —
+// exactly double — on the phone pass that followed it.
+let richSeeded = false;
 const byViewport = [
   { viewport: DESKTOP, list: selected.filter(t => (t.viewport ?? DESKTOP) === DESKTOP) },
   { viewport: PHONE, list: selected.filter(t => t.viewport === PHONE) },
@@ -979,8 +1327,23 @@ for (const { viewport, list } of byViewport) {
     // which is the same thing finishing the wizard does.
     // The pass that photographs the wizard needs it still unseen; every other
     // pass writes the flag so it does not sit over the first target.
-    if (list.some(t => t.firstRunOnly)) await setCaptureLocale();
-    else await primeProfile();
+    const hasFirstRun = list.some(t => t.firstRunOnly);
+    if (hasFirstRun) await setCaptureLocale();
+    else {
+      // No wizard to protect in this run: safe to layer the rich seed on
+      // immediately rather than waiting for a firstRunOnly target's cleanup
+      // (there isn't one) to trigger it below. The proxy is already up (see
+      // `launch()` above), so the management-API calls inside
+      // `seedRichCaptureHome()` land on the real running process. Guarded by
+      // `richSeeded` — see its own comment — so a later viewport pass, whose
+      // fresh proxy already reads yesterday's rich `config.json` off disk,
+      // does not layer a second helping of it on top.
+      if (!richSeeded) {
+        await seedRichCaptureHome(`http://127.0.0.1:${PROXY_PORT}`);
+        richSeeded = true;
+      }
+      await primeProfile();
+    }
     for (const target of list) {
       let restore: (() => Promise<void>) | null = null;
       try {
@@ -997,6 +1360,25 @@ for (const { viewport, list } of byViewport) {
           if (restore) await restore();
           if (target.cleanup) await target.cleanup();
         } catch { /* the next target's clearOverlays is the backstop */ }
+      }
+      // The wizard's own capture (pass or fail) is the one moment
+      // `hasConfiguredProvider()` was allowed to say "nothing configured yet".
+      // Every target after it — in this same list — wants the rich seed, so
+      // this fires once, right here, rather than a second time up front. It
+      // goes through the live management API (see `seedRichCaptureHome()`'s
+      // doc comment in `capture-seed.ts`), not a second `config.json` write —
+      // the already-running proxy holds its config in memory from startup and
+      // never notices a file changing under it. The reload afterward is still
+      // needed too: `dashboard`'s hash is the same one `onboarding` was just
+      // shown over, so `goto()`'s hash assignment on the next target is a
+      // same-value no-op and the panel would not otherwise re-mount to pick
+      // up what the API calls just changed.
+      if (target.firstRunOnly) {
+        if (!richSeeded) {
+          await seedRichCaptureHome(`http://127.0.0.1:${PROXY_PORT}`);
+          richSeeded = true;
+        }
+        await primeProfile();
       }
     }
   } finally {

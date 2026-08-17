@@ -16,20 +16,29 @@
  * 2. A value that did not move records nothing and claims nothing. The Version
  *    history is a list of real events, so a refused or no-op write must not
  *    appear in it, and "Setting saved" must not be shown for a save that the
- *    server declined. A control that visibly springs back still says why.
+ *    server declined. A refused value stays staged rather than springing back,
+ *    so it can be corrected and retried — and the save still says which setting
+ *    was declined and why, because a draft bar that will not clear explains
+ *    nothing on its own. `useSettingsSave` owns that notice; the draft
+ *    coordinator sits outside the language and notification providers and so
+ *    hands its outcome upward rather than reporting it itself.
  * 3. Plain-text search by default, `.*` an explicit opt-in, patterns capped at
  *    400 characters and evaluated locally — the same matcher every other search
- *    bar in the GUI uses.
+ *    bar in the GUI uses, compiled with the flags the anchored builder beside the
+ *    field actually composed rather than a pinned `i`.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useSettingsDrafts } from "../settings-drafts-context";
 import { elsewhereFor } from "./settings-elsewhere";
+import { useSchoolModeActive } from "../school-mode/hooks";
 import { IconRefresh, IconSearch } from "../icons";
 import { LOCALES, useI18n, type TKey } from "../i18n/shared";
 import { Button, Card, Chip, Empty, Segmented, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
-import { useNotifications } from "../shell/notifications-context";
-import { readRevisions, recordRevision } from "../shell/revisions";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
+import { readRevisions } from "../shell/revisions";
 import { usePrefs } from "../theme/prefs-context";
 import { FONT_CHOICES } from "../theme/m3";
 import { formatBytes } from "../format-bytes";
@@ -39,19 +48,11 @@ import {
   EMPTY_SNAPSHOT,
   SETTINGS_GROUPS,
   loadSettingsSnapshot,
-  putSetting,
-  readDebug,
-  readEffortCaps,
-  readInjection,
-  readMode,
-  readPolicy,
-  readShadowCall,
   snapshotHasData,
   type CleanupSchedule,
   type JumpTarget,
   type MultiAgentMode,
   type SettingsGroupId,
-  type SettingsSnapshot,
 } from "./settings-shared";
 
 /** Placeholder for a value the server reports as unset. Punctuation, not prose. */
@@ -63,13 +64,23 @@ const DEBUG_ROW = "debug-";
 const DEBUG_FLAGS = ["debug", "usage", "injection", "claude"] as const;
 
 /**
- * Settings this page deliberately does not aggregate, because their editors are
- * whole workspaces (a provider table, a model catalogue, an account pool). The
- * search reports a hit on one of these by name and says which tab owns it, so a
- * miss here never reads as "that setting does not exist".
+ * Every setting the app has, each tagged with the screen that owns its real
+ * editor, so a hit this page cannot show is still named and located.
+ *
+ * This page aggregates a lot but not everything: some editors are whole
+ * workspaces (a provider table, a model catalogue, an account pool), and even
+ * the values it does mirror are fully editable only on their own screen. Reading
+ * the shared registry rather than a list kept here means a setting added
+ * anywhere becomes findable from this search bar without anyone remembering to
+ * come and add it — which is what the eight hand-written rows this replaced
+ * could never promise.
+ *
+ * Read inside the component, on every render that cares — see
+ * `elsewhereFor`'s own doc comment. It used to be read once at module scope,
+ * which was safe back when the registry was contributed purely statically;
+ * School Mode's live suppression is exactly what makes that unsafe now, since
+ * "which rows are visible" can change while this page is already open.
  */
-// One shared registry, so every settings search reports the same neighbours.
-const ELSEWHERE = elsewhereFor("nav.settings");
 
 const LEAD_ROW: CSSProperties = { marginBottom: "var(--sp-3)", alignItems: "flex-start" };
 const LEAD: CSSProperties = { margin: 0 };
@@ -135,13 +146,6 @@ interface SettingRow {
   jump?: JumpTarget;
 }
 
-/** One recorded change: the setting's name, the value it moved to, what it replaced. */
-interface SettingChange {
-  setting: string;
-  value: string;
-  before: string;
-}
-
 function SelectControl({ label, value, options, disabled, onChange }: {
   label: string;
   value: string;
@@ -167,17 +171,32 @@ function SelectControl({ label, value, options, disabled, onChange }: {
 
 export default function SettingsPage({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
-  const { notify } = useNotifications();
   const { prefs } = usePrefs();
-  const [snapshot, setSnapshot] = useState<SettingsSnapshot>(EMPTY_SNAPSHOT);
+  const { settings, setSettingsBaseline, setSettings, applying } = useSettingsDrafts();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  /** Id of the control being written, or null. One write at a time keeps server order. */
-  const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this one field compiles with, held here rather than pinned inside
+   * the matcher. The builder anchored to the field composes a pattern *and* its
+   * flags; taking only the pattern is what made the popover's flag chips
+   * decorative from this field's point of view — a pattern deliberately built as
+   * case-sensitive arrived case-insensitive, and turning on `m` or `s` changed
+   * the panel's preview and then changed nothing about which settings this page
+   * showed. State per bar, never shared: were a second search bar ever added to
+   * this page it would own its own set, because one shared set would mean turning
+   * on `u` in one field silently recompiled the other.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [revisionCount, setRevisionCount] = useState(0);
   const loadGenerationRef = useRef(0);
+
+  // Recomputed whenever School Mode flips — see `elsewhereFor`'s own doc
+  // comment for why a module-scope constant went stale the moment the mode
+  // could change live while this page was already open.
+  const schoolModeActive = useSchoolModeActive();
+  const ELSEWHERE = useMemo(() => elsewhereFor("nav.settings"), [schoolModeActive]);
 
   // `recordRevision` fires this event, so the history count stays honest whether the
   // change was made here or on another screen.
@@ -198,14 +217,14 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
     try {
       const { snapshot: next, error } = await loadSettingsSnapshot(apiBase, signal);
       if (signal?.aborted || generation !== loadGenerationRef.current) return;
-      setSnapshot(next);
+      setSettingsBaseline(next);
       setLoadError(error);
     } catch {
       if (signal?.aborted || generation !== loadGenerationRef.current) return;
     } finally {
       if (generation === loadGenerationRef.current) setLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, setSettingsBaseline]);
 
   // Deferred a tick so the fetch does not cascade renders out of the effect body.
   useEffect(() => {
@@ -234,213 +253,51 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
     }
   }, [t]);
 
-  /**
-   * One settings write, start to finish.
-   *
-   * `optimistic` paints immediately, `request` returns the snapshot the *server*
-   * reports plus the values that genuinely moved. Nothing is recorded and nothing
-   * is claimed when that list is empty.
-   */
-  const runSave = async (
-    id: string,
-    optimistic: SettingsSnapshot,
-    request: () => Promise<{ next: SettingsSnapshot; changes: SettingChange[] }>,
-  ) => {
-    if (busy !== null) return;
-    const before = snapshot;
-    setBusy(id);
-    setSnapshot(optimistic);
-    try {
-      const { next, changes } = await request();
-      setSnapshot(next);
-      if (changes.length === 0) {
-        // The server echoed the value it already had: refused, or a no-op. Recording
-        // it would put a change that never happened into the history. The control
-        // has just sprung back to the server's value, so say why rather than
-        // leaving the user to wonder whether the click registered.
-        if (JSON.stringify(next) !== JSON.stringify(optimistic)) {
-          notify({ tone: "warn", title: t("settings.saveFailed") });
-        }
-        return;
-      }
-      for (const change of changes) {
-        recordRevision({
-          scope: "settings",
-          label: t("settings.title"),
-          summary: change.value
-            ? t("dash.revision.changed", { setting: change.setting, value: change.value })
-            : t("dash.revision.cleared", { setting: change.setting }),
-          before: change.before,
-        });
-      }
-      notify({ tone: "success", title: t("settings.savedTitle"), body: t("settings.savedBody") });
-    } catch {
-      setSnapshot(before);
-      notify({ tone: "error", title: t("settings.saveFailed") });
-    } finally {
-      setBusy(null);
-    }
-  };
-
+  // Server-backed rows edit the coordinator's snapshot only. The endpoint PUTs
+  // and revision writes are centralized in SettingsDraftProvider.apply(), so an
+  // edit can preview across tabs without becoming durable by accident.
+  const snapshot = settings ?? EMPTY_SNAPSHOT;
+  const saving = applying;
   const { proxy, injection, effortCaps, maMode, shadowCall, sidecar, policy, debug } = snapshot;
-  const saving = busy !== null;
-
-  /* ------------------------------------------------------------- handlers -- */
 
   const saveCodexAutoStart = (nextValue: boolean) => {
-    if (!proxy) return;
-    void runSave("codexAutoStart", { ...snapshot, proxy: { ...proxy, codexAutoStart: nextValue } }, async () => {
-      const data = await putSetting<{ codexAutoStart?: unknown }>(apiBase, "/api/settings", { codexAutoStart: nextValue });
-      const echoed = data.codexAutoStart === true;
-      return {
-        next: { ...snapshot, proxy: { ...proxy, codexAutoStart: echoed } },
-        changes: echoed === proxy.codexAutoStart ? [] : [{
-          setting: t("dash.codexAutoStart"),
-          value: onOff(echoed),
-          before: JSON.stringify({ codexAutoStart: proxy.codexAutoStart }),
-        }],
-      };
-    });
+    setSettings(previous => previous.proxy
+      ? { ...previous, proxy: { ...previous.proxy, codexAutoStart: nextValue } }
+      : previous);
   };
 
   const saveShadowCall = (nextValue: boolean) => {
-    if (!shadowCall) return;
-    void runSave("shadowCall", { ...snapshot, shadowCall: { ...shadowCall, enabled: nextValue } }, async () => {
-      const data = await putSetting<{ enabled?: unknown; model?: unknown }>(
-        apiBase,
-        "/api/shadow-call-settings",
-        { enabled: nextValue },
-      );
-      const echoed = readShadowCall(data);
-      return {
-        next: { ...snapshot, shadowCall: echoed },
-        changes: echoed.enabled === shadowCall.enabled ? [] : [{
-          setting: t("dash.shadowCallIntercept"),
-          value: onOff(echoed.enabled),
-          before: JSON.stringify(shadowCall),
-        }],
-      };
-    });
+    setSettings(previous => previous.shadowCall
+      ? { ...previous, shadowCall: { ...previous.shadowCall, enabled: nextValue } }
+      : previous);
   };
 
   const saveMode = (nextValue: MultiAgentMode) => {
-    if (maMode === null || maMode === nextValue) return;
-    void runSave("maMode", { ...snapshot, maMode: nextValue }, async () => {
-      const data = await putSetting<{ multiAgentMode?: unknown }>(apiBase, "/api/v2", { multiAgentMode: nextValue });
-      const echoed = readMode(data);
-      return {
-        next: { ...snapshot, maMode: echoed },
-        changes: echoed === maMode ? [] : [{
-          setting: t("dash.multiAgent"),
-          value: t(`models.v2Mode_${echoed}` as TKey),
-          before: JSON.stringify({ multiAgentMode: maMode }),
-        }],
-      };
-    });
+    setSettings(previous => previous.maMode === null ? previous : { ...previous, maMode: nextValue });
   };
 
-  const saveInjectionFlag = (
-    id: "multiAgentGuidanceEnabled" | "syncCodexSubagentDefaults",
-    nextValue: boolean,
-  ) => {
-    if (!injection) return;
-    void runSave(id, { ...snapshot, injection: { ...injection, [id]: nextValue } }, async () => {
-      const data = await putSetting<{
-        multiAgentGuidanceEnabled?: unknown;
-        syncCodexSubagentDefaults?: unknown;
-        model?: unknown;
-        effort?: unknown;
-      }>(apiBase, "/api/injection-model", { [id]: nextValue });
-      const echoed = readInjection(data);
-      const before = JSON.stringify(injection);
-      const changes: SettingChange[] = [];
-      // The endpoint echoes all four fields and can clear the model-dependent ones
-      // as a side effect, so each is compared rather than assuming only `id` moved.
-      if (echoed.multiAgentGuidanceEnabled !== injection.multiAgentGuidanceEnabled) {
-        changes.push({ setting: t("dash.multiAgentGuidance"), value: onOff(echoed.multiAgentGuidanceEnabled), before });
-      }
-      if (echoed.syncCodexSubagentDefaults !== injection.syncCodexSubagentDefaults) {
-        changes.push({
-          setting: t("dash.syncCodexSubagentDefaults"),
-          value: onOff(echoed.syncCodexSubagentDefaults),
-          before,
-        });
-      }
-      if (echoed.model !== injection.model) {
-        changes.push({ setting: t("dash.injectionLabel"), value: echoed.model, before });
-      }
-      if (echoed.effort !== injection.effort) {
-        changes.push({ setting: t("dash.injectionEffortLabel"), value: echoed.effort, before });
-      }
-      return { next: { ...snapshot, injection: echoed }, changes };
-    });
+  const saveInjectionFlag = (id: "multiAgentGuidanceEnabled" | "syncCodexSubagentDefaults", nextValue: boolean) => {
+    setSettings(previous => previous.injection
+      ? { ...previous, injection: { ...previous.injection, [id]: nextValue } }
+      : previous);
   };
 
   const saveEffortCap = (field: "effortCap" | "subagentEffortCap", nextValue: string) => {
-    if (!effortCaps) return;
-    void runSave(field, { ...snapshot, effortCaps: { ...effortCaps, [field]: nextValue } }, async () => {
-      const data = await putSetting<{ effortCap?: unknown; subagentEffortCap?: unknown }>(
-        apiBase,
-        "/api/effort-caps",
-        { [field]: nextValue || null },
-      );
-      const echoed = readEffortCaps(data);
-      const before = JSON.stringify(effortCaps);
-      const changes: SettingChange[] = [];
-      if (echoed.effortCap !== effortCaps.effortCap) {
-        changes.push({ setting: t("dash.effortCapLabel"), value: echoed.effortCap, before });
-      }
-      if (echoed.subagentEffortCap !== effortCaps.subagentEffortCap) {
-        changes.push({ setting: t("dash.subagentEffortCapLabel"), value: echoed.subagentEffortCap, before });
-      }
-      return { next: { ...snapshot, effortCaps: echoed }, changes };
-    });
+    setSettings(previous => previous.effortCaps
+      ? { ...previous, effortCaps: { ...previous.effortCaps, [field]: nextValue } }
+      : previous);
   };
 
-  const savePolicy = (id: string, patch: { enabled?: boolean; schedule?: CleanupSchedule }) => {
-    if (!policy) return;
-    void runSave(id, { ...snapshot, policy: { ...policy, ...patch } }, async () => {
-      const data = await putSetting<{
-        policy?: {
-          enabled?: unknown;
-          schedule?: unknown;
-          mode?: unknown;
-          trigger?: { archivedBytesOver?: unknown };
-          target?: { removeOldestPercent?: unknown; reduceToBytes?: unknown };
-        };
-      }>(apiBase, "/api/storage/cleanup-policy", patch);
-      if (!data.policy) throw new Error("/api/storage/cleanup-policy");
-      const echoed = readPolicy(data.policy);
-      const before = JSON.stringify(policy);
-      const changes: SettingChange[] = [];
-      if (echoed.enabled !== policy.enabled) {
-        changes.push({ setting: t("storage.policy.enabled"), value: onOff(echoed.enabled), before });
-      }
-      if (echoed.schedule !== policy.schedule) {
-        changes.push({ setting: t("storage.policy.schedule"), value: scheduleLabel(echoed.schedule), before });
-      }
-      return { next: { ...snapshot, policy: echoed }, changes };
-    });
+  const savePolicy = (patch: { enabled?: boolean; schedule?: CleanupSchedule }) => {
+    setSettings(previous => previous.policy
+      ? { ...previous, policy: { ...previous.policy, ...patch } }
+      : previous);
   };
 
   const saveDebugFlag = (flag: (typeof DEBUG_FLAGS)[number], nextValue: boolean) => {
-    if (!debug) return;
-    void runSave(DEBUG_ROW + flag, { ...snapshot, debug: { ...debug, [flag]: nextValue } }, async () => {
-      const data = await putSetting<{
-        enabled?: unknown; usage?: unknown; injection?: unknown; claude?: unknown;
-      }>(apiBase, "/api/debug", { [flag]: nextValue });
-      const echoed = readDebug(data);
-      const before = JSON.stringify(debug);
-      const changes: SettingChange[] = [];
-      // The endpoint returns the whole settings object, so every stream is compared:
-      // an env-driven flag that flips alongside the one clicked is a real change too.
-      for (const key of DEBUG_FLAGS) {
-        if (echoed[key] !== debug[key]) {
-          changes.push({ setting: t(`debug.${key}` as TKey), value: onOff(echoed[key]), before });
-        }
-      }
-      return { next: { ...snapshot, debug: echoed }, changes };
-    });
+    setSettings(previous => previous.debug
+      ? { ...previous, debug: { ...previous.debug, [flag]: nextValue } }
+      : previous);
   };
 
   /* ---------------------------------------------------------------- rows -- */
@@ -644,7 +501,7 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
           on={policy.enabled}
           disabled={saving}
           label={t("storage.policy.enabled")}
-          onChange={next => savePolicy("policyEnabled", { enabled: next })}
+          onChange={next => savePolicy({ enabled: next })}
         />
       ),
     });
@@ -665,7 +522,7 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
             { value: "daily", label: t("storage.policy.schedule.daily") },
             { value: "weekly", label: t("storage.policy.schedule.weekly") },
           ]}
-          onChange={next => savePolicy("policySchedule", { schedule: next as CleanupSchedule })}
+          onChange={next => savePolicy({ schedule: next as CleanupSchedule })}
         />
       ),
     });
@@ -741,11 +598,23 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
       jump: { page: "language", tkey: "nav.language" },
     },
     {
+      id: "showEmojis",
+      group: "appearance",
+      label: t("emoji.title"),
+      desc: t("emoji.sub"),
+      value: onOff(prefs.showEmojis),
+      jump: { page: "language", tkey: "nav.language" },
+    },
+    {
       id: "dimsum",
       group: "appearance",
       label: t("dimsum.toggle"),
       desc: t("dimsum.toggleHint"),
-      value: onOff(prefs.dimsum),
+      // Not `onOff(...)`: there is no switch behind this row any more. It stays
+      // searchable because somebody who has just been surprised by a dumpling
+      // will come here looking for it, and a row that reports "Always on" tells
+      // them the truth faster than an empty result would.
+      value: t("dimsum.always"),
       jump: { page: "language", tkey: "nav.language" },
     },
   );
@@ -781,7 +650,13 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
 
   /* -------------------------------------------------------------- search -- */
 
-  const matcher = useMemo(() => makeMatcher(query, useRegex), [query, useRegex]);
+  // `flags` is passed rather than left to default: the chip row below the field
+  // and this compile step must never be able to disagree about what the search
+  // is running as. `g` and `y` are dropped inside the matcher — their `lastIndex`
+  // survives between calls, so one matcher reused down the row list would keep
+  // every other setting, and which half survived would depend only on the order
+  // the rows were pushed in.
+  const matcher = useMemo(() => makeMatcher(query, useRegex, flags), [query, useRegex, flags]);
   const visible = rows.filter(row => matcher.test(`${row.label} ${row.desc ?? ""} ${row.value}`));
   const groups = SETTINGS_GROUPS
     .map(group => ({ ...group, rows: visible.filter(row => row.group === group.id) }))
@@ -824,6 +699,10 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={!!matcher.error}
+          // Bound only in regex mode, because that is the only mode the chip row
+          // renders in: a reference to an element that is not there resolves to
+          // nothing and quietly costs the field its description.
+          aria-describedby={useRegex ? "settings-regex-flags-state" : undefined}
           style={SEARCH_INPUT}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -832,15 +711,34 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
         </Chip>
         <RegexBuilderButton
           value={query}
-          onApply={pattern => setQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          // Seeded with what this field compiles today, so the round trip closes:
+          // the panel opens showing the flags in force rather than a fresh `i`,
+          // and applying writes whatever it ends up with back.
+          flags={flags}
           // Every indexed setting, label, description and current value alike, so a
           // pattern is tried against the same text this page searches.
           sample={rows.map(row => `${row.label} ${row.desc ?? ""} ${row.value}`).join("\n")}
           label={t("settings.openBuilder")}
         />
       </div>
+      {/* Directly under the field it belongs to, and only in regex mode — plain
+          text is a case-insensitive substring search whatever the chips say, and a
+          control that looks live while changing nothing is the decorative
+          affordance the interface rules forbid. It sits above the status line
+          because it describes what the search compiles to, which is the thing the
+          match count below it is a consequence of. */}
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id="settings-regex-flags-state"
+      />
       <p role="status" style={STATUS}>{status}</p>
 
       {loading && !hasData ? (

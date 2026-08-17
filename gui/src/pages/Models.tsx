@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "../ui";
 import { Banner, Button, Chip, Dialog, Empty, SelectField, TextInput, Toggle } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
 import BulkBar from "../shell/BulkBar";
 import {
   invert as invertSelection, selectAll as selectAllIds, selectRange, toggle as toggleSelection,
 } from "../shell/bulk-selection";
-import { IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
+import { IconBoxes, IconChevron, IconInfo, IconSearch, IconShuffle } from "../icons";
 import { useNotifications } from "../shell/notifications-context";
 import { useConfirm } from "../shell/confirm-context";
 import { recordRevision } from "../shell/revisions";
@@ -75,8 +77,24 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const [selectedModels, setSelectedModels] = useState<ProviderModelMap | null>(null);
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags the model search compiles with. State rather than the `"i"` it used
+   * to inherit from `makeMatcher`'s default: the builder anchored beside the field
+   * composes a pattern *and* its flags, so a field that pinned `i` showed a panel
+   * where turning on `m` or `s` changed the preview and then changed nothing about
+   * which models the catalogue kept — and a pattern deliberately built as
+   * case-sensitive arrived here case-insensitive.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsRegex, setSettingsRegex] = useState(false);
+  /**
+   * The settings search's own flags, separate from the model search's for the same
+   * reason the two queries are separate: one shared set would mean turning on `u`
+   * down here silently recompiled the catalogue search above, in a field the user
+   * was not looking at.
+   */
+  const [settingsFlags, setSettingsFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [limit, setLimit] = useState<Record<string, number>>({});
   const [contextCaps, setContextCaps] = useState<Record<string, number>>({});
   const [contextCapValue, setContextCapValue] = useState(350_000);
@@ -270,11 +288,17 @@ export default function Models({ apiBase }: { apiBase: string }) {
    * One search across every provider group, plain text by default with `.*` as an
    * explicit opt-in — see `makeMatcher` for the 400-character cap and the local
    * evaluation that keeps a pasted novel from becoming a backtracking payload.
+   *
+   * The flags are the ones the builder beside the field actually composed, so the
+   * popover's preview and this list cannot report different matches for one
+   * pattern. `g` and `y` are dropped inside `makeMatcher`: their `lastIndex`
+   * survives between calls, and one matcher reused down thousands of catalogue
+   * rows would keep every other row in whatever order they happened to be tested.
    */
   const { matchesQuery, regexError } = useMemo(() => {
-    const matcher = makeMatcher(query, useRegex);
+    const matcher = makeMatcher(query, useRegex, flags);
     return { matchesQuery: matcher.test, regexError: matcher.error };
-  }, [query, useRegex]);
+  }, [query, useRegex, flags]);
   const rowMatches = useCallback(
     (provider: string, row: ModelRow) => matchesQuery(`${row.id} ${row.namespaced} ${provider}`),
     [matchesQuery],
@@ -319,14 +343,14 @@ export default function Models({ apiBase }: { apiBase: string }) {
   ], [contextCapValue, shadowCall?.model, t, v2?.maxConcurrentThreadsPerSession]);
 
   const { settingMatches, settingsError, settingsHits } = useMemo(() => {
-    const matcher = makeMatcher(settingsQuery, settingsRegex);
+    const matcher = makeMatcher(settingsQuery, settingsRegex, settingsFlags);
     const hits = new Set(settingsEntries.filter(entry => matcher.test(entry.text)).map(entry => entry.id));
     return {
       settingMatches: (id: ModelsSettingId) => hits.has(id),
       settingsError: matcher.error,
       settingsHits: hits.size,
     };
-  }, [settingsEntries, settingsQuery, settingsRegex]);
+  }, [settingsEntries, settingsQuery, settingsRegex, settingsFlags]);
 
   /** Version history entry for a settings change made here — restore needs a named event, not "Updated". */
   const logRevision = (summary: string) => {
@@ -1060,6 +1084,11 @@ export default function Models({ apiBase }: { apiBase: string }) {
           placeholder={t("models.search")}
           aria-label={t("models.search")}
           aria-invalid={!!regexError}
+          // Only while the chip row below is actually on screen: pointing at an
+          // id that renders nothing in plain-text mode describes the field with
+          // silence, which reads to a screen reader as a broken reference rather
+          // than as "no flags apply here".
+          aria-describedby={useRegex ? "models-regex-flags-state" : undefined}
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -1074,14 +1103,35 @@ export default function Models({ apiBase }: { apiBase: string }) {
         <RegexBuilderButton
           className="models-icon-btn"
           value={query}
-          onApply={pattern => setQuery(pattern)}
+          // Both halves of what the builder composed. Taking the pattern and
+          // leaving the flags behind is what made the popover's flag chips
+          // decorative from this field's point of view.
+          onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
           regex={useRegex}
           onRegexChange={setUseRegex}
+          // Seeded from this field's own flags, so the round trip is
+          // bidirectional: the panel opens showing what the catalogue is
+          // currently compiling rather than a default it may already have left.
+          flags={flags}
           // Real catalogue rows in the same shape the search matches them, taken
           // from the groups in scope rather than from what the query already kept.
           sample={modelSearchSample}
         />
       </div>
+      {/*
+        Its own line under the field rather than another item in the search row:
+        that row is a single flex line already carrying the input, the `.*` chip
+        and the builder trigger, and six more chips in it would squeeze the field
+        to nothing inside `models-workspace-main`, which is the narrower of this
+        screen's two columns. It stays directly under the search it describes,
+        which is what anchoring it is for.
+      */}
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={setFlags}
+        id="models-regex-flags-state"
+      />
       {/* The design reserves this line whether or not a pattern is broken, so typing an
           unfinished regex does not shunt the whole provider list up and down. */}
       <div className="models-search-error" role="alert" style={{ minHeight: 20, color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
@@ -1102,6 +1152,9 @@ export default function Models({ apiBase }: { apiBase: string }) {
           placeholder={t("settings.search")}
           aria-label={t("settings.search")}
           aria-invalid={!!settingsError}
+          // This bar's own id, not the model search's. Two fields on one screen
+          // pointing at one state line would each describe the other's flags.
+          aria-describedby={settingsRegex ? "models-settings-flags-state" : undefined}
           style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
         />
         <Chip
@@ -1115,15 +1168,24 @@ export default function Models({ apiBase }: { apiBase: string }) {
         <RegexBuilderButton
           className="models-icon-btn"
           value={settingsQuery}
-          onApply={pattern => setSettingsQuery(pattern)}
+          // Both halves again, and this field's own flags rather than the model
+          // search's — the two bars are independent, exactly as their queries are.
+          onApply={(pattern, appliedFlags) => { setSettingsQuery(pattern); setSettingsFlags(appliedFlags); }}
           regex={settingsRegex}
           onRegexChange={setSettingsRegex}
+          flags={settingsFlags}
           // This screen's settings index, which is a different corpus from the
           // model search above — the two builders never share a sample.
           sample={settingsEntries.map(entry => entry.text).join("\n")}
           label={t("settings.openBuilder")}
         />
       </div>
+      <SearchFlagsRow
+        regex={settingsRegex}
+        flags={settingsFlags}
+        onFlagsChange={setSettingsFlags}
+        id="models-settings-flags-state"
+      />
       {/* One status line, as the prototype has it: the broken pattern wins over the
           no-match message, because an unusable pattern is why nothing matched. */}
       <div className="models-settings-status" role="status" style={{ minHeight: 20, marginBottom: "var(--sp-2)", fontSize: "var(--t-label-m)" }}>
@@ -1344,7 +1406,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const emptyStateBlock = (
     <>
       {groups.length === 0 && (
-        <Empty title={t("models.noRouted")}>
+        <Empty title={t("models.noRouted")} icon={IconBoxes}>
           {t("models.noRoutedHint")}
         </Empty>
       )}
@@ -1354,7 +1416,7 @@ export default function Models({ apiBase }: { apiBase: string }) {
   // The prototype's search_off state: the search found nothing, which is not the same
   // as "no routed models" (that empty state lives above and speaks about setup).
   const noMatchBlock = (
-    <Empty title={t("models.noMatch")} />
+    <Empty title={t("models.noMatch")} icon={IconSearch} />
   );
 
   const modalsBlock = (

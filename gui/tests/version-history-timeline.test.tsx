@@ -18,7 +18,7 @@ import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import VersionHistory from "../src/pages/VersionHistory";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 import { NotificationsContext, type Notice, type NotificationsApi } from "../src/shell/notifications-context";
 
@@ -98,11 +98,11 @@ async function mount(apiBase: string): Promise<{ container: HTMLElement; root: R
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsContext.Provider value={api}>
             <VersionHistory apiBase={apiBase} />
           </NotificationsContext.Provider>
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });

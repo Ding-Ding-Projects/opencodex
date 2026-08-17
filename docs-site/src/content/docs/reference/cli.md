@@ -7,6 +7,26 @@ The opencodex CLI is `ocx`. Run `ocx help` (or `--help` / `-h`) for top-level us
 Run `ocx help <command>` for commands registered in the help table. Help and version commands are
 read-only and do not start, stop, install, uninstall, or rewrite Codex/opencodex state.
 
+## Global agent memory
+
+### `ocx memory` versus `ocx memory-sync`
+
+`ocx memory [--json]` remains the runtime observability alias for `ocx observe memory`; it reads proxy-process memory state and does not manage global agent files. `ocx memory-sync` is the separate, provenance-checked integration with `https://github.com/Ding-Ding-Projects/agent-global-memory`.
+
+```text
+ocx memory-sync status [--repo PATH] [--target all|claude,codex,opencode] [--home PATH]
+ocx memory-sync install [--repo PATH] [--target all|claude,codex,opencode] [--home PATH] [--dry-run] [--yes]
+ocx memory-sync uninstall [--repo PATH] [--target all|claude,codex,opencode] [--home PATH] [--dry-run] [--yes]
+ocx memory-sync profile list [--repo PATH] [--json]
+ocx memory-sync profile show <slug> [--repo PATH] [--json]
+```
+
+Repository resolution is `--repo`, then `OPENCODEX_GLOBAL_MEMORY_REPO`, then `../agent-global-memory` beside a source checkout. OpenCodex never clones or downloads a repository. The repository must have the exact canonical `origin` URL (optional `.git` suffix), a matching Git root, the canonical payload and skill, and the platform synchronizer inside the repository boundary. Symlinks and Windows reparse-point escapes fail closed.
+
+`all`, `claude`, `codex`, and `opencode` select synchronizer targets. `--home` is passed to the canonical script for target-home resolution and is never persisted in `config.json`. Install and uninstall require `--yes` unless `--dry-run` is supplied. The canonical exit contract is preserved: `0` means current/success, `1` means missing or drifted status (or cancellation), and `2` means conflict or operational error. The adapter launches PowerShell or Bash with `shell: false` and bounded output.
+
+Profiles are read-only Markdown files under `memory/projects/*.md`. `profile list` returns sorted safe slugs and relative paths; `profile show` returns the bounded UTF-8 Markdown text. Profiles are project-scoped reference material and are not automatically applied to Claude, Codex, OpenCode, or OpenCodex prompts. Slugs must match `^[a-z0-9][a-z0-9-]*$`; traversal, symlinks/reparse points, escapes, and files larger than 256 KiB are rejected. Use `--json` for the versioned `{ schemaVersion: 1, repository, profiles }` or profile-show result.
+
 ## Setup & lifecycle
 
 ### `ocx setup` · `ocx init`
@@ -18,10 +38,16 @@ autostart shim.
 
 ### `ocx start [--port <port>]`
 
-Start the proxy server (preferred port `10100`). If that port is occupied, opencodex selects and
-records another available port. It writes PID/runtime-port state and refuses to start a second live
-instance. On start it syncs each provider's models into Codex's catalog. On shutdown it restores
-native Codex — unless it was launched as a managed service (`OCX_SERVICE=1`).
+Start the proxy server (preferred port `10100`). With no `--port`, this is an automatic start: if the
+configured preference is occupied, opencodex records another available port in `runtime-port.json`
+and syncs Codex to that live listener without changing the configured preference. An explicit
+`--port` is a hard pin: opencodex waits for that exact port and fails if it stays occupied; it never
+hops. Update handoffs and dashboard restarts also pin their captured live port.
+
+Startup uses a cross-process lock and stable OpenCodex identity-health checks, not just PID-file or
+TCP reachability. A concurrent starter cannot create a duplicate fallback daemon. On start it syncs
+each provider's models into Codex's catalog. On shutdown it restores native Codex unless it was
+launched as a managed service (`OCX_SERVICE=1`).
 
 ```bash
 ocx start
@@ -41,9 +67,11 @@ ocx codex exec --skip-git-repo-check "Reply with READY"
 
 ### `ocx stop`
 
-Stop the running proxy (by PID), remove the PID file, and restore native Codex. If a managed
-background service is installed, `ocx stop` also stops it first (so it won't respawn the proxy).
-The same action is available from the web dashboard's **Stop** button (`POST /api/stop`).
+Stop the running proxy and restore native Codex. If a managed background service is installed,
+`ocx stop` stops and verifies the service manager first so it cannot respawn the proxy. It then
+identity-checks proxy termination before removing runtime state or restoring Codex, Grok, and
+environment routing. Manager or proxy uncertainty fails closed and preserves that owned state for
+recovery. The same action is available from the web dashboard's **Stop** button (`POST /api/stop`).
 
 ### `ocx restore` &nbsp;·&nbsp; `ocx eject`
 
@@ -146,6 +174,29 @@ tokens, authorization headers, request content, emails, and account identities.
 Identity-check the live proxy. Human output reports PID/port; `--json` emits `{ok, pid, port}`. The
 command exits 0 only when healthy and 1 otherwise, making it suitable for service probes.
 
+### `ocx export <path> --yes` · `ocx export data …`
+
+`ocx export data <dataset>` exports a redacted dashboard dataset and may write to stdout. Use
+`--list` to see datasets and formats, and `--out <path>` to write a file.
+
+`ocx export <path> --yes` is the separate full-state backup. It includes config, account state,
+API keys, MCP credentials, and OAuth access/refresh tokens in plaintext. The destination must be a
+new file: opencodex creates it exclusively with private permissions (and a hardened Windows ACL),
+refuses stdout, refuses overwrite/symlink replacement, and deletes an empty partial file if
+hardening fails. Store the result encrypted, never commit or upload it, and delete it when no longer
+needed.
+
+### `ocx host <status|enable|disable>`
+
+Configure trusted-LAN access without putting credentials in command arguments. `enable --yes`
+accepts an IPv4 address, IPv6 address, or DNS hostname through `--hostname`; `--new-key [name]`
+generates a data-plane key and shows it once. `status` identity-probes a running proxy and prints its
+active bind/port and remote URLs, including an automatic fallback port. When the proxy is stopped it
+prints the configured values. Run `ocx host status` for the remote connection URL; `ocx status` also
+reports the identity-verified live port.
+The remote dashboard separately prompts for that proxy's ADMIN token. Direct HTTP is unencrypted;
+prefer an SSH tunnel outside a trusted LAN.
+
 ### `ocx uninstall` &nbsp;·&nbsp; `ocx remove`
 
 Stop the service and proxy, remove the service and Codex shim, restore native Codex, then remove
@@ -208,6 +259,8 @@ routes, validation, live configuration, and catalog refresh side effects as the 
 | Routing | `ocx combo ...` or `ocx route combo ...` |
 | Agent policy | `ocx agent injection|effort|subagents|fallback|sidecar ...` |
 | Observability | `ocx observe logs|usage|storage|memory|debug ...` |
+| Narrator voices | `ocx narrator status|voices|speak ...` |
+| Scheduled settings | `ocx schedule status|list|show|active|test-api|test-ha|ha-token ...` |
 | API admission | `ocx access key|endpoints|models|test ...` |
 | Claude Code | `ocx claude config status|set ...` |
 | Grok Build | `ocx grok status|exclude|include|set|clear|apply ...` |
@@ -230,7 +283,13 @@ ocx system settings --stream-mode eager-relay
 ```
 
 Theme, language, navigation, and other purely visual browser state intentionally have no CLI
-equivalent. Cloudflare Tunnel setup is not part of this command set.
+equivalent — including the narrator's own on/off switch and its per-language voice choice, and
+scheduled-settings *rules* themselves (their days/time window, priority, and what they set), all of
+which are per-visitor browser state rather than server configuration. The narrator's voice catalogues
+and its synthesis are management routes, so those do have one: see `ocx narrator` below. Likewise, a
+scheduled rule's remote sources (a candidate API URL, a Home Assistant entity) are validated through
+real management routes, so those are headlessly testable too: see `ocx schedule` below. Cloudflare
+Tunnel setup is not part of this command set.
 
 ### `ocx models [subcommand]`
 
@@ -395,6 +454,98 @@ security find-generic-password -w openrouter | ocx account add-key openrouter --
 
 `--json` returns `{ ok: true, id: string | null, label?: string }` and never includes the key.
 
+### `ocx narrator <status|voices|speak>`
+
+The headless counterpart to the dashboard's narrator voice picker. It lists the voices this computer
+can speak with, lists the Microsoft Edge online catalogue, and synthesizes one line to an MP3 through
+the same `/api/narrator/*` routes the dashboard uses.
+
+| Subcommand | Supported flags | Action |
+| --- | --- | --- |
+| `status` | `--edge`, `--json` | Installed voices, the synthesis bounds, and where the narrator's settings actually live. |
+| `voices` | `--source <local\|edge\|all>`, `--lang <tag>`, `--search <text>`, `--limit <n>`, `--edge`, `--json` | List voices from either source. Defaults to `local`. |
+| `speak` | `--voice <name>`, `--rate <n>`, `--pitch <n>`, `--out <path>\|-`, `--edge`, `--json` | Synthesize one line and write the MP3. |
+
+```bash
+ocx narrator status
+ocx narrator voices --lang en
+ocx narrator voices --source edge --lang zh-HK --edge
+ocx narrator speak "早晨" --voice zh-HK-HiuMaanNeural --edge --out morning.mp3
+```
+
+`--lang` matches on the subtag boundary, so `zh` finds both `zh-HK` and `zh-CN` while `en` does not
+claim `enm`. `--rate` and `--pitch` are multipliers from 0.5 to 2, where 1 is the voice's own normal
+delivery. A line is capped at 600 characters, and the command refuses a longer one locally rather
+than sending it. `--out -` writes raw MP3 bytes to stdout and refuses to do so into a terminal.
+
+**Microsoft Edge online voices are a network source, and `--edge` is required by every path that
+reaches it.** Speaking with one sends the text you pass to Microsoft, over the internet, every time
+it speaks; listing the catalogue contacts the same service but sends no narrated text. Installed
+platform voices stay on this computer and need no network at all. Nothing here contacts Microsoft
+without `--edge`, and the refusal you get without it states what would be sent and to whom. The
+service is the undocumented one Edge itself uses to read pages aloud: Microsoft publishes no contract
+for it and can change or block it at any time, so a sudden refusal is the service refusing this
+client rather than a fault in your text or your chosen voice.
+
+Installed voices are enumerated from the operating system's own speech platform, which is Windows
+only today; elsewhere `status` reports them as unavailable with the reason rather than as an empty
+list. That set is the machine's, not the browser's, so it can differ slightly from what the
+dashboard's picker offers.
+
+Whether the narrator speaks at all, which language it narrates, the voice, rate and pitch chosen for
+each narrated language, and whether the Edge source is switched on are stored per visitor in the
+dashboard's own browser profile (local storage key `ocx-m3:v1`). They are not server configuration,
+so `ocx narrator status` reports them as unreadable rather than guessing at a default. Change them in
+the dashboard under **Language & voice**.
+
+### `ocx schedule <status|list|show|active|test-api|test-ha|ha-token>`
+
+The headless counterpart to the dashboard's **Scheduled settings** page — with one honest limit: a
+scheduled-settings *rule* (its days/time window, priority, and what it sets) lives only in the
+dashboard's own browser profile (local storage key `ocx-m3:schedule`), created, edited and deleted
+entirely client-side. Nothing about a rule's shape, or which one is currently matching, is ever sent
+to or stored by the proxy process, so this command cannot list, inspect, or report the active rule —
+and says so plainly, the same way `ocx narrator status` reports the narrator's own browser-only
+preferences as unreadable rather than guessing.
+
+| Subcommand | Supported flags | Action |
+| --- | --- | --- |
+| `status` | `--json` | Where rules live, the precedence rule, and which checks below are available headlessly. |
+| `list` | `--json` | States that rules cannot be listed from here and names where to find them. |
+| `show <id>` | `--json` | States that a rule cannot be inspected by id from here and names where to find it. |
+| `active` | `--json` | States that the currently-winning rule cannot be reported from here and names where to find it. |
+| `test-api <url>` | `--json` | Test an api-sourced rule's endpoint through the same server-side `resolve-api` route the dashboard uses. |
+| `test-ha` | `--base-url <url>`, `--entity-id <id>`, `--token-ref <ref>`, `--json` | Test a Home Assistant-gated rule's entity through the same server-side `ha-state` route the dashboard uses. |
+| `ha-token status` | `--token-ref <ref>`, `--json` | Whether a Home Assistant token is stored for a rule — never its value. |
+| `ha-token clear` | `--token-ref <ref>`, `--json` | Delete a stored Home Assistant token. |
+
+```bash
+ocx schedule status
+ocx schedule test-api https://example.com/opencodex-schedule.json
+ocx schedule test-ha --base-url https://homeassistant.local:8123 --entity-id input_boolean.evening_mode --token-ref my-rule-id
+ocx schedule ha-token status --token-ref my-rule-id
+```
+
+**Precedence rule** (stated here, never recomputed — there is no rule data in this process to compute
+it over): when more than one enabled rule matches the current moment, the highest `priority` wins; a
+tie goes to whichever rule was created more recently.
+
+**What genuinely is headless.** An `api`- or `homeAssistant`-sourced rule depends on a remote endpoint
+the dashboard already validates through `/api/schedule/resolve-api` and `/api/schedule/ha-state` —
+server-side, bounded, SSRF-checked (`https://`, or `http://127.0.0.1`/`http://localhost` for local
+development), and never called directly from the renderer. `test-api` and `test-ha` are thin
+passthroughs onto those same routes, so you can find out whether a candidate URL or Home Assistant
+entity will actually resolve *before* pasting it into the dashboard's rule editor, without a browser.
+A reported failure (an unreachable host, a malformed response, a wrong entity state) exits `0` just
+like `ocx narrator voices --edge` reporting an unreachable Edge catalogue — the check ran and gave a
+definite answer, which is success for this command even when the answer is "no". A request rejected
+at the SSRF boundary (an invalid URL) is a genuine usage problem and exits non-zero.
+
+**There is no `ha-token set`.** Storing one requires the plaintext token, and this command never
+accepts, prints, or logs a secret. Type it once into the dashboard's own password field under
+**Scheduled settings** — the same boundary `ocx host` draws around minting a data-plane key versus
+ever printing one back out.
+
 ## Authentication
 
 ### `ocx login <provider>`
@@ -494,7 +645,9 @@ git -C ~/.opencodex show <hash>:codex-accounts.json
 
 Run opencodex as a login-managed background service (macOS **launchd**, Linux **systemd user unit**,
 Windows **Task Scheduler**) that auto-starts on login and auto-restarts on crash. Service runs set
-`OCX_SERVICE=1` so a restart doesn't churn the Codex config.
+`OCX_SERVICE=1` so a restart doesn't churn the Codex config. A normal service start uses the
+availability-first port policy, but it reports success only after stable OpenCodex health is tied to
+service-owned runtime state; an unrelated direct proxy is not adopted as the service child.
 
 | Subcommand | Action |
 | --- | --- |

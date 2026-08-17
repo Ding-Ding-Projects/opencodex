@@ -13,10 +13,11 @@ import {
   updateCommandStr,
   updateTag,
 } from "./index";
+import { OPENCODEX_RELEASE_NOTES_URL } from "./links";
 
 const VERSION_FILENAME = "version.json";
 const REFRESH_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20h, matching codex-rs
-const RELEASE_NOTES_URL = "https://github.com/lidge-jun/opencodex/releases/latest";
+const RELEASE_NOTES_URL = OPENCODEX_RELEASE_NOTES_URL;
 
 export interface VersionCache {
   latest_version: string;
@@ -118,7 +119,7 @@ export function isSourceBuildVersion(v: string): boolean {
 
 /** The interactive/TTY + install-method gate shared with the star prompt. */
 function interactiveGuardOk(): boolean {
-  return !(process.env.OCX_SERVICE || !process.stdin.isTTY || !process.stdout.isTTY);
+  return !(process.env.OCX_SERVICE || process.env.OCX_BACKGROUND || !process.stdin.isTTY || !process.stdout.isTTY);
 }
 
 /**
@@ -168,7 +169,7 @@ export function triggerBackgroundRefreshIfStale(channel: Channel, cache: Version
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, OCX_SERVICE: "1" }, // never let the helper prompt
+      env: { ...process.env, OCX_BACKGROUND: "1" }, // never let the helper prompt
     });
     child.unref();
   } catch {

@@ -23,9 +23,45 @@ import {
   sealRequestAttemptIdentity,
   type RequestLogContext,
 } from "../src/server/request-log";
+import { handleResponses, recordEffectiveCacheRetention } from "../src/server/responses";
 import { bridgeToResponsesSSE } from "../src/bridge";
-import type { AdapterEvent } from "../src/types";
+import type { AdapterEvent, OcxConfig } from "../src/types";
 import type { PersistedUsageEntry } from "../src/usage/log";
+
+describe("effective pricing context logging", () => {
+  test("malformed pre-route requests do not claim a cache tier", async () => {
+    const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
+    const response = await handleResponses(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not-json",
+      }),
+      { providers: {}, cacheRetention: "long" } as unknown as OcxConfig,
+      logCtx,
+    );
+    expect(response.status).toBe(400);
+    expect(logCtx).not.toHaveProperty("cacheRetention");
+  });
+
+  test("only effective Anthropic adapters record cache retention", () => {
+    const attempt = beginRequestAttempt(1, "anthropic-apikey", "claude-opus-5", "anthropic", 123);
+    const logCtx: RequestLogContext = {
+      model: "claude-opus-5",
+      provider: "anthropic-apikey",
+      activeAttempt: attempt,
+      cacheRetention: "short",
+    };
+    recordEffectiveCacheRetention(logCtx, "openai-chat", "long");
+    expect(logCtx).not.toHaveProperty("cacheRetention");
+    expect(attempt).not.toHaveProperty("cacheRetention");
+
+    recordEffectiveCacheRetention(logCtx, "anthropic", "long");
+    expect(logCtx.cacheRetention).toBe("long");
+    expect(attempt.cacheRetention).toBe("long");
+    expect(attempt.timestamp).toBe(123);
+  });
+});
 
 async function* replayAdapterEvents(events: AdapterEvent[]): AsyncGenerator<AdapterEvent> {
   for (const event of events) yield event;
@@ -198,6 +234,7 @@ describe("request log metadata", () => {
       status: 503,
       sendCount: 3,
       inputTokenEstimate: 120,
+      promptInputTokens: 120,
       recoveryKinds: ["transient-5xx"],
       usageStatus: "estimated",
       usage: { inputTokens: 120, outputTokens: 0, estimated: true },
@@ -399,6 +436,59 @@ describe("request log metadata", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ surface: "claude" });
+  });
+
+  test("final logging persists raw prompt input tokens separately from response usage", () => {
+    const entries: RequestLogEntry[] = [];
+    addFinalRequestLog(
+      "ocx-prompt-size",
+      Date.now(),
+      {
+        model: "gpt-5.6-sol",
+        provider: "openai-apikey",
+        usageLogInputTokens: 12_345,
+        usage: { inputTokens: 200, outputTokens: 20 },
+      },
+      200,
+      undefined,
+      entry => entries.push(entry),
+    );
+    // `usageLogInputTokens` has two jobs and they are deliberately independent.
+    // It is persisted verbatim as `promptInputTokens` — the raw request prompt
+    // size, which price schedules read for context selection — and it separately
+    // acts as a floor on the response-reported input count, because an adapter
+    // reporting 200 input tokens for a 12,345-token prompt is under-reporting.
+    // The floor is long-standing behaviour proved by the cursor `in:0` row below.
+    // What matters here is that the raw metric survives on its own field rather
+    // than being reconstructed from usage afterwards, so both are asserted.
+    expect(entries[0]).toMatchObject({
+      promptInputTokens: 12_345,
+      usageStatus: "estimated",
+      usage: { inputTokens: 12_345, outputTokens: 20, estimated: true },
+    });
+
+    // The separation is only visible when the floor does NOT fire: a response that
+    // reports more input than the prompt carried leaves usage untouched, and
+    // `promptInputTokens` still holds the raw prompt size rather than the reported
+    // count. If the two ever collapsed into one field, this row would fail.
+    const untouched: RequestLogEntry[] = [];
+    addFinalRequestLog(
+      "ocx-prompt-size-reported-higher",
+      Date.now(),
+      {
+        model: "gpt-5.6-sol",
+        provider: "openai-apikey",
+        usageLogInputTokens: 12_345,
+        usage: { inputTokens: 50_000, outputTokens: 20 },
+      },
+      200,
+      undefined,
+      entry => untouched.push(entry),
+    );
+    expect(untouched[0]).toMatchObject({
+      promptInputTokens: 12_345,
+      usage: { inputTokens: 50_000, outputTokens: 20 },
+    });
   });
 
   test("cursor rows: adapter drives estimated status and the input estimate fills in:0 (devlog 130 B2)", () => {
@@ -1073,6 +1163,7 @@ describe("request log restart hydrate", () => {
       requestedSpeedLabel: "fast",
       configuredServiceTier: "auto",
       modelSupportsServiceTier: true,
+      cacheRetention: "long",
       status: 502,
       durationMs: 42,
       usageStatus: "unreported",
@@ -1095,6 +1186,7 @@ describe("request log restart hydrate", () => {
       requestedSpeedLabel: "fast",
       configuredServiceTier: "auto",
       modelSupportsServiceTier: true,
+      cacheRetention: "long",
       status: 502,
       durationMs: 42,
       usageStatus: "unreported",

@@ -2,10 +2,32 @@ import { baseProviderLabel } from "../providers/label";
 import { canonicalAntigravityUsageModel } from "../providers/antigravity-models";
 import { usageDisplayTotalTokens } from "./totals";
 import type { PersistedUsageEntry, UsageStatus } from "./log";
-import { estimateComboCost, estimateRequestCost, effectiveServiceTier } from "./cost";
+import { classifyUsageForCost, comboPricingUnavailableReason, comboUsageUnavailableReason, estimateComboCost, estimateRequestCost, estimateRequestCostLanes, effectiveServiceTier, pricingLaneUnavailableReason, pricingSourceClassification, pricingUnavailableReason, type UsageCostUnavailableReason } from "./cost";
+import type { PricingUnavailableReason } from "./expected-prices";
 
 export type UsageRange = "7d" | "30d" | "all";
 export type UsageSurface = "all" | "codex" | "claude" | "grok";
+
+export interface PricingLaneTotals {
+  /** Sum for this lane only. `api_equivalent` is explicitly non-billing. */
+  estimatedCostUsd: number;
+  pricedRequests: number;
+  unpricedRequests: number;
+  unpricedReasons: Partial<Record<PricingUnavailableReason | UsageCostUnavailableReason, number>>;
+  /** Per provider/model rows make each lane's source classification inspectable. */
+  sources: PricingLaneSource[];
+}
+
+export interface PricingLaneSource {
+  provider: string;
+  model: string;
+  sourceClassification: "direct_api_key" | "subscription_api_equivalent";
+  requests: number;
+  pricedRequests: number;
+  unpricedRequests: number;
+  estimatedCostUsd: number;
+  unpricedReasons: Partial<Record<PricingUnavailableReason | UsageCostUnavailableReason, number>>;
+}
 
 export interface UsageSummaryTotals {
   requests: number;
@@ -30,6 +52,12 @@ export interface UsageSummaryTotals {
   pricedRequests: number;
   /** Requests with usage but no matched price anywhere (excluded from the sum). */
   unpricedRequests: number;
+  /** Machine-readable exact-price failure counts for the filtered window. */
+  unpricedReasons: Partial<Record<PricingUnavailableReason | UsageCostUnavailableReason, number>>;
+  /** Strict direct API-key actual list-price accounting only. */
+  direct: PricingLaneTotals;
+  /** Explicit non-billing API-equivalent accounting for supported subscription/OAuth rows. */
+  apiEquivalent: PricingLaneTotals;
   /** Requests whose usage itself is missing/unsupported, so no cost can be computed. */
   unmeteredRequests: number;
 }
@@ -64,7 +92,15 @@ export interface UsageModel {
   inputTokens: number;
   outputTokens: number;
   shareRatio: number;
+  /** Direct API-key spend only, unchanged. Absent for subscription/OAuth rows. */
   estimatedCostUsd?: number;
+  /**
+   * Explicitly non-billing API-equivalent total for subscription/OAuth rows, so a
+   * per-model breakdown can show a figure instead of an em dash. Kept as its own
+   * field rather than folded into `estimatedCostUsd` because the two are
+   * different kinds of number and must never be summed into one.
+   */
+  apiEquivalentCostUsd?: number;
 }
 
 export interface UsageProvider {
@@ -73,10 +109,20 @@ export interface UsageProvider {
   attemptCount: number;
   measuredRequests: number;
   reportedRequests: number;
+  /**
+   * Requests whose token counts were estimated rather than reported, matching
+   * `UsageModel.estimatedRequests`. `buildProviders` has always written and
+   * incremented this, and the GUI's provider rows read it, so it is part of the
+   * shape rather than optional detail — it was dropped from this interface by
+   * accident when the API-equivalent cost fields were added directly beneath it.
+   */
   estimatedRequests: number;
   totalTokens: number;
   shareRatio: number;
+  /** Direct API-key spend only, unchanged. Absent for subscription/OAuth rows. */
   estimatedCostUsd?: number;
+  /** Non-billing API-equivalent total; see `UsageModel.apiEquivalentCostUsd`. */
+  apiEquivalentCostUsd?: number;
 }
 
 export interface UsageSummary {
@@ -123,7 +169,17 @@ function dayCountForAllRange(entries: PersistedUsageEntry[], now: number): numbe
   return Math.max(1, days);
 }
 
-function blankTotals(): UsageSummaryTotals {
+function emptyPricingLaneTotals(): PricingLaneTotals {
+  return {
+    estimatedCostUsd: 0,
+    pricedRequests: 0,
+    unpricedRequests: 0,
+    unpricedReasons: {},
+    sources: [],
+  };
+}
+
+export function emptyUsageSummaryTotals(): UsageSummaryTotals {
   return {
     requests: 0,
     attemptCount: 0,
@@ -143,6 +199,9 @@ function blankTotals(): UsageSummaryTotals {
     estimatedCostUsd: 0,
     pricedRequests: 0,
     unpricedRequests: 0,
+    unpricedReasons: {},
+    direct: emptyPricingLaneTotals(),
+    apiEquivalent: emptyPricingLaneTotals(),
     unmeteredRequests: 0,
   };
 }
@@ -266,25 +325,145 @@ function finalizeCoverage(totals: UsageSummaryTotals): void {
   totals.coverageRatio = totals.requests === 0 ? 0 : totals.measuredRequests / totals.requests;
 }
 
+function addLaneReason(
+  lane: PricingLaneTotals,
+  source: PricingLaneSource,
+  reason: PricingUnavailableReason | UsageCostUnavailableReason,
+): void {
+  lane.unpricedReasons[reason] = (lane.unpricedReasons[reason] ?? 0) + 1;
+  source.unpricedReasons[reason] = (source.unpricedReasons[reason] ?? 0) + 1;
+}
+
+function laneSource(
+  lane: PricingLaneTotals,
+  provider: string,
+  model: string,
+  sourceClassification: PricingLaneSource["sourceClassification"],
+): PricingLaneSource {
+  const existing = lane.sources.find(row => (
+    row.provider === provider && row.model === model && row.sourceClassification === sourceClassification
+  ));
+  if (existing) return existing;
+  const created: PricingLaneSource = {
+    provider,
+    model,
+    sourceClassification,
+    requests: 0,
+    pricedRequests: 0,
+    unpricedRequests: 0,
+    estimatedCostUsd: 0,
+    unpricedReasons: {},
+  };
+  lane.sources.push(created);
+  return created;
+}
+
 function addEstimatedCost(
   totals: UsageSummaryTotals,
-  entry: Pick<PersistedUsageEntry, "provider" | "model" | "usageStatus" | "usage" | "attempts" | "responseServiceTier" | "requestedServiceTier" | "configuredServiceTier">,
+  entry: Pick<PersistedUsageEntry, "timestamp" | "provider" | "model" | "usageStatus" | "usage" | "attempts" | "responseServiceTier" | "requestedServiceTier" | "configuredServiceTier" | "cacheRetention" | "promptInputTokens">,
 ): void {
-  if (entry.usageStatus === "unreported" || entry.usageStatus === "unsupported"
-    || (!entry.usage && !entry.attempts?.length)) {
+  const comboUsageReason = entry.attempts?.length
+    ? comboUsageUnavailableReason(entry.attempts)
+    : undefined;
+  const singleUsage = entry.attempts?.length
+    ? undefined
+    : classifyUsageForCost(entry.usage, entry.usageStatus);
+  const usageReason = comboUsageReason
+    ?? (singleUsage?.kind === "unavailable" ? singleUsage.reason : undefined);
+  if (usageReason === "usage_missing" || usageReason === "usage_unsupported") {
     totals.unmeteredRequests += 1;
     return;
   }
-  const tier = effectiveServiceTier(entry);
-  const estimate = entry.attempts?.length
-    ? estimateComboCost(entry.attempts, undefined, tier)
-    : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, serviceTier: tier });
-  if (!estimate) {
+  if (usageReason) {
     totals.unpricedRequests += 1;
+    totals.unpricedReasons[usageReason] = (totals.unpricedReasons[usageReason] ?? 0) + 1;
     return;
   }
-  totals.pricedRequests += 1;
-  totals.estimatedCostUsd += estimate.cost.total;
+  const context = {
+    serviceTier: effectiveServiceTier(entry),
+    cacheRetention: entry.cacheRetention,
+    promptInputTokens: entry.promptInputTokens,
+    timestamp: entry.timestamp,
+  };
+
+  // Preserve the old aggregate fields as the strict direct actual-list-price lane.
+  // Combo rows remain all-or-nothing for that legacy projection.
+  const estimate = entry.attempts?.length
+    ? estimateComboCost(entry.attempts, undefined, context)
+    : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, ...context });
+  if (!estimate) {
+    totals.unpricedRequests += 1;
+    const reason = entry.attempts?.length
+      ? comboPricingUnavailableReason(entry.attempts, context)
+      : pricingUnavailableReason({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, ...context });
+    const exactReason = reason ?? "price_unmatched";
+    totals.unpricedReasons[exactReason] = (totals.unpricedReasons[exactReason] ?? 0) + 1;
+  } else {
+    totals.pricedRequests += 1;
+    totals.estimatedCostUsd += estimate.cost.total;
+  }
+
+  const addOne = (provider: string, model: string, usage: PersistedUsageEntry["usage"], usageStatus: UsageStatus, promptInputTokens: number | undefined, timestamp: number | undefined, cacheRetention: PersistedUsageEntry["cacheRetention"]): void => {
+    const source = pricingSourceClassification(provider);
+    if (!source) return;
+    const lane = source.lane === "direct" ? totals.direct : totals.apiEquivalent;
+    const row = laneSource(lane, provider, model, source.sourceClassification);
+    row.requests += 1;
+    const laneEstimate = estimateRequestCostLanes({
+      provider,
+      model,
+      usage,
+      usageStatus,
+      serviceTier: context.serviceTier,
+      cacheRetention,
+      promptInputTokens,
+      timestamp,
+    })[source.lane === "direct" ? "direct" : "apiEquivalent"];
+    if (laneEstimate) {
+      lane.pricedRequests += 1;
+      lane.estimatedCostUsd += laneEstimate.cost.total;
+      row.pricedRequests += 1;
+      row.estimatedCostUsd += laneEstimate.cost.total;
+      return;
+    }
+    lane.unpricedRequests += 1;
+    row.unpricedRequests += 1;
+    const reason = pricingLaneUnavailableReason(source.lane, {
+      provider,
+      model,
+      usage,
+      usageStatus,
+      serviceTier: context.serviceTier,
+      cacheRetention,
+      promptInputTokens,
+      timestamp,
+    }) ?? "price_unmatched";
+    addLaneReason(lane, row, reason);
+  };
+
+  if (entry.attempts?.length) {
+    for (const attempt of entry.attempts) {
+      addOne(
+        attempt.provider,
+        attempt.model,
+        attempt.usage,
+        attempt.usageStatus,
+        attempt.promptInputTokens ?? entry.promptInputTokens,
+        attempt.timestamp ?? entry.timestamp,
+        attempt.cacheRetention ?? entry.cacheRetention,
+      );
+    }
+  } else {
+    addOne(
+      entry.provider,
+      entry.model,
+      entry.usage,
+      entry.usageStatus,
+      entry.promptInputTokens,
+      entry.timestamp,
+      entry.cacheRetention,
+    );
+  }
 }
 
 function buildDayGrid(range: UsageRange, since: number | null, now: number, entries: PersistedUsageEntry[]): UsageDay[] {
@@ -390,10 +569,14 @@ function buildModels(entries: PersistedUsageEntry[], totalTokens: number): Usage
   }
   // Accumulate per-model estimated cost
   for (const entry of entries) {
-    const tier = effectiveServiceTier(entry);
+    const context = {
+      serviceTier: effectiveServiceTier(entry),
+      cacheRetention: entry.cacheRetention,
+      timestamp: entry.timestamp,
+    };
     const estimate = entry.attempts?.length
-      ? estimateComboCost(entry.attempts, undefined, tier)
-      : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, serviceTier: tier });
+      ? estimateComboCost(entry.attempts, undefined, context)
+      : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, ...context });
     if (!estimate) continue;
 
     if (entry.attempts?.length && estimate.attempts) {
@@ -410,6 +593,39 @@ function buildModels(entries: PersistedUsageEntry[], totalTokens: number): Usage
       const key = usageModelKey(providerKey, antigravityUsageModel(entry.provider, entry.model));
       const m = byKey.get(key);
       if (m) m.estimatedCostUsd = (m.estimatedCostUsd ?? 0) + estimate.cost.total;
+    }
+  }
+  // Second pass for the non-billing lane. Deliberately separate from the loop
+  // above rather than merged into it: that one is the direct lane and its field
+  // keeps its existing meaning exactly, so a subscription row gains a figure
+  // without a billable row's number moving by a cent.
+  for (const entry of entries) {
+    const serviceTier = effectiveServiceTier(entry);
+    const attributions = entry.attempts?.length
+      ? entry.attempts.map(attempt => ({
+        provider: attempt.provider,
+        model: attempt.model,
+        usage: attempt.usage,
+        usageStatus: attempt.usageStatus,
+        promptInputTokens: attempt.promptInputTokens ?? entry.promptInputTokens,
+        cacheRetention: attempt.cacheRetention ?? entry.cacheRetention,
+        timestamp: attempt.timestamp ?? entry.timestamp,
+      }))
+      : [{
+        provider: entry.provider,
+        model: entry.model,
+        usage: entry.usage,
+        usageStatus: entry.usageStatus,
+        promptInputTokens: entry.promptInputTokens,
+        cacheRetention: entry.cacheRetention,
+        timestamp: entry.timestamp,
+      }];
+    for (const row of attributions) {
+      const laneEstimate = estimateRequestCostLanes({ ...row, serviceTier }).apiEquivalent;
+      if (!laneEstimate) continue;
+      const key = usageModelKey(baseProviderLabel(row.provider), antigravityUsageModel(row.provider, row.model));
+      const m = byKey.get(key);
+      if (m) m.apiEquivalentCostUsd = (m.apiEquivalentCostUsd ?? 0) + laneEstimate.cost.total;
     }
   }
   const models = [...byKey.values()];
@@ -459,10 +675,14 @@ function buildProviders(entries: PersistedUsageEntry[], totalTokens: number): Us
     }
   }
   for (const entry of entries) {
-    const tier = effectiveServiceTier(entry);
+    const context = {
+      serviceTier: effectiveServiceTier(entry),
+      cacheRetention: entry.cacheRetention,
+      timestamp: entry.timestamp,
+    };
     const estimate = entry.attempts?.length
-      ? estimateComboCost(entry.attempts, undefined, tier)
-      : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, serviceTier: tier });
+      ? estimateComboCost(entry.attempts, undefined, context)
+      : estimateRequestCost({ provider: entry.provider, model: entry.model, usage: entry.usage, usageStatus: entry.usageStatus, ...context });
     if (!estimate) continue;
 
     if (entry.attempts?.length && estimate.attempts) {
@@ -475,6 +695,36 @@ function buildProviders(entries: PersistedUsageEntry[], totalTokens: number): Us
       const providerKey = baseProviderLabel(entry.provider);
       const p = byKey.get(providerKey);
       if (p) p.estimatedCostUsd = (p.estimatedCostUsd ?? 0) + estimate.cost.total;
+    }
+  }
+  // Non-billing lane, kept in its own pass for the same reason as the model
+  // rollup above: the direct field's meaning must not shift.
+  for (const entry of entries) {
+    const serviceTier = effectiveServiceTier(entry);
+    const attributions = entry.attempts?.length
+      ? entry.attempts.map(attempt => ({
+        provider: attempt.provider,
+        model: attempt.model,
+        usage: attempt.usage,
+        usageStatus: attempt.usageStatus,
+        promptInputTokens: attempt.promptInputTokens ?? entry.promptInputTokens,
+        cacheRetention: attempt.cacheRetention ?? entry.cacheRetention,
+        timestamp: attempt.timestamp ?? entry.timestamp,
+      }))
+      : [{
+        provider: entry.provider,
+        model: entry.model,
+        usage: entry.usage,
+        usageStatus: entry.usageStatus,
+        promptInputTokens: entry.promptInputTokens,
+        cacheRetention: entry.cacheRetention,
+        timestamp: entry.timestamp,
+      }];
+    for (const row of attributions) {
+      const laneEstimate = estimateRequestCostLanes({ ...row, serviceTier }).apiEquivalent;
+      if (!laneEstimate) continue;
+      const p = byKey.get(baseProviderLabel(row.provider));
+      if (p) p.apiEquivalentCostUsd = (p.apiEquivalentCostUsd ?? 0) + laneEstimate.cost.total;
     }
   }
   const providers = [...byKey.values()];
@@ -499,7 +749,7 @@ export function summarizeUsage(
     if (surface === "codex") return entry.surface === undefined;
     return true;
   });
-  const totals = blankTotals();
+  const totals = emptyUsageSummaryTotals();
   for (const entry of filteredEntries) {
     bumpStatus(totals, entry.usageStatus);
     totals.attemptCount += entry.attempts?.length ?? 1;

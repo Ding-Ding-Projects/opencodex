@@ -26,7 +26,7 @@ import {
   bulkCloseTargets, clampToViewport, closeOthersTargets, closeToRightTargets, tabMatcher,
   useTabs, type Tab,
 } from "../src/shell/use-tabs";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -85,7 +85,7 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   let root!: Root;
   await act(async () => {
     root = createRoot(container);
-    root.render(<LanguageProvider><Harness /></LanguageProvider>);
+    root.render(<TestLanguageProvider><Harness /></TestLanguageProvider>);
   });
   return { container, root };
 }
@@ -258,6 +258,10 @@ test("right-clicking a tab opens the menu and suppresses the browser's own", asy
     "Close tabs not containing text…",
     "Edit tab appearance…",
     "New group…",
+    // One entry with an ellipsis, opening `TabGroupPicker` — never one entry
+    // per group, which is the shape that grows without bound and pushes
+    // "Remove from group" to a different height on every opening.
+    "Move… into group…",
     "Remove from group",
   ]);
   // Opening a menu moves focus into it, or the entries are unreachable by keyboard.
@@ -365,11 +369,15 @@ test("arrows rove the menu and skip past a disabled entry", async () => {
   expect(items[2].disabled).toBe(true);
   expect(items[5].disabled).toBe(true);
   expect(items[6].disabled).toBe(true);
+  // "Move… into group…" stays enabled with no groups yet: the picker's own
+  // create-a-group row is the route to the first one, so disabling it here
+  // would hide the only keyboard path into grouping behind grouping.
+  expect(items[9].disabled).toBe(false);
   // The tab is in no group, so there is nothing to remove it from.
-  expect(items[9].disabled).toBe(true);
+  expect(items[10].disabled).toBe(true);
   // Disabled, not hidden: the menu keeps one shape, so its entries do not move
   // between openings.
-  expect(items).toHaveLength(10);
+  expect(items).toHaveLength(11);
 
   // Focus opens on the first *enabled* entry. Landing on a disabled one would
   // leave focus outside the menu, and every arrow key after that would miss it.
@@ -382,11 +390,13 @@ test("arrows rove the menu and skip past a disabled entry", async () => {
   expect(focused()).toBe("Edit tab appearance…");
   await act(async () => { key(document.activeElement, "ArrowDown"); });
   expect(focused()).toBe("New group…");
+  await act(async () => { key(document.activeElement, "ArrowDown"); });
+  expect(focused()).toBe("Move… into group…");
   // Wrapping skips the disabled entry at the end and the block at the top.
   await act(async () => { key(document.activeElement, "ArrowDown"); });
   expect(focused()).toBe("Pin tab");
   await act(async () => { key(document.activeElement, "ArrowUp"); });
-  expect(focused()).toBe("New group…");
+  expect(focused()).toBe("Move… into group…");
 
   await act(async () => { root.unmount(); });
 });

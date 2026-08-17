@@ -43,6 +43,32 @@ function isSubscriptionGateMessage(text: string): boolean {
   );
 }
 
+// B3 security port (upstream 1e816ee8, #1296). NTFS ACL hardening (icacls) on a local
+// secret/credential path fails with wording that overlaps provider auth vocabulary —
+// "access denied", "authentication" — because the thing being hardened IS a credential
+// file's permissions. Detected and mapped to 503 (infrastructure) *before* the general
+// auth check below, so a local filesystem/ACL problem is never told to the user as "your
+// credentials are wrong": this fork's active delivery scope is Windows-only, so an
+// icacls failure is a routine, real-world failure mode, not an edge case.
+function isLocalAclHardeningMessage(text: string): boolean {
+  const secretPathHardening = text.includes("secret path") && (
+    text.includes("acl") ||
+    text.includes("harden") ||
+    text.includes("permission") ||
+    text.includes("access denied") ||
+    text.includes("inheritance")
+  );
+  return (
+    text.includes("icacls") ||
+    text.includes("acl hardening") ||
+    text.includes("ntfs") ||
+    secretPathHardening ||
+    text.includes("inheritance:r") ||
+    /\bwindows\b.*\bacl\b/.test(text) ||
+    text.includes("/grant:r")
+  );
+}
+
 function isAuthenticationMessage(text: string): boolean {
   const accessDeniedWithCredentialCue = (
     text.includes("access denied") ||
@@ -167,6 +193,11 @@ export function classifyError(status: number, type: string, message: string): Oc
   if (type === "origin_rejected") {
     return { message, type: "invalid_request_error", code: "origin_rejected" };
   }
+  // Local ACL setup failures can contain provider-like auth wording (for example
+  // "access denied" or "authentication") but represent unavailable infrastructure.
+  if (status === 503 && isLocalAclHardeningMessage(text)) {
+    return { message, type: "server_error", code: "upstream_server_error" };
+  }
   // HTTP 401 and explicit auth failures are authoritative even when provider text
   // also advertises an upgrade or subscription.
   if (
@@ -277,6 +308,9 @@ export function inferHttpStatusFromAdapterMessage(message: string): number {
     lower.includes("too many requests") ||
     lower.includes("throttling")
   ) return 429;
+  // Local Windows filesystem hardening is infrastructure, not provider authentication.
+  // Keep this ahead of auth/permission and timeout keyword inference.
+  if (isLocalAclHardeningMessage(lower)) return 503;
   // Strong authentication signals win when a message contains mixed auth and
   // subscription/permission wording.
   if (isAuthenticationMessage(lower)) return 401;

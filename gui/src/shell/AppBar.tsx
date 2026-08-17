@@ -1,19 +1,43 @@
 /**
- * Top app bar: page title, live proxy status, notification centre, a shortcut to
- * Appearance, and the signed-in account chip.
+ * Top app bar: page title, live proxy status, quick restore, notification
+ * centre, the viewport preview-size control, a shortcut to Appearance, and the
+ * signed-in account chip.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { onOutsidePress } from "./outside-press";
-import { IconBell, IconMenu, IconPalette } from "../icons";
+import { IconAlert, IconBell, IconCheck, IconDevices, IconInfo, IconMenu, IconPalette, IconSearch } from "../icons";
 import { useT } from "../i18n/shared";
-import { useNotifications } from "./notifications-context";
+import { useNotifications, type NoticeTone } from "./notifications-context";
 import CostMeter from "./CostMeter";
+import QuickRestore from "./QuickRestore";
+import ViewportPreview from "./ViewportPreview";
 import AccountSwitcher from "./AccountSwitcher";
 import WindowControls from "./WindowControls";
+import { PALETTE_OPEN_EVENT } from "./CommandPalette";
 import { usePrefs } from "../theme/prefs-context";
+import { useSettingsDrafts } from "../settings-drafts-context";
+import { useSettingsSave } from "./use-settings-save";
+import { Button } from "./m3-ui";
 import { useAppearanceTarget } from "./use-appearance-target";
+import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
+import { PAGE_META_BY_ID } from "./page-meta";
 import type { Page } from "../app-routing";
+import type { TKey } from "../i18n/shared";
+
+/**
+ * The popover's compact tone chip — icon and container colour, matching the
+ * design's notification centre entry (`OpenCodex M3.dc.html` ~1805). The full
+ * history screen (`pages/Notifications.tsx`) additionally names the tone in
+ * text per A11Y-TONE-01; this list stays to 8 rows in a menu-width popover, so
+ * the icon carries an accessible name of its own instead of repeating that row.
+ */
+const NOTIF_TONE_CHIP: Record<NoticeTone, { bg: string; fg: string; nameKey: TKey; Icon: typeof IconInfo }> = {
+  error: { bg: "var(--m3-error-container)", fg: "var(--m3-on-error-container)", nameKey: "notif.toneErrorOne", Icon: IconAlert },
+  warn: { bg: "var(--m3-warn-container)", fg: "var(--m3-on-warn-container)", nameKey: "notif.toneWarnOne", Icon: IconAlert },
+  success: { bg: "var(--m3-ok-container)", fg: "var(--m3-on-ok-container)", nameKey: "notif.toneSuccessOne", Icon: IconCheck },
+  info: { bg: "var(--m3-surface-container-high)", fg: "var(--m3-on-surface-variant)", nameKey: "notif.toneInfoOne", Icon: IconInfo },
+};
 
 interface AppBarProps {
   apiBase: string;
@@ -30,14 +54,23 @@ interface AppBarProps {
   onOpenDrawer: () => void;
   drawerOpen: boolean;
   onOpen: (page: Page, newTab: boolean) => void;
+  onConnectRemote: () => void;
 }
 
-export default function AppBar({ apiBase, title, statusLine, statusTitle, codename, onOpenDrawer, drawerOpen, onOpen }: AppBarProps) {
+export default function AppBar({ apiBase, title, statusLine, statusTitle, codename, onOpenDrawer, drawerOpen, onOpen, onConnectRemote }: AppBarProps) {
   const t = useT();
   const { windowClass } = usePrefs();
+  const { dirty, dirtyCount, discard } = useSettingsDrafts();
+  // Not `apply` from the draft context: the app bar sits inside the language and
+  // notification providers that the coordinator sits outside of, so this is the
+  // layer that can actually report what the save did.
+  const { save, applying } = useSettingsSave();
   const { history, unreadCount, markAllRead } = useNotifications();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const notifTriggerRef = useRef<HTMLButtonElement>(null);
+  const notifPanelRef = useRef<HTMLDivElement>(null);
+  const notifPlacement = useAnchoredPlacement(notifRef, notifPanelRef, notifOpen, 320);
   // Right-click, press-and-hold or Shift+F10 on the bar restyles it in place.
   const barAppearance = useAppearanceTarget("appBar");
 
@@ -47,7 +80,12 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
     const onDown = (e: MouseEvent) => {
       if (!notifRef.current?.contains(e.target as Node)) setNotifOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNotifOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setNotifOpen(false);
+        notifTriggerRef.current?.focus();
+      }
+    };
     const stopOutsideonDown = onOutsidePress(onDown);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -87,32 +125,111 @@ export default function AppBar({ apiBase, title, statusLine, statusTitle, codena
 
       <CostMeter apiBase={apiBase} />
 
+      {dirty && (
+        <div className="m3-draft-bar" role="status" aria-live="polite">
+          <span className="m3-draft-bar__count">{t("settings.draftChanged", { count: dirtyCount })}</span>
+          <Button variant="text" disabled={applying} onClick={discard}>{t("settings.discardDraft")}</Button>
+          <Button variant="tonal" disabled={applying} onClick={() => void save()}>
+            {t(applying ? "settings.draftApplying" : "settings.saveApply")}
+          </Button>
+        </div>
+      )}
+
+      {/* One search over every page and every setting the app has. The keyboard
+          route (Ctrl+Shift+F) works from anywhere; this is the discoverable
+          path for someone who has not learned the shortcut yet. Dispatched as
+          a window event rather than a prop, so this bar does not have to hold
+          the palette's open state on its behalf. */}
+      <button
+        type="button"
+        className="m3-icon-btn"
+        onClick={() => window.dispatchEvent(new Event(PALETTE_OPEN_EVENT))}
+        aria-label={t("commandPalette.trigger")}
+        title={t("commandPalette.trigger")}
+      >
+        <IconSearch aria-hidden />
+      </button>
+
+      {/* Ahead of the notification bell on purpose: this is the control somebody
+          reaches for when something is wedged, and the far end of the row is
+          where the window controls live. */}
+      <QuickRestore apiBase={apiBase} />
+
       <div ref={notifRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
-        <button type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}
+        <button ref={notifTriggerRef} type="button" className="m3-icon-btn" onClick={() => setNotifOpen(o => !o)}
           aria-haspopup="dialog" aria-expanded={notifOpen} aria-label={t("notif.centre")} title={t("notif.centre")}>
           <IconBell aria-hidden />
-          {unreadCount > 0 && <span className="m3-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+          {/* `m3-badge-count`, not `m3-badge` -- the latter is the shared inline
+              status pill (`Badge` in shell/m3-ui.tsx). They were one class name
+              until the collision put every status pill in the window corner. */}
+          {unreadCount > 0 && <span className="m3-badge-count">{unreadCount > 99 ? "99+" : unreadCount}</span>}
         </button>
         {notifOpen && (
-          <div className="m3-menu" role="dialog" aria-label={t("notif.centre")} style={{ top: "100%", right: 0, minWidth: 320 }}>
+          <div
+            ref={notifPanelRef}
+            className="m3-menu"
+            role="dialog"
+            aria-label={t("notif.centre")}
+            style={{ ...fixedPanelStyle(notifPlacement), zIndex: 70, minWidth: "min(320px, calc(100vw - 16px))" }}
+          >
             <div className="m3-menu-heading">{t("notif.centre")}</div>
             {history.length === 0 && (
               <div style={{ padding: "12px", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}>
                 {t("notif.empty")}
               </div>
             )}
-            {history.slice(0, 8).map(n => (
-              <div key={n.id} className="m3-menu-item" style={{ display: "block", cursor: "default", minHeight: 0, padding: "8px 12px" }}>
-                <div style={{ fontWeight: 500 }}>{n.title}</div>
-                {n.body && <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>{n.body}</div>}
-              </div>
-            ))}
+            {history.slice(0, 8).map(n => {
+              const chip = NOTIF_TONE_CHIP[n.tone];
+              return (
+                <div key={n.id} className="m3-menu-item" style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "default", minHeight: 0, padding: "8px 12px" }}>
+                  <span
+                    role="img"
+                    aria-label={t(chip.nameKey)}
+                    style={{
+                      flex: "0 0 auto", display: "grid", placeItems: "center", width: 28, height: 28,
+                      borderRadius: "var(--r-pill)", background: chip.bg, color: chip.fg,
+                    }}
+                  >
+                    <chip.Icon width={16} height={16} aria-hidden="true" />
+                  </span>
+                  <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+                    <div style={{ fontWeight: 500 }}>{n.title}</div>
+                    {n.body && <div style={{ fontSize: "var(--t-body-s)", color: "var(--m3-on-surface-variant)" }}>{n.body}</div>}
+                    <div style={{
+                      marginTop: 4, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6,
+                      color: "var(--m3-on-surface-variant)", fontFamily: "var(--mono)", fontSize: "var(--t-label-s)",
+                    }}>
+                      <time dateTime={new Date(n.at).toISOString()}>{new Date(n.at).toLocaleString()}</time>
+                      {n.source && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>{t(PAGE_META_BY_ID[n.source].tkey)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
             <button type="button" className="m3-menu-item" onClick={() => { setNotifOpen(false); onOpen("notifications", false); }}>
               <span>{t("notif.viewAll")}</span>
             </button>
           </div>
         )}
       </div>
+
+      <button type="button" className="m3-icon-btn" onClick={onConnectRemote}
+        aria-label={t("remote.connectTitle")} title={t("remote.connectTitle")}>
+        <IconDevices aria-hidden />
+      </button>
+
+      {/* Pins the shell to an emulated width so the compact and medium layouts
+          can be looked at without dragging the window narrow and back. The
+          prototype puts it in this slot behind the `devices` glyph; that glyph
+          is spoken for here by the remote connection above, so this takes the
+          screen mark instead rather than shipping two identical icons a row
+          apart. Renders its own fixed exit banner while a preview is pinned. */}
+      <ViewportPreview />
 
       <button type="button" className="m3-icon-btn" onClick={() => onOpen("appearance", false)}
         aria-label={t("nav.appearance")} title={t("nav.appearance")}>

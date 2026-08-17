@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { OpenAiAccountModeBanner } from "../src/pages/CodexAuth";
 
 let previousLanguageDescriptor: PropertyDescriptor | undefined;
@@ -23,9 +23,9 @@ afterEach(() => {
 
 test("missing OpenAI provider offers an in-place enable action", () => {
   const html = renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <OpenAiAccountModeBanner state="absent" busy={false} onEnable={() => undefined} />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 
   expect(html).toContain("Your OpenAI accounts are still available");
@@ -35,14 +35,14 @@ test("missing OpenAI provider offers an in-place enable action", () => {
 
 test("disabled and busy OpenAI provider states keep the recovery action clear", () => {
   const disabledHtml = renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <OpenAiAccountModeBanner state="disabled" busy={false} onEnable={() => undefined} />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
   const busyHtml = renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <OpenAiAccountModeBanner state="disabled" busy={true} onEnable={() => undefined} />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 
   expect(disabledHtml).toContain("Your OpenAI accounts are still available");
@@ -53,9 +53,9 @@ test("disabled and busy OpenAI provider states keep the recovery action clear", 
 
 test("noncanonical disabled OpenAI rows do not offer built-in recovery", () => {
   const html = renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <OpenAiAccountModeBanner state="invalid" busy={false} onEnable={() => undefined} />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 
   expect(html).toContain("The built-in OpenAI provider is not configured.");

@@ -26,6 +26,7 @@ import { saveCodexAccountCredential } from "../src/codex/account-store";
 import {
   clearAccountNeedsReauth,
   clearAccountQuota,
+  clearCodexQuotaPrimeState,
   clearMainAccountInfoCache,
   fetchMainAccountInfo,
   getAccountQuota,
@@ -87,6 +88,11 @@ describe("main account rotation (Option A)", () => {
     clearMainAccountInfoCache();
     resetMainCodexAccountIdentityTrackingForTests();
     setMainAccountPlan(null);
+    // The WHAM fetch throttle (b3-proxyhang) is keyed by account and shared
+    // module state; this file's tests deliberately re-fetch the same
+    // MAIN_CODEX_ACCOUNT_ID key across many cases, so it must not carry a
+    // "too soon" cooldown over from the previous test.
+    clearCodexQuotaPrimeState();
     for (const id of ["a", "b", MAIN_CODEX_ACCOUNT_ID]) clearAccountNeedsReauth(id);
     saveCred("a");
     saveCred("b");
@@ -100,6 +106,7 @@ describe("main account rotation (Option A)", () => {
     clearMainAccountInfoCache();
     resetMainCodexAccountIdentityTrackingForTests();
     setMainAccountPlan(null);
+    clearCodexQuotaPrimeState();
     for (const id of ["a", "b", MAIN_CODEX_ACCOUNT_ID]) clearAccountNeedsReauth(id);
     for (const d of [STORE_DIR, CODEX_DIR]) if (existsSync(d)) removeTempDir(d);
     if (prevOpencodexHome === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = prevOpencodexHome;

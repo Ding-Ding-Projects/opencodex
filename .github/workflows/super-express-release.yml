@@ -1,9 +1,10 @@
 name: Super express release
 
 # This is the deliberately impatient manual release door. It packages the
-# selected commit directly and publishes a normal GitHub release without
-# waiting for, or invoking, any test workflow. Use the regular CI and Auto
-# release workflows when verification is part of the release decision.
+# selected commit directly, preserves build evidence even when packaging fails,
+# and publishes only after the Windows CI workflow has succeeded for that exact
+# resolved commit. It skips rerunning CI inside this job; it never skips the
+# evidence that CI already passed.
 
 on:
   workflow_dispatch:
@@ -15,6 +16,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -88,7 +90,28 @@ jobs:
           echo "packed $(du -h ../../opencodex-dashboard.zip | cut -f1)"
 
       - name: Build the Windows installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+          WIN_CSC_LINK: ""
+          WIN_CSC_KEY_PASSWORD: ""
         run: npx --yes electron-builder@26.15.3 --win --publish never
+
+      - name: Verify every Windows setup is unsigned
+        shell: pwsh
+        run: |
+          $setups = @(Get-ChildItem -Path dist-desktop -Recurse -File -Filter '*Setup*.exe' -ErrorAction SilentlyContinue)
+          if ($setups.Count -eq 0) {
+            throw 'Squirrel.Windows did not produce a Setup.exe.'
+          }
+          foreach ($setup in $setups) {
+            $status = (Get-AuthenticodeSignature -LiteralPath $setup.FullName).Status
+            if ($status -ne 'NotSigned') {
+              throw "Signing is prohibited, but $($setup.FullName) reported Authenticode status $status."
+            }
+            Write-Host "Verified unsigned setup: $($setup.FullName)"
+          }
 
       - name: Validate release assets
         shell: bash
@@ -102,31 +125,105 @@ jobs:
             exit 1
           fi
 
-          feed_count=$(find dist-desktop -type f \( -name RELEASES -o -name '*.nupkg' \) -size +0c 2>/dev/null | wc -l)
-          if [ "$feed_count" -lt 2 ]; then
+          release_index=$(find dist-desktop -type f -name 'RELEASES' -size +0c 2>/dev/null | head -1)
+          full_package=$(find dist-desktop -type f -name '*-full.nupkg' -size +0c 2>/dev/null | head -1)
+          if [ -z "$release_index" ] || [ -z "$full_package" ]; then
             echo "::error::Squirrel update feed is incomplete: expected RELEASES and a full .nupkg."
             find dist-desktop -maxdepth 3 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+          if ! grep -Fq "$(basename "$full_package")" "$release_index"; then
+            echo "::error::Squirrel RELEASES does not reference the produced full .nupkg."
             exit 1
           fi
           [ -s opencodex-dashboard.zip ] || { echo "::error::Dashboard bundle is missing."; exit 1; }
           photo="gui/public/dimsum/${DISH_ID}.webp"
           [ -s "$photo" ] || { echo "::error::Dim sum photo is missing: $photo"; exit 1; }
           echo "installer=$installer"
-          echo "squirrel feed assets=$feed_count"
+          echo "release index=$release_index"
+          echo "full package=$full_package"
           echo "photo=$photo"
 
-      - name: Keep the installer as an artifact
+      - name: Collect safe release evidence
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'opencodex-super-express-evidence'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          @(
+            "run_id=$env:GITHUB_RUN_ID"
+            "sha=$env:GITHUB_SHA"
+            "resolved_sha=$env:SHA"
+            "job_status=$env:JOB_STATUS"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+          ) | Set-Content -LiteralPath (Join-Path $out 'run-metadata.txt') -Encoding utf8
+
+          $safeFiles = @()
+          if (Test-Path -LiteralPath 'dist-desktop') {
+            $safeFiles += @(Get-ChildItem -LiteralPath 'dist-desktop' -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -eq 'RELEASES' -or $_.Extension -in @('.exe', '.nupkg') })
+          }
+          if (Test-Path -LiteralPath 'opencodex-dashboard.zip' -PathType Leaf) {
+            $safeFiles += @(Get-Item -LiteralPath 'opencodex-dashboard.zip')
+          }
+
+          foreach ($file in $safeFiles) {
+            $relative = [IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $file.FullName)
+            $destination = Join-Path $out $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+          }
+          if ($safeFiles.Count -eq 0) {
+            'No safe installer or dashboard output existed when collection ran.' |
+              Set-Content -LiteralPath (Join-Path $out 'NO_SAFE_ARTIFACTS.txt') -Encoding utf8
+          }
+
+      - name: Keep collected release evidence
+        if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodex-super-express-${{ github.run_number }}
-          path: |
-            dist-desktop/**/*.exe
-            dist-desktop/**/*.nupkg
-            dist-desktop/**/RELEASES
-            opencodex-dashboard.zip
-          if-no-files-found: error
+          path: ${{ runner.temp }}/opencodex-super-express-evidence
+          if-no-files-found: warn
           retention-days: 30
           compression-level: 0
+
+      - name: Require successful Windows CI for this exact commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 40); do
+            success_url=$(gh run list --workflow ci.yml --commit "$SHA" --limit 20 \
+              --json headSha,status,conclusion,url \
+              --jq ".[] | select(.headSha == \"$SHA\" and .status == \"completed\" and .conclusion == \"success\") | .url" \
+              | head -1)
+            if [ -n "$success_url" ]; then
+              echo "Windows CI passed for ${SHA}: ${success_url}"
+              exit 0
+            fi
+
+            total=$(gh run list --workflow ci.yml --commit "$SHA" --limit 20 \
+              --json headSha \
+              --jq "[.[] | select(.headSha == \"$SHA\")] | length")
+            active=$(gh run list --workflow ci.yml --commit "$SHA" --limit 20 \
+              --json headSha,status \
+              --jq "[.[] | select(.headSha == \"$SHA\" and .status != \"completed\")] | length")
+            if [ "$total" != "0" ] && [ "$active" = "0" ]; then
+              echo "::error::Windows CI completed without success for ${SHA}; refusing to publish."
+              exit 1
+            fi
+            echo "Waiting for successful Windows CI on ${SHA} (attempt ${attempt}/40)."
+            sleep 30
+          done
+          echo "::error::Timed out waiting for successful Windows CI on ${SHA}; refusing to publish."
+          exit 1
 
       - name: Create the full GitHub release
         shell: bash
@@ -140,10 +237,29 @@ jobs:
           [ -n "$installer" ] || installer=$(find dist-desktop -type f -name '*.exe' ! -name 'Update.exe' 2>/dev/null | head -1)
 
           feed=()
-          while IFS= read -r file; do
-            [ -s "$file" ] && feed+=("$file")
-          done < <(find dist-desktop -type f \( -name RELEASES -o -name '*.nupkg' \) 2>/dev/null)
-          [ "${#feed[@]}" -ge 2 ] || { echo "::error::Squirrel feed vanished before publishing."; exit 1; }
+          release_indexes=()
+          full_packages=()
+          while IFS= read -r -d '' file; do
+            feed+=("$file")
+            [ "$(basename "$file")" = "RELEASES" ] && release_indexes+=("$file")
+            [[ "$file" == *-full.nupkg ]] && full_packages+=("$file")
+          done < <(find dist-desktop -type f \( -name 'RELEASES' -o -name '*.nupkg' \) -size +0c -print0 2>/dev/null)
+          [ "${#release_indexes[@]}" -gt 0 ] && [ "${#full_packages[@]}" -gt 0 ] || {
+            echo "::error::Squirrel feed vanished before publishing: RELEASES and a full .nupkg are required."
+            exit 1
+          }
+          full_is_indexed=false
+          for index in "${release_indexes[@]}"; do
+            for package in "${full_packages[@]}"; do
+              if grep -Fq "$(basename "$package")" "$index"; then
+                full_is_indexed=true
+              fi
+            done
+          done
+          [ "$full_is_indexed" = true ] || {
+            echo "::error::Squirrel RELEASES no longer references a produced full .nupkg."
+            exit 1
+          }
 
           photo="gui/public/dimsum/${DISH_ID}.webp"
           lines=$(bun run scripts/count-lines.ts)
@@ -155,8 +271,8 @@ jobs:
           *$DISH_ZH · $DISH_NAME · \`$DISH_JYUTPING\`*
 
           Manual \`workflow_dispatch\` build of \`${SHA:0:9}\` (v${version}).
-          This workflow intentionally performs packaging only: no test jobs were run.
-          The normal CI and Auto release workflows remain the verification path.
+          This workflow performs packaging directly after verifying that the Windows CI
+          workflow succeeded for this exact commit; it does not rerun those tests here.
 
           | Asset | What it is |
           | --- | --- |

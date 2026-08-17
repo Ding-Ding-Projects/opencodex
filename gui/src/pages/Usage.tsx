@@ -3,6 +3,7 @@ import { useI18n, type TFn, type Locale } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
 import { cachedNumberFormat, formatEstimatedUsdValue as formatUsdEstimate } from "../intl-formatters";
 import {
+  IconActivity,
   IconBolt,
   IconClock,
   IconCoin,
@@ -13,7 +14,10 @@ import {
 } from "../icons";
 import { Banner, Button, Chip, Empty } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { modelLabel } from "../model-display";
+import { resolveSummaryCost, type PricingLaneTotals } from "../cost-lanes";
 
 type Range = "all" | "30d" | "7d";
 type UsageSurface = "all" | "codex" | "claude" | "grok";
@@ -37,6 +41,12 @@ interface UsageSummaryTotals {
   pricedRequests?: number;
   unpricedRequests?: number;
   unmeteredRequests?: number;
+  /* The server has split cost accounting into two lanes since the pricing
+     rework, and /api/usage has been serializing both all along — this type
+     simply never declared them, which is why the page could only ever read the
+     direct lane and rendered "$0.00" for every subscription user. */
+  direct?: PricingLaneTotals;
+  apiEquivalent?: PricingLaneTotals;
 }
 
 interface UsageDay {
@@ -340,6 +350,35 @@ const NOTE_TEXT: React.CSSProperties = {
   color: "var(--m3-on-surface-variant)",
   fontSize: "var(--t-body-s)",
 };
+/* Per-lane cost itemisation. Rows wrap rather than truncate so the longest
+   bilingual label cannot clip the figure beside it at a narrow width. */
+const COST_LANE_LIST: React.CSSProperties = {
+  marginTop: 16,
+  paddingTop: 12,
+  borderTop: "1px solid var(--m3-outline-variant)",
+};
+const COST_LANE_HEADING: React.CSSProperties = {
+  margin: "0 0 8px",
+  color: "var(--m3-on-surface)",
+  fontSize: "var(--t-label-l)",
+  fontWeight: 600,
+};
+const COST_LANE_ROW: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "baseline",
+  gap: 8,
+  marginBottom: 6,
+};
+const COST_LANE_LABEL: React.CSSProperties = {
+  flex: "1 1 200px",
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-l)",
+};
+const COST_LANE_COUNT: React.CSSProperties = {
+  color: "var(--m3-on-surface-variant)",
+  fontSize: "var(--t-label-s)",
+};
 
 function StatTile({ icon, label, value, hint, title }: {
   icon: ReactNode;
@@ -462,6 +501,13 @@ function UsageSummaryCards({
 }) {
   const cacheWrites = summary.cacheCreationInputTokens ?? 0;
   const unpriced = summary.unpricedRequests ?? 0;
+  // Which lane answers for the headline tile. Direct outranks equivalent because
+  // it is the only one that represents money actually owed; when neither lane
+  // priced anything the tile says so in words instead of rendering "$0.00",
+  // which would assert free for traffic that simply has no published schedule.
+  const laneCost = resolveSummaryCost(summary);
+  const showsCost = summary.estimatedCostUsd !== undefined || summary.direct !== undefined || summary.apiEquivalent !== undefined;
+  const equivalentHeadline = laneCost.primary?.kind === "api_equivalent";
   // Tile order, marks and hints follow the prototype's six usage cards. "Measured" is no longer
   // its own tile there — it is the requests hint, which keeps the pair of numbers side by side.
   return (
@@ -496,15 +542,25 @@ function UsageSummaryCards({
         label={t("usage.card.activeDays")}
         value={activeDays}
       />
-      {summary.estimatedCostUsd !== undefined && (
+      {showsCost && (
         <StatTile
           icon={<IconCoin {...STAT_ICON} />}
-          label={t("usage.card.estCost")}
+          // The label itself changes with the lane. Leaving it as "Est. cost" over
+          // an API-equivalent figure would be the whole misreading in one tile.
+          label={t(equivalentHeadline ? "usage.card.estCostEquivalent" : "usage.card.estCost")}
           // The short label is the tile; the long one stays reachable, so nobody reads
           // "Est. cost" as a bill.
-          title={t("usage.cost.total")}
-          value={formatUsdEstimate(summary.estimatedCostUsd, locale)}
-          hint={t("usage.card.costHint")}
+          title={equivalentHeadline ? t("cost.lane.equivalentMeaning") : t("usage.cost.total")}
+          value={laneCost.primary
+            ? formatUsdEstimate(laneCost.primary.total, locale)
+            : "—"}
+          hint={laneCost.primary
+            ? (equivalentHeadline
+              // Words, not just the tonal chip — the tag has to survive being read
+              // by someone who cannot see the container it sits in.
+              ? <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+              : t("usage.card.costHint"))
+            : t("cost.lane.none")}
         />
       )}
     </div>
@@ -660,6 +716,8 @@ function UsageModelsTable({
   onModelQuery,
   useRegex,
   onUseRegex,
+  flags,
+  onFlags,
   regexError,
   locale,
   t,
@@ -676,6 +734,9 @@ function UsageModelsTable({
   onModelQuery: (query: string) => void;
   useRegex: boolean;
   onUseRegex: (next: boolean) => void;
+  /** The flags the page compiles this query with; the chip row below edits them. */
+  flags: string;
+  onFlags: (next: string) => void;
   regexError: string | null;
   locale: Locale;
   t: TFn;
@@ -699,6 +760,7 @@ function UsageModelsTable({
         aria-label={searchLabel}
         placeholder={searchLabel}
         aria-invalid={!!regexError}
+        aria-describedby={useRegex ? "usage-models-flags-state" : undefined}
         value={modelQuery}
         onChange={event => onModelQuery(event.target.value)}
       />
@@ -709,9 +771,13 @@ function UsageModelsTable({
       {/* The builder sits beside the field it serves, not behind a menu. */}
       <RegexBuilderButton
         value={modelQuery}
-        onApply={pattern => onModelQuery(pattern)}
+        // Both halves of what the builder composed. Taking the pattern and
+        // leaving the flags behind is what made the popover's flag chips
+        // decorative from this field's point of view.
+        onApply={(pattern, appliedFlags) => { onModelQuery(pattern); onFlags(appliedFlags); }}
         regex={useRegex}
         onRegexChange={onUseRegex}
+        flags={flags}
         sample={sample}
       />
     </div>
@@ -758,12 +824,25 @@ function UsageModelsTable({
         </div>
         <div className="m3-card-actions">{searchInput}</div>
       </header>
+      {/*
+        Below the header rather than inside `.m3-card-actions` beside the field:
+        the actions row is a single flex line that already carries the input, the
+        `.*` chip and the builder trigger, and six more chips in it would push the
+        field to nothing at the narrow widths this card is checked at. It stays
+        directly under the search it describes, which is what the anchoring is for.
+      */}
+      <SearchFlagsRow
+        regex={useRegex}
+        flags={flags}
+        onFlagsChange={onFlags}
+        id="usage-models-flags-state"
+      />
       {regexError ? (
         <p role="alert" style={REGEX_ERROR_TEXT}>{t("regex.invalid")}: {regexError}</p>
       ) : null}
       {/* Only a *search* that matched nothing gets the no-match state; an unfiltered empty list
           would be a different fact, and the page-level empty state already covers it. */}
-      {models.length === 0 && modelQuery.trim() ? <Empty title={t("models.noMatch")} /> : table}
+      {models.length === 0 && modelQuery.trim() ? <Empty title={t("models.noMatch")} icon={IconSearch} /> : table}
     </section>
   );
 }
@@ -838,6 +917,8 @@ function UsageCoveragePanel({
   // Every row is a share of the same denominator, so the bars are comparable down the column.
   const total = Math.max(1, summary.requests);
   const excluded = (summary.unpricedRequests ?? 0) + (summary.unmeteredRequests ?? 0);
+  const laneCost = resolveSummaryCost(summary);
+  const hasCostFields = summary.estimatedCostUsd !== undefined || summary.direct !== undefined || summary.apiEquivalent !== undefined;
   const rows: { key: string; label: string; value: number; tone: string }[] = [
     { key: "measured", label: t("usage.coverage.measured"), value: summary.measuredRequests, tone: "var(--m3-primary)" },
     { key: "reported", label: t("usage.coverage.reported"), value: summary.reportedRequests, tone: "var(--m3-tertiary)" },
@@ -858,7 +939,44 @@ function UsageCoveragePanel({
       {/* The coverage tile's hint counts unpriced requests; the exact excluded total (unpriced
           plus unmetered) belongs here, where the rest of the request accounting lives. */}
       {excluded > 0 && <p style={NOTE_TEXT}>{t("usage.cost.unpricedNote", { count: excluded })}</p>}
-      {summary.estimatedCostUsd !== undefined && (
+      {/* The headline tile has room for one lane. Both are itemised here so a machine
+          holding an API key *and* a subscription can see the split, and so the
+          equivalent figure is never silently folded into the billable one — they are
+          different kinds of number and are deliberately never summed. */}
+      {(laneCost.direct || laneCost.apiEquivalent) && (
+        <div style={COST_LANE_LIST}>
+          <p style={COST_LANE_HEADING}>{t("usage.cost.laneHeading")}</p>
+          {laneCost.direct && (
+            <div style={COST_LANE_ROW}>
+              <span style={COST_LANE_LABEL}>{t("usage.cost.laneDirectRow")}</span>
+              <span className="mono">{formatUsdEstimate(laneCost.direct.total, locale)}</span>
+              <span style={COST_LANE_COUNT}>
+                {t("usage.cost.laneRequests", { count: formatCount(laneCost.direct.pricedRequests, locale) })}
+              </span>
+            </div>
+          )}
+          {laneCost.apiEquivalent && (
+            <>
+              <div style={COST_LANE_ROW}>
+                <span style={COST_LANE_LABEL}>
+                  {t("usage.cost.laneEquivalentRow")}
+                  {" "}
+                  <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+                </span>
+                <span className="mono">{formatUsdEstimate(laneCost.apiEquivalent.total, locale)}</span>
+                <span style={COST_LANE_COUNT}>
+                  {t("usage.cost.laneRequests", { count: formatCount(laneCost.apiEquivalent.pricedRequests, locale) })}
+                </span>
+              </div>
+              <p style={NOTE_TEXT}>{t("cost.lane.equivalentMeaning")}</p>
+            </>
+          )}
+        </div>
+      )}
+      {hasCostFields && !laneCost.primary && (
+        <p style={NOTE_TEXT}>{t("cost.lane.noneMeaning")}</p>
+      )}
+      {hasCostFields && (
         <p style={NOTE_TEXT}>{t("usage.cost.disclaimer")}</p>
       )}
     </>
@@ -885,6 +1003,13 @@ export default function Usage({ apiBase }: { apiBase: string }) {
   const [error, setError] = useState<string | null>(null);
   const [modelQuery, setModelQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` showed a panel where turning on `m` or `s`
+   * changed the preview and then changed nothing about what the table found.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const loadGenerationRef = useRef(0);
 
   const fetchUsage = useCallback(async (nextRange: Range, nextSurface: UsageSurface, signal: AbortSignal) => {
@@ -934,22 +1059,18 @@ export default function Usage({ apiBase }: { apiBase: string }) {
     const sorted = models.toSorted((a, b) => b.totalTokens - a.totalTokens);
     if (!query) return { filteredModels: sorted.slice(0, 100), regexError: null as string | null };
 
-    let matches: (haystack: string) => boolean;
-    if (useRegex) {
-      try {
-        const re = new RegExp(query.slice(0, 400), "i");
-        matches = haystack => re.test(haystack);
-      } catch (cause) {
-        // An in-progress pattern must not blank the screen silently — the row below says why.
-        return { filteredModels: [], regexError: cause instanceof Error ? cause.message : String(cause) };
-      }
-    } else {
-      const needle = query.toLowerCase();
-      matches = haystack => haystack.toLowerCase().includes(needle);
-    }
-    const filtered = sorted.filter(m => matches(`${m.model} ${m.provider} ${m.resolvedModel ?? ""}`));
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own: it
+    // compiles the flags the builder beside this field actually applied, so the
+    // panel's preview and this table cannot report different matches for one
+    // pattern. Same 400-character bound as before, and `g`/`y` are dropped —
+    // their `lastIndex` survives between calls, so one matcher reused down the
+    // model list would keep every other row.
+    const matcher = settingsMatcher(query, useRegex, flags);
+    // An in-progress pattern must not blank the screen silently — the row below says why.
+    if (matcher.error) return { filteredModels: [], regexError: matcher.error };
+    const filtered = sorted.filter(m => matcher.test(`${m.model} ${m.provider} ${m.resolvedModel ?? ""}`));
     return { filteredModels: filtered.slice(0, 100), regexError: null as string | null };
-  }, [data?.models, modelQuery, useRegex]);
+  }, [data?.models, modelQuery, useRegex, flags]);
 
   // The same haystack `filteredModels` matches against, from the unfiltered list.
   const modelSample = useMemo(
@@ -992,7 +1113,7 @@ export default function Usage({ apiBase }: { apiBase: string }) {
       ) : loading && !data ? (
         <Empty title={t("usage.loading")} />
       ) : data?.summary.requests === 0 ? (
-        <Empty title={t("usage.empty")} />
+        <Empty title={t("usage.empty")} icon={IconActivity} />
       ) : data ? (
         <>
           <UsageSummaryCards summary={data.summary} activeDays={activeDays} locale={locale} t={t} />
@@ -1004,6 +1125,8 @@ export default function Usage({ apiBase }: { apiBase: string }) {
             onModelQuery={setModelQuery}
             useRegex={useRegex}
             onUseRegex={setUseRegex}
+            flags={flags}
+            onFlags={setFlags}
             regexError={regexError}
             locale={locale}
             t={t}

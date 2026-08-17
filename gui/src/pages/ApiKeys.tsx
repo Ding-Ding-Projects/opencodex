@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import BulkBar from "../shell/BulkBar";
 import {
   invert as invertSelection, selectAll as selectAllIds, selectRange, toggle as toggleSelection,
@@ -6,9 +6,10 @@ import {
 import { useCopyFeedback } from "../components/use-copy-feedback";
 import { copyTextToClipboard } from "../oauth-health-display";
 import { useI18n, LOCALES } from "../i18n/shared";
-import { useNotifications } from "../shell/notifications-context";
-import { useConfirm } from "../shell/confirm-context";
+import { NotificationsContext } from "../shell/notifications-context";
+import { ConfirmContext } from "../shell/confirm-context";
 import { recordRevision } from "../shell/revisions";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import {
   classifyExternalModel,
@@ -20,10 +21,12 @@ import {
   deriveApiEndpoints,
   type ApiEndpointInfo,
   type ApiKeyEntry,
+  type CopilotDesktopProfile,
   type ModelTestState,
 } from "./api-keys-utils";
 import {
   ApiKeysAuthPanel,
+  ApiKeysCopilotPanel,
   ApiKeysEndpointsPanel,
   ApiKeysManagePanel,
   ApiKeysModelsPanel,
@@ -57,15 +60,20 @@ interface CreateKeyResponse {
 
 export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
-  const { notify } = useNotifications();
+  // The app supplies both providers, but a no-op fallback keeps this surface
+  // independently renderable in lightweight desktop probes.
+  const notifications = useContext(NotificationsContext);
+  const notify = notifications?.notify ?? (() => "");
   /* Shadows the global `confirm` deliberately, as the other pages here do — and
      the shadowing is the point. Without this import, `confirm({ title, ... })`
      silently resolved to the DOM's `confirm(message: string)`, which accepts one
      string, ignores an object, and returns immediately. A destructive bulk
      action would have run with no dialog at all. */
-  const confirm = useConfirm();
+  const confirm = useContext(ConfirmContext) ?? (async () => false);
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang;
   const [keys, setKeys] = useState<ApiKeyEntry[]>([]);
+  const [copilotProfile, setCopilotProfile] = useState<CopilotDesktopProfile | null>(null);
+  const [copilotLoadFailed, setCopilotLoadFailed] = useState(false);
   const [endpoints, setEndpoints] = useState<ApiEndpointInfo>(DEFAULT_ENDPOINTS);
   const [claudeCodeEnabled, setClaudeCodeEnabled] = useState(true);
   const [keysLoadFailed, setKeysLoadFailed] = useState(false);
@@ -75,6 +83,15 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags the catalog search compiles with. State rather than the `"i"` it
+   * used to hard-code: the builder anchored beside that field composes a pattern
+   * *and* its flags, and a field that pinned `i` showed a panel where turning on
+   * `m` or `s` changed the preview and then changed nothing about which models
+   * the list kept. A pattern built as case-sensitive arriving here
+   * case-insensitive is the same defect read the other way round.
+   */
+  const [modelFlags, setModelFlags] = useState(DEFAULT_SEARCH_FLAGS);
   const [modelTests, setModelTests] = useState<Record<string, { state: ModelTestState; detail?: string }>>({});
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -122,7 +139,8 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     setModelsLoading(true);
     setModelsLoadFailed(false);
     try {
-      const res = await fetch(`${apiBase}/v1/models`);
+      const modelsUrl = `${apiBase}/v1/models`;
+      const res = await fetch(modelsUrl);
       if (!res.ok) {
         setModels([]);
         setModelsLoadFailed(true);
@@ -156,47 +174,84 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     }
   }, [apiBase]);
 
+  const fetchCopilotProfile = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsLoadFailed(false);
+    try {
+      const res = await fetch(`${apiBase}/api/copilot-desktop`);
+      if (res.status === 404) {
+        // Older daemons do not expose this profile yet; retain the general
+        // catalog route for that server shape.
+        setCopilotProfile(null);
+        setCopilotLoadFailed(false);
+        await fetchModels();
+        return;
+      }
+      const profile = await readJsonIfOk<CopilotDesktopProfile>(res);
+      if (!profile || !Array.isArray(profile.models)) {
+        setCopilotLoadFailed(true);
+        setModelsLoadFailed(true);
+        return;
+      }
+      setCopilotProfile(profile);
+      setCopilotLoadFailed(false);
+      setModels(profile.models.map(model => ({
+        id: model.id,
+        displayName: model.id,
+        provider: model.provider,
+        native: model.provider === "openai" && !model.id.includes("/"),
+        custom: model.provider !== "openai" && model.provider !== "combo",
+        copilot: {
+          ready: model.ready,
+          reason: model.reason,
+          adapter: model.adapter,
+          capabilities: model.capabilities,
+          sidecars: model.sidecars,
+          directModeExcluded: model.directModeExcluded,
+        },
+      })).sort((a, b) => externalModelId(a).localeCompare(externalModelId(b))));
+    } catch {
+      setCopilotLoadFailed(true);
+      setModelsLoadFailed(true);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [apiBase, fetchModels]);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void fetchKeys();
-      void fetchModels();
+      void fetchCopilotProfile();
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [fetchKeys, fetchModels]);
+  }, [fetchCopilotProfile, fetchKeys]);
 
   /**
-   * Catalog search: plain text by default, `.*` as an explicit opt-in. The
-   * pattern is capped at 400 characters and evaluated locally with no `g` flag,
-   * so a pasted novel can never become a catastrophic-backtracking payload and
-   * no lastIndex state leaks between rows.
+   * Catalog search: plain text by default, `.*` as an explicit opt-in.
+   *
+   * The shared matcher rather than a `new RegExp(query, "i")` of its own, so the
+   * flags the anchored builder applied are the flags this list is filtered by
+   * and the panel's preview cannot report matches the catalog then does not
+   * show. It keeps the same 400-character bound, so a pasted novel can never
+   * become a catastrophic-backtracking payload, and it drops `g`/`y` — their
+   * `lastIndex` survives between calls, and this search tests three fields per
+   * row, so a sticky pattern would keep whichever rows happened to be tested at
+   * the right offset.
    */
   const { filteredModels, modelQueryError } = useMemo(() => {
-    const query = modelQuery.trim();
-    if (!query) return { filteredModels: models, modelQueryError: null as string | null };
+    if (!modelQuery.trim()) return { filteredModels: models, modelQueryError: null as string | null };
     const fields = (model: ExternalModelRow) => [externalModelId(model), model.displayName, model.provider];
-    if (useRegex) {
-      let pattern: RegExp;
-      try {
-        pattern = new RegExp(query.slice(0, 400), "i");
-      } catch (error) {
-        return {
-          filteredModels: [] as ExternalModelRow[],
-          modelQueryError: error instanceof Error ? error.message : String(error),
-        };
-      }
-      return {
-        filteredModels: models.filter(model => fields(model).some(field => pattern.test(field))),
-        modelQueryError: null as string | null,
-      };
+    const matcher = settingsMatcher(modelQuery, useRegex, modelFlags);
+    if (matcher.error) {
+      return { filteredModels: [] as ExternalModelRow[], modelQueryError: matcher.error };
     }
-    const needle = query.toLowerCase();
     return {
-      filteredModels: models.filter(model => fields(model).some(field => field.toLowerCase().includes(needle))),
+      filteredModels: models.filter(model => fields(model).some(field => matcher.test(field))),
       modelQueryError: null as string | null,
     };
-  }, [modelQuery, models, useRegex]);
+  }, [modelQuery, models, useRegex, modelFlags]);
 
-  const handleCreate = async (name?: string): Promise<boolean> => {
+  const handleCreate = async (name?: string, purpose?: ApiKeyEntry["purpose"]): Promise<boolean> => {
     if (creatingRef.current) return false;
     creatingRef.current = true;
     setCreating(true);
@@ -207,7 +262,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       const res = await fetch(`${apiBase}/api/keys`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: keyLabel }),
+        body: JSON.stringify({ name: keyLabel, ...(purpose ? { purpose } : {}) }),
       });
       const data = await readJsonOrThrow<CreateKeyResponse>(res, t("api.createFailed"));
       if (typeof data?.key !== "string" || data.key.length === 0) {
@@ -221,6 +276,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
       recordRevision({ scope: "key", label: keyLabel, summary: t("api.keyCreated") });
       notify({ tone: "success", title: t("api.keyCreated"), body: keyLabel });
       void fetchKeys();
+      if (purpose === "github-copilot-desktop") void fetchCopilotProfile();
       return true;
     } catch {
       setActionError(t("api.createFailed"));
@@ -409,6 +465,17 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         </p>
       )}
 
+      <ApiKeysCopilotPanel
+        profile={copilotProfile}
+        profileLoadFailed={copilotLoadFailed}
+        integrationKey={keys.find(key => key.purpose === "github-copilot-desktop") ?? null}
+        creating={creating}
+        newKeyVisible={newKey !== null}
+        localeTag={localeTag}
+        onGenerate={() => { void handleCreate(t("api.copilotKeyName"), "github-copilot-desktop"); }}
+        onManage={() => document.getElementById("api-active-keys")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      />
+
       <ApiKeysEndpointsPanel
         endpoints={endpoints}
         claudeCodeEnabled={claudeCodeEnabled}
@@ -456,11 +523,13 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         modelQuery={modelQuery}
         modelQueryError={modelQueryError}
         useRegex={useRegex}
+        modelFlags={modelFlags}
         copyOutcomeFor={copyOutcomeFor}
         modelTests={modelTests}
         claudeCodeEnabled={claudeCodeEnabled}
         onModelQueryChange={setModelQuery}
         onUseRegexChange={setUseRegex}
+        onModelFlagsChange={setModelFlags}
         onCopyModelId={copyModelId}
         onTestModel={(model) => { void testModel(model); }}
         sourceLabel={sourceLabel}

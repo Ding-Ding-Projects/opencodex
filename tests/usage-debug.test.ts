@@ -113,8 +113,20 @@ describe("appendUsageDebug", () => {
     const parsed = JSON.parse(lines[0]) as { bodySample: string };
     expect(parsed.bodySample).not.toContain("usage-debug-token");
     expect(parsed.bodySample).not.toContain("refresh-debug-token");
-    expect(parsed.bodySample).toContain("Bearer [REDACTED]");
+    // The whole quoted value goes, prefix included -- `"authorization":"[REDACTED]"`
+    // rather than `"authorization":"Bearer [REDACTED]"`. That is deliberate and it
+    // is stricter than what this test used to assert: leaving the `Bearer ` prefix
+    // outside the mask meant a caller could smuggle a secret past the redactor by
+    // writing one in front of it, and the surviving prefix told an attacker reading
+    // the log which scheme the masked credential used.
+    //
+    // So the assertion is on the property rather than the shape: the secret is gone
+    // and the KEY NAMES survive, which is the whole point of a debug sample -- you
+    // can still see that an authorization header and a refresh token were present
+    // and where, without either of them being readable.
+    expect(parsed.bodySample).toContain('"authorization":"[REDACTED]"');
     expect(parsed.bodySample).toContain("refreshToken");
+    expect(parsed.bodySample).not.toContain("Bearer");
   });
 
   test("preserves estimated extracted usage while redacting surrounding secrets", () => {

@@ -51,17 +51,28 @@
 }
 .m3-nav-brand img { width: 26px; height: 26px; flex: 0 0 auto; }
 .m3-nav-brand-text { min-width: 0; }
+/* `.m3-nav-brand-text` above already sets `min-width: 0`, which is the CONTAINER
+   half of the fix -- it lets the block shrink inside the fixed-width rail. The
+   ELEMENT half was never added, so `nowrap` text simply ran past the edge and was
+   cropped mid-character by `.m3-nav` (`overflow-x: hidden`), with no ellipsis to
+   show anything had been cut. The app name is user-renamable up to 60 code points
+   (`theme/app-name.ts`), so this is reachable by design, not just by a long
+   bilingual string. Same pattern `.m3-nav-label` already uses. */
 .m3-nav-brand-name {
   font-size: var(--t-title-m);
   font-weight: 600;
   letter-spacing: 0.1px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .m3-nav-brand-meta {
   font-family: var(--mono);
   font-size: var(--t-label-s);
   color: var(--m3-on-surface-variant);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .m3-nav-item {
@@ -121,9 +132,6 @@
 }
 
 .m3-nav-foot {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
   margin-top: auto;
   padding-top: 12px;
   display: flex;
@@ -160,6 +168,16 @@
   align-items: stretch;
   height: 80px;
   padding: var(--el-bottomNav-pad, 12px 8px 16px);
+  /* No gap was declared at all, so adjacent items could touch with zero
+     pixels between them at exactly-fitting widths — measured while fixing
+     the overflow bug just above: "總覽" landed flush against "Codex" with no
+     seam, in bilingual mode at phone width. Not the overflow defect (nothing
+     overlapped), just no breathing room between tracks. 4px, matching the
+     tab strip's own `.m3-tabstrip`/`.m3-tablist` gap just below, rather than
+     a density token: the audit runs at a fixed 320px, and this bar has none
+     of the width slack to spare that a comfortable-density `--sp-1` (up to
+     8px × 3 gaps = 24px) would eat into. */
+  column-gap: 4px;
   background: var(--el-bottomNav-bg, var(--m3-surface-container));
   color: var(--el-bottomNav-color, inherit);
   font-family: var(--el-bottomNav-font, inherit);
@@ -171,9 +189,22 @@
   gap: 2px;
   justify-content: center;
   min-height: 0;
+  /* And min-WIDTH, which is the one that was missing. The bar is a grid of
+     `1fr` columns and `.m3-nav-label` already asks for ellipsis, but a grid
+     item defaults to `min-width: auto` — it refuses to shrink below its own
+     content — so each item grew past its track instead of clipping. The
+     labels then ran into each other with no gap and the last one fell off the
+     screen edge, and `text-overflow` never fired because the label was never
+     actually constrained.
+     Invisible in English, where the labels are short. It shows in bilingual
+     mode at phone width, where "Codex Auth · Codex 登入" is roughly twice the
+     width the track can give it. */
+  min-width: 0;
 }
 .m3-bottom-nav .m3-nav-pill { width: 64px; height: 32px; }
-.m3-bottom-nav .m3-nav-label { font-size: var(--t-label-m); }
+/* The label is the element that clips, so it needs the same release from
+   `auto` inside its own flex column. */
+.m3-bottom-nav .m3-nav-label { font-size: var(--t-label-m); max-width: 100%; min-width: 0; }
 
 /* -------------------------------------------------------------- main col -- */
 
@@ -259,6 +290,191 @@
   white-space: nowrap;
 }
 
+/* Global draft controls stay in the app bar, so every tab exposes the same
+   explicit apply/discard decision without a second save surface per editor. */
+.m3-draft-bar {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+.m3-draft-bar__count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-label-s);
+  font-weight: 600;
+}
+.m3-draft-bar .m3-btn { min-height: 36px; }
+@media (max-width: 860px) {
+  .m3-draft-bar__count { display: none; }
+  .m3-draft-bar { padding-left: 4px; }
+}
+@media (max-width: 620px) {
+  .m3-draft-bar .m3-btn--text { display: none; }
+}
+
+/* ---------------------------------------------------- viewport preview -- */
+
+/* The app bar's preview-size control pins the shell to an emulated width. The
+   width itself is a JavaScript decision — `windowClass` is measured, not
+   media-queried, which is what makes the whole thing possible — and everything
+   here is the frame drawn around the result, so the emulated size is visible
+   rather than merely believed.
+
+   `--preview-w` and the `data-viewport-preview` attribute are written onto
+   <html> by `applyViewportPreview`. Nothing below applies without them, so an
+   ordinary run pays for none of it. */
+
+html[data-viewport-preview] {
+  /* One token for the banner's height and the shell's top offset, so the two
+     cannot drift apart into either an overlap or a gap. */
+  --preview-banner-h: 48px;
+}
+
+html[data-viewport-preview] .m3-app {
+  /* Fixed rather than offset by margins: `#root` establishes no block
+     formatting context, so a top margin here would collapse through it, push
+     the root down and open a vertical scrollbar on a shell that is supposed to
+     fill the window exactly. Taking the frame out of flow sidesteps that, and
+     costs nothing — the fixed descendants inside (snackbars, anchored menus)
+     still resolve against the viewport, because a fixed ancestor does not
+     become their containing block. */
+  position: fixed;
+  top: calc(var(--preview-banner-h) + 8px);
+  left: 0;
+  right: 0;
+  /* Content-box on purpose: the emulated width has to be the width the shell
+     lays itself out in, and the 8px frame must sit outside it. Under the
+     document's global `border-box` the border would eat 16px of the emulated
+     viewport and every measurement taken from a capture would be that much
+     out. */
+  box-sizing: content-box;
+  width: var(--preview-w);
+  /* A pinned width wider than the window is clamped rather than allowed to
+     overflow — the page must never scroll sideways. The banner says so in
+     words when it happens, so the frame is never quietly narrower than the
+     number beside it. */
+  max-width: calc(100vw - 32px);
+  /* Stated rather than left to `top`/`bottom` to resolve, because `.m3-main-col`
+     and `.m3-nav` below both size themselves with `height: 100%` — a definite
+     height here is what those percentages have something to resolve against.
+     The 32px is the 8px gap above and below plus the 8px border on each edge,
+     which is what makes the framed shell fill the window exactly. */
+  height: calc(100dvh - var(--preview-banner-h) - 32px);
+  max-height: none;
+  margin: 0 auto;
+  border: 8px solid var(--m3-inverse-surface);
+  /* The shape token rather than the literal it happens to equal: a device frame
+     is exactly the extra-large corner the scale already defines, and the guard
+     in `m3-shape-scale.test.ts` exists because a hand-written radius stops
+     tracking the scale the moment anyone retunes it. */
+  border-radius: var(--r-xl, 28px);
+  box-shadow: var(--e3);
+}
+
+.m3-preview-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the compact drawer's scrim (60/61) so the exit stays reachable while
+     the drawer is open, and below the anchored menus (70) and snackbars (80),
+     which are transient and should not be pushed under a persistent bar. */
+  z-index: 65;
+  height: var(--preview-banner-h, 48px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--m3-inverse-surface);
+  color: var(--m3-inverse-on-surface);
+  font-size: var(--t-label-l);
+}
+.m3-preview-banner__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.m3-preview-banner__warn {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-label-s);
+  /* Inverse surfaces have no `--m3-error` counterpart that stays legible on
+     them, so the caveat is set apart by weight and size rather than by colour —
+     which it would have to be anyway, since colour alone is not a message. */
+  opacity: 0.85;
+}
+.m3-preview-banner__exit {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-label-l);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.m3-preview-banner__exit:hover {
+  background: color-mix(in oklab, var(--m3-inverse-on-surface) 14%, transparent);
+}
+
+/* At a phone width the banner has room for the size and the way out, and not
+   for the caveat as well. The caveat is about the frame being clamped, which is
+   a desktop-window problem, so dropping it here loses nothing a narrow window
+   can actually be in. */
+@media (max-width: 520px) {
+  .m3-preview-banner__warn { display: none; }
+}
+
+/* The trigger, while a preview is pinned. Tonal rather than tinted text: the
+   app bar's icon buttons are otherwise all the same flat mark, so a filled
+   container is what makes "this one is currently doing something" readable at a
+   glance instead of a colour difference on a 24px glyph.
+
+   An attribute rather than a modifier class, and deliberately placed above
+   `.m3-icon-btn` rather than below it. A bare `.m3-preview-btn--on` would be
+   one class against `.m3-icon-btn`'s one class and would LOSE on source order,
+   because that rule sits further down this file and sets its own background —
+   the state would have been visibly inert while looking perfectly correct in
+   the diff. `.m3-icon-btn[data-preview-on]` outranks it, and sitting above the
+   `:hover` and `[aria-expanded="true"]` rules lets both of those still layer on
+   top, which is exactly the order they should win in. */
+.m3-icon-btn[data-preview-on] {
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+}
+
+.m3-preview-px {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-preview-note {
+  margin: 4px 4px 0;
+  padding: 8px;
+  border-radius: var(--r-s);
+  background: var(--m3-surface-container-highest);
+  color: var(--m3-on-surface-variant);
+  font-size: var(--t-label-s);
+  line-height: 1.4;
+}
+
 /* 48px icon buttons: M3 states layer + Material's 48px minimum hit target. */
 .m3-icon-btn {
   position: relative;
@@ -283,7 +499,26 @@
 .m3-icon-btn[aria-expanded="true"] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
 .m3-icon-btn svg { width: var(--el-iconButton-size, 22px); height: var(--el-iconButton-size, 22px); }
 
-.m3-badge {
+/* The unread-count dot that sits ON the notification bell -- absolutely
+   positioned inside AppBar's `position: relative` wrapper.
+
+   This used to be called `.m3-badge`, the same name the shared `Badge`
+   component in `shell/m3-ui.tsx` uses for an inline status pill, and the two
+   rules sat ~570 lines apart in this one file. Nothing warned, and both
+   components rendered wrongly in opposite directions: the later pill rule won
+   `display`, `height`, `padding` and `font-*`, so this dot came out as a 24px
+   pill instead of a 16px dot -- while the pill rule declares no `position`,
+   `top` or `right`, so those cascaded down from HERE and every status Badge in
+   the app was absolutely positioned. With no positioned ancestor a Badge
+   anchors to the initial containing block, which put the Downloads page's
+   "Completed" pill in the window's top-right corner, on top of the maximize and
+   close buttons. `assets/shots/download-history.png` shows it.
+
+   Two rules for one class name is decided by source order, not by intent, so
+   the fix is two names. `tests/badge-class-single-owner.test.ts` fails if
+   `.m3-badge` is ever declared twice again, or if its one rule gains a
+   `position`. */
+.m3-badge-count {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -461,7 +696,9 @@
 .m3-menu {
   position: absolute;
   z-index: 70;
-  min-width: 220px;
+  min-width: min(220px, calc(100vw - 16px));
+  width: max-content;
+  max-width: calc(100vw - 16px);
   max-height: min(60vh, 480px);
   overflow-y: auto;
   padding: var(--el-menu-pad, 8px);
@@ -470,6 +707,12 @@
   color: var(--el-menu-color, var(--m3-on-surface));
   font-family: var(--el-menu-font, inherit);
   box-shadow: var(--e3);
+  /* Prototype's anchored-panel entrance (`design/OpenCodex M3.dc.html`'s
+     tabs-overflow menu and notification centre): a 160ms rise, same easing
+     as the page-content fade. `prefers-reduced-motion` is handled globally
+     by the `.m3-app *` rule above, which clamps every animation duration to
+     1ms rather than needing a local opt-out here. */
+  animation: m3-rise 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 .m3-menu-item {
   width: 100%;
@@ -489,6 +732,36 @@
 }
 .m3-menu-item:hover { background: var(--m3-surface-container-highest); }
 .m3-menu-item svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+
+/* The keyboard-shortcut column, per `MenuItem.tsx`.
+
+   `margin-inline-start: auto` rather than a reserved grid column: the row is a
+   flex line whose icon may or may not be there, and a column would put an empty
+   gutter on every item that has no shortcut — which is exactly the placeholder
+   the rule forbids. Pushed to the end instead, so it is right-aligned when it
+   exists and occupies nothing when it does not.
+
+   `end` rather than `right`, and `padding-inline-start` rather than `-left`, so
+   the column lands on the correct side under a right-to-left locale. */
+.m3-menu-shortcut {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  padding-inline-start: 16px;
+  font-size: var(--t-label-m);
+  /* The notation is read as a unit rather than as prose; tabular figures keep
+     `F10` and `F9` the same width so a column of them does not shimmer. */
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface-variant);
+  text-align: end;
+  white-space: nowrap;
+}
+/* The overflow menu's rows are `.m3-tab`, not `.m3-menu-item`: a stretch-aligned
+   flex line whose children are full-height buttons. Without this the notation
+   would sit against the top edge of a 40px row instead of beside the ✕ it
+   belongs to. The `.m3-tab-btn` beside it already grows, so the auto margin
+   above has nothing to push against and the chip simply follows the label. */
+.m3-tab > .m3-menu-shortcut { align-self: center; padding-inline: 4px; }
+
 .m3-menu-heading {
   padding: 8px 12px 4px;
   font-size: var(--t-label-m);
@@ -497,6 +770,11 @@
   text-transform: uppercase;
   letter-spacing: 0.6px;
 }
+/* The filter row every dropdown/context menu carries at its head, per
+   `MenuFilterField.tsx`. Matches the padding the tab strip's own "+" new-tab
+   search already used inline, so a converted menu and the menu it was
+   modelled on read as one control rather than two slightly different ones. */
+.m3-menu-filter { padding: 0 4px 8px; }
 
 /* ------------------------------------------------------------ page area -- */
 
@@ -554,7 +832,32 @@
   font-size: var(--t-body-m);
   animation: m3-snack 220ms cubic-bezier(0.2, 0, 0, 1);
 }
+/*
+  Tonal surfaces. `info` and `success` share the default inverse-surface bar —
+  that is the prototype's `ok` tone, and a success needs no alarm colour.
+
+  `warn` had no rule at all until now, so a warning rendered as a success: the
+  same bar, the same weight, nothing to separate "8 deleted" from "3 deleted, 5
+  remaining". It takes the warn container rather than the error container
+  because the two are not the same message — an error is a thing that failed, a
+  warning is a thing that half-worked and still needs a decision — and because
+  the notification history and `.m3-banner--warn` already draw that distinction,
+  so a snackbar that skipped it disagreed with its own history row.
+
+  Status colours are functional data colours; they keep their own roles rather
+  than collapsing onto the primary palette.
+*/
+.m3-snack.warn { background: var(--m3-warn-container); color: var(--m3-on-warn-container); }
 .m3-snack.error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+
+/*
+  The leading tone mark. Sized in the box rather than on the glyph so the row's
+  12px gap and 48px minimum hold whatever the icon component renders, and
+  `flex: 0 0 auto` so a long message shrinks the text rather than the mark.
+*/
+.m3-snack-icon { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; }
+.m3-snack-icon svg { width: 20px; height: 20px; }
+
 .m3-snack-text { min-width: 0; flex: 1 1 auto; }
 .m3-snack-title { font-weight: 500; }
 .m3-snack-body { font-size: var(--t-body-s); opacity: 0.85; }
@@ -571,6 +874,14 @@
   font-weight: 500;
   cursor: pointer;
 }
+/*
+  On a tonal bar the action reverts to the container's own foreground:
+  `--m3-inverse-primary` is chosen to sit on the inverse surface and has no
+  contrast guarantee against the warn or error container. The underline is what
+  keeps it identifiable as an action once it is the same colour as the text
+  beside it.
+*/
+.m3-snack.warn .m3-snack-action { color: var(--m3-on-warn-container); text-decoration: underline; }
 .m3-snack.error .m3-snack-action { color: var(--m3-on-error-container); text-decoration: underline; }
 .m3-snack-action:hover { background: color-mix(in oklab, currentColor 12%, transparent); }
 .m3-snack-close {
@@ -778,14 +1089,39 @@
 }
 .m3-switch.on .m3-switch-thumb { left: 26px; width: 20px; height: 20px; background: var(--m3-on-primary); }
 
+/* Base geometry for `Badge` (shell/m3-ui.tsx). Tone colour is applied inline
+   from `BADGE_TONE_STYLE`, per tone, so this carries only the chrome every
+   tone shares — matching the prototype's `badgeStyle(tone)` helper. */
+.m3-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-label-s);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+/* Prototype's empty-state recipe: a dashed outline with no fill, not a
+   filled card — `design/OpenCodex M3.dc.html` (models/logs/changelog empty
+   states). The filled `surface-container-low` box this replaces was a
+   screen-local guess; every `<Empty>` now renders the one recipe. */
 .m3-empty {
-  padding: var(--sp-5);
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 56px 24px;
+  border: 1px dashed var(--m3-outline);
   border-radius: var(--r-l);
-  background: var(--m3-surface-container-low);
+  background: none;
   text-align: center;
   color: var(--m3-on-surface-variant);
 }
-.m3-empty-title { font-size: var(--t-title-m); color: var(--m3-on-surface); margin-bottom: 6px; }
+.m3-empty-icon { width: 32px; height: 32px; }
+.m3-empty-title { font-size: var(--t-title-m); color: var(--m3-on-surface); }
 .m3-empty-body { font-size: var(--t-body-s); }
 
 .m3-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
@@ -1054,6 +1390,10 @@ html[data-desktop] .m3-appbar .m3-avatar {
   gap: var(--sp-3, 16px);
   max-height: 84vh;
   overflow-y: auto;
+  /* Prototype's modal entrance (`design/OpenCodex M3.dc.html`'s `role="dialog"
+     aria-modal="true"` surface): a 200ms rise. `prefers-reduced-motion` is
+     handled globally by the `.m3-app *` rule above. */
+  animation: m3-rise 200ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .m3-dialog__head {
@@ -1154,7 +1494,11 @@ html[data-desktop] .m3-appbar .m3-avatar {
   background: var(--m3-surface-container);
   border-bottom: 1px solid var(--m3-outline-variant);
 }
-.m3-mob__title { font-weight: 600; white-space: nowrap; }
+/* `min-width: 0` so the flex item may shrink at all (CSS Flexbox 4.5 gives it a
+   content-based minimum otherwise), then ellipsis rather than a mid-character crop.
+   In bilingual mode this renders "opencodex remote" joined with its Cantonese
+   counterpart, on a phone-width bar that also carries the model chip. */
+.m3-mob__title { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .m3-mob__model {
   margin-inline-start: auto;
   max-width: 58%;
@@ -1474,6 +1818,93 @@ html[data-desktop] .m3-appbar .m3-avatar {
 }
 
 /*
+  PDF tools (pages/PdfTools.tsx): the inspect result and the recent-operations
+  list. These classes render unconditionally on every visit to the page but had
+  never been given rules — an oversight the account-history list above never
+  had, since every property here was landing on the browser's own defaults
+  (a bare bulleted list, no row separation, no way to tell a failed operation
+  from a finished one short of reading its detail sentence).
+*/
+.m3-pdf-capabilities {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.m3-pdf-history-list { list-style: none; margin: 0; padding: 0; }
+.m3-pdf-history-ok,
+.m3-pdf-history-fail {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+.m3-pdf-history-ok:last-child,
+.m3-pdf-history-fail:last-child { border-bottom: none; }
+.m3-pdf-history-op {
+  flex: 0 0 auto;
+  font-size: var(--t-body-s);
+  font-weight: 600;
+}
+.m3-pdf-history-fail .m3-pdf-history-op { color: var(--m3-error); }
+.m3-pdf-history-detail {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-pdf-history-time {
+  flex: 0 0 auto;
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+  white-space: nowrap;
+}
+
+/*
+  Ollama suite manager (pages/Ollama.tsx): the hardware-fact list and the
+  per-model fit disclosure. Same reasoning as the PDF-tools block above — these
+  classes render on every visit and had never been given rules, so the hardware
+  facts read as an undifferentiated wall of text and the fit evidence list had
+  no visual separation from the table row it belonged to.
+*/
+.m3-ollama-hardware {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.m3-ollama-hardware__fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  font-size: var(--t-body-m);
+}
+.m3-ollama-hardware__fact svg { flex: 0 0 auto; margin-top: 2px; color: var(--m3-on-surface-variant); }
+.m3-ollama-fit { display: flex; flex-direction: column; gap: var(--sp-1); align-items: flex-start; }
+.m3-ollama-fit__toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--t-label-s);
+  color: var(--m3-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.m3-ollama-fit__evidence {
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  max-width: 320px;
+}
+.m3-ollama-fit__evidence li { margin-bottom: var(--sp-1); }
+.m3-ollama-pull-progress { display: flex; flex-direction: column; gap: var(--sp-1); align-items: flex-start; min-width: 140px; }
+.m3-ollama-pull-preflight { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-2); }
+
+/*
   A paused account in the switcher is refused by the server, so the row must look
   refused too. It was styled identically to a selectable row, which made "nothing
   happened" the only feedback for a click that was never going to work.
@@ -1481,6 +1912,63 @@ html[data-desktop] .m3-appbar .m3-avatar {
 .m3-menu-item--unavailable {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/*
+  Quick restore.
+
+  Two forms of the same two actions. Inline in the bar where the row has space
+  for labels, and a single trigger plus an anchored panel everywhere else — the
+  bar already carries a title, the build line, the code name, the cost meter,
+  three icon buttons, the account chip and four window controls, so labelled
+  buttons cannot simply be allowed to grow into that.
+*/
+.m3-quick-restore { flex: 0 0 auto; }
+.m3-quick-restore__inline {
+  gap: 6px;
+  white-space: nowrap;
+}
+.m3-quick-restore__inline svg { width: 18px; height: 18px; flex: 0 0 auto; }
+/*
+  Refused, not `disabled`. The buttons keep `aria-disabled` and stay focusable so
+  the reason they carry is reachable without a mouse, which means the refused
+  look has to be drawn rather than inherited from the native attribute. Same
+  treatment as an unavailable menu row, so the two read as the same state.
+*/
+.m3-quick-restore__inline--inert {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.m3-quick-restore__panel { padding: 8px; }
+.m3-quick-restore__hint {
+  margin: 0 0 8px;
+  padding: 0 12px;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+}
+/*
+  The reason sits under its button rather than beside it: a disabled control owes
+  the reader an explanation somewhere a keyboard or screen-reader user reaches
+  without hovering, and a path is long enough that a side-by-side row would clip
+  it at the widths this panel actually opens at.
+*/
+.m3-quick-restore__row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 12px;
+}
+.m3-quick-restore__reason {
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+.m3-quick-restore__status {
+  margin: 4px 0 0;
+  padding: 0 12px;
+  font-size: var(--t-body-s);
+  color: var(--m3-primary);
 }
 
 /* App-bar cost meter: tonal chip, always visible, machine number in mono. */
@@ -1507,8 +1995,96 @@ html[data-desktop] .m3-appbar .m3-avatar {
   font-variant-numeric: tabular-nums;
 }
 .m3-cost-range { font-size: var(--t-label-s); opacity: 0.8; }
-/* Compact width: the range word goes; the number stays. */
+/* Compact width: the range word goes; the number stays. Note the equivalent
+   variant overrides this back to visible below — its label is not decoration. */
 .m3-app--compact .m3-cost-range { display: none; }
+
+/* Subscription traffic priced at API-equivalent rates: a distinct tonal
+   container so the chip reads differently at a glance, paired with the visible
+   "not billed" word it always carries. The tone is the hint; the word is the
+   meaning, because colour alone must never be what tells someone whether a
+   dollar figure is a bill. */
+.m3-cost-chip--equivalent {
+  background: var(--m3-tertiary-container);
+  color: var(--m3-on-tertiary-container);
+}
+/* The "not billed" tag survives the compact breakpoint that drops the range
+   word. Hiding it would leave a bare dollar amount reading as money owed —
+   exactly the misreading this variant exists to prevent. */
+.m3-app--compact .m3-cost-chip--equivalent .m3-cost-range {
+  display: inline;
+  font-size: var(--t-label-s);
+  opacity: 0.9;
+}
+
+/* Lane breakdown inside the cost menu: shown when a machine has both an API key
+   and a subscription, so the chip's single headline figure cannot silently
+   stand in for the other lane. Marked up as a description list because that is
+   what it is — a label paired with its value — which also gives assistive
+   technology the pairing for free. */
+.m3-cost-lane-group { margin: 0; }
+.m3-cost-lane {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+}
+.m3-cost-lane-label {
+  font-size: var(--t-label-s);
+  color: var(--m3-on-surface-variant);
+}
+.m3-cost-lane-value {
+  /* `dd` carries a default indent that would push the figure off the right edge
+     of a narrow panel. */
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--t-label-l);
+  font-variant-numeric: tabular-nums;
+  color: var(--m3-on-surface);
+}
+.m3-cost-lane-note {
+  margin: 0;
+  padding: 0 12px 8px;
+  max-width: 34ch;
+  font-size: var(--t-label-s);
+  line-height: 1.4;
+  color: var(--m3-on-surface-variant);
+}
+
+/* The "not billed" marker that rides beside any API-equivalent figure. It is a
+   word in a tonal container rather than a coloured dot, because the thing it
+   communicates — that a dollar amount is a comparison and not a charge — is far
+   too consequential to encode in hue alone. Inline-block so it never collapses
+   at a narrow width, and it wraps with its label rather than clipping. */
+.cost-lane-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--m3-tertiary-container);
+  color: var(--m3-on-tertiary-container);
+  font-size: var(--t-label-s);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+/* The band marker that rides beside a Fast or long-context figure. Same anatomy
+   as .cost-lane-tag but a secondary container, because the two say different
+   things and can appear on the same line: one says the money is not a charge,
+   this one says the rate was multiplied. Both carry their meaning in words —
+   the container colour is reinforcement, never the signal. */
+.cost-tier-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
+  font-size: var(--t-label-s);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
 
 /* Avatar-as-button (account switcher): same look, real affordances. */
 button.m3-avatar--btn { border: none; cursor: pointer; transition: box-shadow 150ms; }
@@ -1775,6 +2351,20 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
   .m3-mob__send { min-height: 48px; }
   .m3-nav-item { min-height: 48px; }
 
+  /*
+   * The snackbar pair, which this block skipped while raising a dozen controls
+   * around them. They are the worst two to miss: a snackbar is pinned to the
+   * bottom edge, which on a phone is where the thumb is least accurate and where
+   * the home indicator already crowds it — the safe-area rule further down
+   * exists for exactly that reason. Dismiss is a 36x36 icon button, short in
+   * both axes; the action is 36 tall. Both are under the floor by arithmetic
+   * from their own declarations above, not by measurement like the rest of this
+   * block, and both are the only way to answer a message that is covering the
+   * screen's bottom corner.
+   */
+  .m3-snack-close { width: 48px; min-height: 48px; }
+  .m3-snack-action { min-height: 48px; }
+
   .m3-btn,
   .m3-input,
   .m3-chip,
@@ -1794,14 +2384,27 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
 
   /* Width too, or a 48-tall 40-wide icon button is still a miss in one axis.
      Chips and segments join them because a short label — ".*", "v1" — is what
-     makes them narrow: measured at 44.1px and 46.3px. */
+     makes them narrow: measured at 44.1px and 46.3px.
+
+     The snackbar action joins on a different argument: its label is whatever the
+     caller passed to `notify`, so its width is not a property of this stylesheet
+     at all. The only one shipping today is long enough, but "Undo" or "OK" in
+     the 12px side padding lands right on the boundary, and a floor costs nothing
+     when the label is already wide.
+
+     (Selector names are written without their leading dot in this prose. The
+     guard in mobile-shell.test.tsx now anchors each name to a `,` or `{`, so a
+     mention here can no longer stand in for the rule — but the plain-substring
+     version it replaced could, and that is the kind of comment that quietly
+     turns a guard green after somebody deletes what it guards.) */
   .m3-tabstrip-btn,
   .m3-avatar--btn,
   .m3-chip,
   .m3-segment,
   .models-icon-btn,
   .cwi-target-grip,
-  .ocx-tooltip {
+  .ocx-tooltip,
+  .m3-snack-action {
     min-width: 48px;
   }
 }
@@ -1871,3 +2474,567 @@ button.m3-avatar--btn:disabled { opacity: 0.6; cursor: progress; }
  * by side is a trap for whoever does. The row indents by the wrapper instead.
  */
 
+/* ============================================================================
+   Destructive-action super confirmation (shell/super-confirm.tsx)
+   ========================================================================= */
+
+/* The anchored presentation's own surface. `Dialog` supplies everything the
+   modal presentation needs, so only the floating panel gets bespoke chrome
+   here — matching `.m3-rxpop`/the tab-appearance panel rather than inventing
+   a third card shape. */
+.m3-superconfirm-panel {
+  z-index: 90;
+  width: min(380px, calc(100vw - 16px));
+  overflow-y: auto;
+  padding: var(--sp-4, 24px);
+  border-radius: var(--r-xl, 28px);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  border: 1px solid var(--m3-outline-variant);
+  box-shadow: var(--e3);
+  display: grid;
+  gap: var(--sp-3, 16px);
+}
+
+.m3-superconfirm-title {
+  margin: 0;
+  font-size: var(--t-headline-s, 24px);
+  font-weight: 400;
+  color: var(--m3-on-surface);
+}
+
+.m3-superconfirm-body {
+  margin: 0;
+  font-size: var(--t-body-m, 14px);
+  line-height: 1.5;
+  color: var(--m3-on-surface-variant);
+  white-space: pre-line;
+}
+
+.m3-superconfirm-keys {
+  display: grid;
+  gap: var(--sp-2, 12px);
+}
+
+/* Two independent rows, not one control clicked twice: each key carries its
+   own icon, its own sentence, and its own switch. */
+.m3-superconfirm-key {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 12px);
+  padding: var(--sp-2, 12px);
+  border-radius: var(--r-l);
+  background: var(--m3-surface-container);
+}
+.m3-superconfirm-key-icon { flex: 0 0 auto; color: var(--m3-error); }
+.m3-superconfirm-key-label { flex: 1 1 auto; min-width: 0; font-size: var(--t-body-s); }
+
+.m3-superconfirm-status {
+  margin: 0;
+  min-height: 1.4em;
+  font-size: var(--t-label-l);
+  color: var(--m3-on-surface-variant);
+}
+
+/*
+ * The track is the "dramatic but non-blocking" progress surface the contract
+ * asks for. The fill is painted on the CONTAINER as a hard-edged gradient
+ * driven by `--sc-progress`, because styling a native range input's own filled
+ * portion is not one property in every engine this renders in — the input
+ * itself is made transparent and sits on top, keeping its real thumb, its real
+ * keyboard behaviour and its real screen-reader semantics.
+ */
+.m3-superconfirm-track {
+  position: relative;
+  height: 48px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background:
+    linear-gradient(to right, var(--m3-error) var(--sc-progress, 0%), var(--m3-surface-container-highest) var(--sc-progress, 0%));
+  border: 1px solid var(--m3-outline-variant);
+  transition: box-shadow 200ms;
+}
+/* Armed (both keys on, not yet dragged): a resting glow says "this now does
+   something" before the user has touched it at all. */
+.m3-superconfirm-track--armed.m3-superconfirm-track--idle {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--m3-error) 24%, transparent);
+  animation: m3-superconfirm-armed-pulse 1800ms ease-in-out infinite;
+}
+.m3-superconfirm-track--authorizing,
+.m3-superconfirm-track--done {
+  background: var(--m3-error);
+  animation: m3-superconfirm-working-pulse 900ms ease-in-out infinite;
+}
+.m3-superconfirm-track--done { animation: none; background: var(--m3-ok, var(--m3-primary)); }
+.m3-superconfirm-track--error { box-shadow: none; animation: none; }
+
+.m3-superconfirm-slider {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 48px;
+  margin: 0;
+  /* Transparent so the container's gradient fill shows through — the same
+     trick `.m3-slider` already uses for its own accent-only styling. */
+  background: transparent;
+  accent-color: var(--m3-on-error, var(--m3-on-primary));
+  cursor: pointer;
+}
+.m3-superconfirm-slider:disabled { cursor: not-allowed; opacity: 0.7; }
+
+@keyframes m3-superconfirm-armed-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--m3-error) 18%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--m3-error) 30%, transparent); }
+}
+@keyframes m3-superconfirm-working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+/* The completion state — visually distinct from the fill animation above,
+   per the contract's "a distinct completion animation after authorization". */
+.m3-superconfirm-done {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto;
+  border-radius: var(--r-pill);
+  background: var(--m3-ok-container, var(--m3-primary-container));
+  color: var(--m3-on-ok-container, var(--m3-on-primary-container));
+  animation: m3-superconfirm-done-pop 420ms cubic-bezier(0.2, 0, 0, 1);
+}
+@keyframes m3-superconfirm-done-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* `.m3-app *` already clamps every animation/transition duration to 1ms under
+   `prefers-reduced-motion: reduce`; this is the explicit, local backstop so the
+   gate degrades to an instant state change even if that surface ever renders
+   outside `.m3-app`. Nothing here is load-bearing for the gate itself — both
+   keys, the slider and every dismissal route work identically either way. */
+@media (prefers-reduced-motion: reduce) {
+  .m3-superconfirm-track,
+  .m3-superconfirm-track--armed.m3-superconfirm-track--idle,
+  .m3-superconfirm-track--authorizing,
+  .m3-superconfirm-done {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------- command palette ------- */
+
+/*
+ * `shell/CommandPalette.tsx`. A `<dialog>` — see `m3-ui.tsx`'s `Dialog` — so it
+ * already sits in the top layer above every menu, popover and drawer without
+ * this needing its own place in the z-index scale.
+ */
+.m3-palette-search { gap: var(--sp-2); align-items: center; margin-bottom: 4px; }
+
+.m3-palette-results {
+  display: grid;
+  gap: 2px;
+  max-height: 52vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The full-window size trades the bounded card's cap for most of the viewport,
+   so a long settings index scrolls less inside a smaller box. */
+.m3-palette--full .m3-palette-results { max-height: 68vh; }
+
+.m3-palette-group-heading {
+  padding: 10px 4px 4px;
+  font-size: var(--t-label-m);
+  font-weight: 600;
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.m3-palette-row--active { background: var(--m3-surface-container-highest); border-radius: var(--r-s); }
+
+/* The clickable label/description half of a row — every row has one, whether
+   or not it also carries a live control underneath. Selecting it is always
+   "go there", so it stays a real `<button>` even on a row a live control also
+   lives in, rather than the whole row becoming one giant unclickable target. */
+.m3-palette-row-main {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--r-s);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.m3-palette-row-main:hover { background: var(--m3-surface-container-highest); }
+.m3-palette-row-main svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--m3-on-surface-variant); }
+.m3-palette-row-text { min-width: 0; flex: 1 1 auto; display: grid; gap: 1px; }
+.m3-palette-row-label { font-size: var(--t-body-m); }
+.m3-palette-row-desc {
+  font-size: var(--t-label-m);
+  color: var(--m3-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-palette-row-badge { flex: 0 0 auto; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+/* The live control (or the readout explaining why there is none), indented to
+   sit under the icon rather than the label — it belongs to the row above it,
+   not to a fresh line starting at the edge. */
+.m3-palette-row-control { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 12px 10px 44px; }
+.m3-palette-row-hint { margin: 0; padding: 0 12px 10px 44px; font-size: var(--t-label-s); color: var(--m3-on-surface-variant); }
+
+.m3-palette-empty { padding: 24px 12px; text-align: center; color: var(--m3-on-surface-variant); }
+
+/*
+ * Where a teleported result actually landed, on whatever page just opened —
+ * not this dialog's own DOM, which is already gone by the time this paints.
+ * Static rather than a pulse: a flash strong enough to notice at a glance and
+ * gone again once the timer clears the class, no keyframes required.
+ */
+.m3-command-palette-highlight {
+  outline: 2px solid var(--m3-primary);
+  outline-offset: 2px;
+  background: color-mix(in oklab, var(--m3-primary) 14%, transparent);
+  border-radius: var(--r-s, 8px);
+}
+@media not (prefers-reduced-motion: reduce) {
+  .m3-command-palette-highlight { transition: background-color 200ms ease, outline-color 200ms ease; }
+}
+
+
+/* ============================================================================
+   Built-in authenticator (pages/Authenticator.tsx, components/authenticator/*)
+   ========================================================================= */
+
+.m3-authenticator-list { list-style: none; margin: 0 0 var(--sp-4, 24px); padding: 0; display: grid; gap: var(--sp-2, 12px); }
+
+.m3-authenticator-group-section { margin-bottom: var(--sp-3, 16px); }
+.m3-authenticator-group-heading {
+  margin: 0 0 var(--sp-2, 12px);
+  font-size: var(--t-title-s, 16px);
+  font-weight: 500;
+  color: var(--m3-on-surface);
+}
+
+.m3-authenticator-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3, 16px);
+  padding: var(--sp-3, 16px);
+  border-radius: var(--r-l, 16px);
+  background: var(--m3-surface-container);
+  border: 1px solid transparent;
+}
+.m3-authenticator-row[data-selected] {
+  border-color: var(--m3-primary);
+  background: color-mix(in oklab, var(--m3-primary) 6%, var(--m3-surface-container));
+}
+.m3-authenticator-row > input[type="checkbox"] { margin-top: 4px; flex: 0 0 auto; }
+
+.m3-authenticator-row-main { flex: 1 1 auto; min-width: 0; display: grid; gap: var(--sp-2, 12px); }
+.m3-authenticator-row-head { display: flex; align-items: baseline; gap: var(--sp-2, 12px); flex-wrap: wrap; }
+.m3-authenticator-row-issuer { font-size: var(--t-title-s, 16px); font-weight: 500; color: var(--m3-on-surface); }
+.m3-authenticator-row-account { font-size: var(--t-body-m, 14px); color: var(--m3-on-surface-variant); }
+.m3-authenticator-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 12px);
+  font-size: var(--t-label-m, 12px);
+  color: var(--m3-on-surface-variant);
+}
+.m3-authenticator-row-edit { display: grid; gap: var(--sp-2, 12px); max-width: 360px; }
+.m3-authenticator-row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+/* Grouped, selectable digits — large enough to read at a glance, monospace so
+   every digit occupies the same width and the grouping spaces line up. */
+.m3-authenticator-code-row { display: flex; align-items: center; gap: var(--sp-3, 16px); flex-wrap: wrap; }
+.m3-authenticator-code {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-headline-s, 24px);
+  letter-spacing: 0.06em;
+  color: var(--m3-on-surface);
+  user-select: all;
+}
+.m3-authenticator-code--failed { font-size: var(--t-body-m, 14px); color: var(--m3-error); font-family: inherit; letter-spacing: normal; }
+.m3-authenticator-code-copy { padding: 4px; min-width: 0; }
+
+.m3-authenticator-countdown { display: flex; align-items: center; gap: 6px; }
+.m3-authenticator-countdown-ring {
+  --m3-auth-pct: 0%;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: conic-gradient(var(--m3-primary) var(--m3-auth-pct), var(--m3-surface-container-highest) var(--m3-auth-pct));
+}
+@media (prefers-reduced-motion: reduce) {
+  .m3-authenticator-countdown-ring { background: var(--m3-surface-container-highest); }
+}
+.m3-authenticator-countdown-text {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-label-m, 12px);
+  color: var(--m3-on-surface-variant);
+  min-width: 2.5em;
+}
+.m3-authenticator-next-code {
+  font-family: var(--font-code);
+  font-size: var(--t-label-m, 12px);
+  color: var(--m3-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Move-into-group picker (shared/m3/anchor.ts-free: a real Dialog, per the
+   contract's rule against inlining one menu item per group). */
+.m3-authenticator-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.m3-authenticator-group-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2, 12px);
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--r-m, 12px);
+  background: transparent;
+  color: var(--m3-on-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.m3-authenticator-group-option:hover,
+.m3-authenticator-group-option:focus-visible { background: var(--m3-surface-container-highest); }
+.m3-authenticator-group-empty { padding: 10px 12px; color: var(--m3-on-surface-variant); font-size: var(--t-body-s); }
+
+/* Add-account confirm step. */
+.m3-authenticator-confirm-qr { display: flex; justify-content: center; margin: 0 0 var(--sp-3, 16px); }
+
+/* Live camera scan. */
+.m3-authenticator-camera { display: grid; gap: var(--sp-2, 12px); justify-items: center; }
+.m3-authenticator-camera-video {
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: var(--r-l, 16px);
+  background: #000;
+}
+
+/* ------------------------------------------------------------- downloads -- */
+
+/* The Downloading page (pages/Downloads.tsx): active transfers, then history. */
+.m3-dl-section { margin-top: var(--sp-4, 20px); }
+.m3-dl-section:first-child { margin-top: var(--sp-2, 12px); }
+.m3-dl-section__title {
+  margin: 0 0 var(--sp-2, 12px);
+  font-size: var(--t-label-l, 14px);
+  color: var(--m3-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.m3-dl-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3, 16px);
+  padding: var(--sp-3, 16px);
+  border-radius: var(--r-m, 12px);
+  background: var(--el-card-bg, var(--m3-surface-container-low));
+  border: 1px solid var(--m3-outline-variant);
+  margin-bottom: var(--sp-2, 12px);
+}
+.m3-dl-row__main { flex: 1 1 auto; min-width: 0; }
+.m3-dl-row__name { font-weight: 600; overflow-wrap: anywhere; }
+.m3-dl-row__url {
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-dl-row__stats {
+  display: flex;
+  gap: var(--sp-3, 16px);
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  margin-top: var(--sp-1, 6px);
+}
+.m3-dl-row__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-2, 12px);
+  flex: 0 0 auto;
+}
+.m3-dl-progress {
+  width: 100%;
+  height: 6px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--m3-surface-container-highest);
+  overflow: hidden;
+  margin-top: var(--sp-2, 12px);
+}
+.m3-dl-progress__fill {
+  height: 100%;
+  background: var(--m3-primary);
+  border-radius: inherit;
+  transition: width 200ms ease;
+}
+/* An unknown-length transfer (no Content-Length) still moves — a thin
+   indeterminate sweep rather than a bar frozen at 0%, which reads as hung.
+   React omits `aria-valuenow` entirely when the prop is `undefined`, so the
+   absence of the attribute is exactly the "unknown total" signal. */
+.m3-dl-progress:not([aria-valuenow]) .m3-dl-progress__fill {
+  width: 40% !important;
+  animation: m3-dl-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes m3-dl-indeterminate {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .m3-dl-progress__fill { animation: none !important; transition: none; }
+}
+
+/* The always-on-top popup window (pages/DownloadPopup.tsx) — the whole
+   window IS this card, so it fills the viewport rather than floating inside
+   a dialog surface of its own.
+
+   `overflow-y: auto` here (on the CONTAINER, not a flex item) is the safety
+   net for the bug documented below: if this card's real content is ever
+   taller than the window `electron/main.mjs` opens for it — a longer
+   bilingual string, a larger font-scale preference, a locale whose words run
+   long — the extra content scrolls into view instead of silently vanishing.
+   `electron/main.mjs`'s window heights are sized for the worst-case content at
+   default settings; this is the fallback for everything that sizing can't
+   anticipate. */
+.m3-dlpopup {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--sp-2, 12px);
+  width: 100%;
+  height: 100vh;
+  padding: var(--sp-4, 20px);
+  background: var(--m3-surface);
+  color: var(--m3-on-surface);
+  overflow-y: auto;
+}
+/*
+ * `flex-shrink: 0` on every direct child, deliberately, on all six of them —
+ * not just the two that were visibly broken.
+ *
+ * The bug this guards against: a flex item's `min-height: auto` normally
+ * floors at its CONTENT size (CSS Flexbox #4.5), so a flex column that is
+ * shorter than its children's combined natural height simply overflows rather
+ * than crushing anything — UNLESS an item's `overflow` is something other
+ * than `visible`, in which case that floor is disabled and the item can be
+ * squeezed to a sliver. `.m3-dlpopup__file`/`.m3-dlpopup__url` set
+ * `overflow: hidden` (required for their ellipsis truncation), so when this
+ * card's six children didn't fit in the fixed-height popup window, those two
+ * — and only those two — absorbed the entire deficit: rendered at a genuine,
+ * confirmed-in-the-DOM ~2px line box, invisible, while the sibling elements
+ * with no `overflow: hidden` (title, hint) kept their normal height and the
+ * card silently lost its filename and source URL. A live capture caught the
+ * exact numbers (`docs/FEATURE-INVENTORY.md` row 280): width stayed normal
+ * (155px / 263px) while height collapsed to 2-3px — proof it was a squeezed
+ * BOX, not missing text, a missing font, or a missing design token (the
+ * initial theory; disproven by tracing `main.tsx`, which wraps this popup
+ * route in the exact same `PrefsProvider` as the main window, and confirmed
+ * live by `scripts/download-popup-layout-check.ts` reading a real,
+ * non-empty `--m3-primary` off this window's own `<html>`).
+ *
+ * `flex-shrink: 0` removes the mechanism outright: none of these six items
+ * will EVER be compressed below their content size, on any of them, so
+ * adding `overflow: hidden` to a different one later cannot reopen this same
+ * hole. If the six together still do not fit — the actual root cause here,
+ * since `electron/main.mjs` opened these windows shorter than their content
+ * needs at default settings — the container's own `overflow-y: auto` above
+ * lets the excess scroll instead of any single child disappearing.
+ */
+.m3-dlpopup__icon,
+.m3-dlpopup__title,
+.m3-dlpopup__file,
+.m3-dlpopup__url,
+.m3-dlpopup__hint,
+.m3-dlpopup__actions {
+  flex-shrink: 0;
+}
+.m3-dlpopup__icon { color: var(--m3-primary); }
+.m3-dlpopup--completed .m3-dlpopup__icon { color: var(--m3-tertiary, var(--m3-primary)); }
+.m3-dlpopup--error .m3-dlpopup__icon { color: var(--m3-error); }
+.m3-dlpopup__title { margin: 0; font-size: var(--t-title-m, 16px); }
+.m3-dlpopup__file {
+  margin: 0;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-dlpopup__url {
+  margin: 0;
+  font-size: var(--t-body-s);
+  color: var(--m3-on-surface-variant);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m3-dlpopup__hint { margin: 0; font-size: var(--t-body-s); color: var(--m3-on-surface-variant); }
+.m3-dlpopup__actions {
+  display: flex;
+  gap: var(--sp-2, 12px);
+  margin-top: auto;
+  padding-top: var(--sp-2, 12px);
+}
+
+/* Path text box + its native Browse control (components/PathInput.tsx).
+   The button is a fixed-width sibling of a flexible field, so a long path
+   scrolls inside the input instead of squeezing the button to nothing --
+   `min-width: 0` on the input is what allows it to shrink at all (CSS Flexbox
+   §4.5 gives a flex item a content-based minimum otherwise, which is the same
+   rule that put the bottom nav's labels off the edge and crushed the download
+   popup's filename to a 2px sliver). */
+.m3-pathinput { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.m3-pathinput__row { display: flex; align-items: center; gap: var(--sp-2, 12px); width: 100%; }
+.m3-pathinput__row > input { flex: 1 1 auto; min-width: 0; }
+.m3-pathinput__browse { flex: 0 0 auto; white-space: nowrap; }
+.m3-pathinput__error { font-size: var(--t-body-s); color: var(--m3-error); }
+
+/* At phone width the button drops under the field rather than starving it. */
+@media (max-width: 560px) {
+  .m3-pathinput__row { flex-direction: column; align-items: stretch; }
+}

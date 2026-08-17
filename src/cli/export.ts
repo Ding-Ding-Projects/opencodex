@@ -4,7 +4,7 @@
  * account pool with its OAuth credentials, and the main auth record.
  *
  * This is a credential dump by definition, so it is treated like one:
- * - the warning is unmissable and printed to stderr (so `-` piping stays clean);
+ * - the warning is unmissable and printed to stderr;
  * - writing requires `--yes`;
  * - the file lands with mode 0600;
  * - nothing is ever masked, because a masked backup cannot be restored — the
@@ -19,7 +19,7 @@ import { join, resolve } from "node:path";
 import { getConfigDir, getConfigPath, readConfigDiagnostics } from "../config";
 import { listStateHistory } from "../lib/state-history";
 
-const USAGE = "Usage: ocx export <path|-> --yes  |  ocx export --history [--json]  |  ocx export data <dataset> [--format <f>] [--out <path>] [--list]";
+const USAGE = "Usage: ocx export <new-file> --yes  |  ocx export --history [--json]  |  ocx export data <dataset> [--format <f>] [--out <path>] [--list]";
 
 const WARNING = `
 ⚠️  THIS EXPORT CONTAINS SECRETS.
@@ -30,13 +30,12 @@ const WARNING = `
    the migration or backup that needed it is done.
 `;
 
-function readJsonIfPresent(path: string): unknown {
-  if (!existsSync(path)) return null;
+function readJsonIfPresent(path: string): { value: unknown; error?: string } {
+  if (!existsSync(path)) return { value: null };
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    // A corrupt side file must not sink the whole export; record that instead.
-    return { unreadable: true };
+    return { value: JSON.parse(readFileSync(path, "utf8")) };
+  } catch (error) {
+    return { value: null, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -47,7 +46,7 @@ export async function handleExportCommand(args: string[]): Promise<number> {
       + "Export the complete opencodex state — config, Codex accounts (with OAuth\n"
       + "credentials), and the main auth record — as one JSON document.\n"
       + WARNING
-      + "\n  <path|->     Where to write. \"-\" prints to stdout (warning goes to stderr).\n"
+      + "\n  <new-file>   Private destination file. Full-state backups never use stdout.\n"
       + "  --yes        Required: acknowledges that secrets are included.\n"
       + "  --history    Instead of exporting, list the local snapshots recorded on\n"
       + "               account add/remove (git history inside the config directory).\n",
@@ -103,6 +102,10 @@ export async function handleExportCommand(args: string[]): Promise<number> {
     const body = serialize(input, format);
     const outIndex = args.indexOf("--out");
     if (outIndex === -1) { process.stdout.write(body); return 0; }
+    if (!args[outIndex + 1] || args[outIndex + 1].startsWith("--")) {
+      console.error("ocx export data: --out requires a destination path.");
+      return 2;
+    }
 
     const target = args[outIndex + 1] ?? filenameFor(id, format);
     writeFileSync(resolve(target), body, "utf-8");
@@ -160,13 +163,24 @@ export async function handleExportCommand(args: string[]): Promise<number> {
   }
 
   const dir = getConfigDir();
+  const codexAccounts = readJsonIfPresent(join(dir, "codex-accounts.json"));
+  const auth = readJsonIfPresent(join(dir, "auth.json"));
+  if (codexAccounts.error || auth.error) {
+    const unreadable = [
+      codexAccounts.error ? `codex-accounts.json (${codexAccounts.error})` : null,
+      auth.error ? `auth.json (${auth.error})` : null,
+    ].filter(Boolean).join(", ");
+    console.error(`ocx export: refusing to write an incomplete backup; could not read ${unreadable}.`);
+    return 2;
+  }
+
   const bundle = {
     kind: "opencodex-export",
     exportedAt: new Date().toISOString(),
     warning: "CONTAINS PLAINTEXT SECRETS: provider API keys and Codex OAuth access/refresh tokens.",
     config: diagnostics.config,
-    codexAccounts: readJsonIfPresent(join(dir, "codex-accounts.json")),
-    auth: readJsonIfPresent(join(dir, "auth.json")),
+    codexAccounts: codexAccounts.value,
+    auth: auth.value,
   };
   const content = `${JSON.stringify(bundle, null, 2)}\n`;
 
@@ -174,11 +188,15 @@ export async function handleExportCommand(args: string[]): Promise<number> {
   console.error(WARNING);
 
   if (path === "-") {
-    process.stdout.write(content);
-    return 0;
+    console.error("ocx export: backup cannot be written to stdout because it contains plaintext secrets; choose a new private file path.");
+    return 2;
   }
 
   const target = resolve(path);
+  if (existsSync(target)) {
+    console.error(`ocx export: refusing to overwrite existing file ${target}. Choose a new path.`);
+    return 1;
+  }
   writeFileSync(target, content, { encoding: "utf8", mode: 0o600 });
   console.log(`Exported config + accounts + auth to ${target} (mode 600).`);
   console.log("To restore on another machine: stop the proxy there, copy the bundle's");

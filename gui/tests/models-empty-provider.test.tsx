@@ -4,7 +4,7 @@ import http2 from "node:http2";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { NotificationsProvider } from "../src/shell/notifications";
 import { ConfirmProvider } from "../src/shell/confirm";
 import SnackbarHost from "../src/shell/SnackbarHost";
@@ -51,9 +51,9 @@ afterEach(() => {
 
 function renderHint(liveModels: boolean, discovery?: ProviderDiscoverySummary): string {
   return renderToStaticMarkup(
-    <LanguageProvider>
+    <TestLanguageProvider>
       <EmptyProviderHint liveModels={liveModels} discovery={discovery} />
-    </LanguageProvider>,
+    </TestLanguageProvider>,
   );
 }
 
@@ -151,7 +151,7 @@ test("Models page combines final visibility, atomic actions, discovery status, a
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsProvider>
             <ConfirmProvider>
               <Models apiBase="http://localhost" />
@@ -160,7 +160,7 @@ test("Models page combines final visibility, atomic actions, discovery status, a
               <SnackbarHost />
             </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
     await act(async () => {
@@ -560,7 +560,7 @@ test("a poll that resolves after a forced refresh cannot overwrite newer models"
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           <NotificationsProvider>
             <ConfirmProvider>
               <Models apiBase="http://localhost" />
@@ -569,7 +569,7 @@ test("a poll that resolves after a forced refresh cannot overwrite newer models"
               <SnackbarHost />
             </ConfirmProvider>
           </NotificationsProvider>
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
     await act(async () => { await new Promise(resolve => testWindow.setTimeout(resolve, 0)); await Promise.resolve(); });

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { findLiveProxy, isOpencodexHealthz, probeHostname, proxyIdentityAt } from "../src/server/proxy-liveness";
 
 function healthz(body: unknown, status = 200): Response {
@@ -6,6 +7,17 @@ function healthz(body: unknown, status = 200): Response {
 }
 
 const OURS = { status: "ok", service: "opencodex", version: "2.6.17", uptime: 12, pid: 4242, port: 10100 };
+const PROXY_LIVENESS_SOURCE = readFileSync(new URL("../src/server/proxy-liveness.ts", import.meta.url), "utf8");
+
+function verifiedOwner(pid: number, port: number) {
+  return {
+    scanListenPidsFn: (candidatePort: number) => ({
+      ok: true as const,
+      pids: candidatePort === port ? [pid] : [],
+    }),
+    verifyPidFn: (candidate: number) => candidate === pid ? candidate : null,
+  };
+}
 
 describe("isOpencodexHealthz", () => {
   test("accepts the explicit service marker", () => {
@@ -54,12 +66,18 @@ describe("proxyIdentityAt", () => {
 });
 
 describe("findLiveProxy", () => {
+  test("uses fresh process identity verification by default so cached PIDs cannot be reused", () => {
+    expect(PROXY_LIVENESS_SOURCE).toContain("io.verifyPidFn ?? verifyPidIdentityFresh");
+    expect(PROXY_LIVENESS_SOURCE).not.toMatch(/io\.verifyPidFn\s*\?\?\s*verifyPidIdentity\s*;/);
+  });
+
   test("prefers the runtime-port record over config.port (fallback-port starts are found)", async () => {
     const urls: string[] = [];
     const live = await findLiveProxy({
       readPidFn: () => 4242,
       readRuntimeFn: pid => (pid === 4242 ? { port: 58195 } : null),
       configFn: () => ({ port: 10100 }),
+      ...verifiedOwner(4242, 58195),
       fetchFn: (async (url: string | URL | Request) => {
         urls.push(String(url));
         return healthz(OURS);
@@ -70,11 +88,23 @@ describe("findLiveProxy", () => {
     expect(urls).toEqual(["http://127.0.0.1:58195/healthz"]);
   });
 
+  test("propagates service ownership only from the PID-matched runtime record", async () => {
+    const live = await findLiveProxy({
+      readPidFn: () => 4242,
+      readRuntimeFn: pid => (pid === 4242 ? { port: 58195, supervised: true } : null),
+      configFn: () => ({ port: 10100 }),
+      ...verifiedOwner(4242, 58195),
+      fetchFn: (async () => healthz(OURS)) as typeof fetch,
+    });
+    expect(live).toMatchObject({ pid: 4242, port: 58195, source: "runtime", supervised: true });
+  });
+
   test("falls back to config.port only when no runtime record answers, taking pid from the body", async () => {
     const live = await findLiveProxy({
       readPidFn: () => null,
       readRuntimeFn: () => null,
       configFn: () => ({ port: 10100 }),
+      ...verifiedOwner(4242, 10100),
       fetchFn: (async () => healthz(OURS)) as typeof fetch,
     });
 
@@ -98,6 +128,7 @@ describe("findLiveProxy", () => {
       readPidFn: () => null,
       readRuntimeFn: () => ({ pid: 4242, port: 58195, hostname: "::1" }),
       configFn: () => ({ port: 10100 }),
+      ...verifiedOwner(4242, 58195),
       fetchFn: (async (url: string | URL | Request) => {
         urls.push(String(url));
         return healthz(OURS);
@@ -108,18 +139,81 @@ describe("findLiveProxy", () => {
     expect(urls).toEqual(["http://[::1]:58195/healthz"]);
   });
 
-  test("an orphaned record backed by a pidless legacy proxy yields pid null (never a killable stale pid)", async () => {
+  test("a spoofed matching healthz PID cannot target a genuine ocx process on another port", async () => {
+    const verified: number[] = [];
+    const live = await findLiveProxy({
+      readPidFn: () => null,
+      readRuntimeFn: () => ({ pid: 4242, port: 58195, supervised: true }),
+      configFn: () => ({ port: 10100 }),
+      verifyPidFn: candidate => {
+        verified.push(candidate);
+        return candidate; // a genuine ocx process reused this PID, but owns another port
+      },
+      scanListenPidsFn: () => ({ ok: true, pids: [9999] }),
+      fetchFn: (async () => healthz(OURS)) as typeof fetch,
+    });
+
+    expect(verified).toEqual([]);
+    expect(live).toEqual({ pid: null, port: 58195, hostname: undefined, source: "runtime" });
+  });
+
+  test("a configured-port healthz PID also requires full process identity verification", async () => {
+    const verified: number[] = [];
+    const live = await findLiveProxy({
+      readPidFn: () => null,
+      readRuntimeFn: () => null,
+      configFn: () => ({ port: 10100 }),
+      scanListenPidsFn: () => ({ ok: true, pids: [4242] }),
+      verifyPidFn: candidate => {
+        verified.push(candidate);
+        return null;
+      },
+      fetchFn: (async () => healthz(OURS)) as typeof fetch,
+    });
+
+    expect(verified).toEqual([4242]);
+    expect(live).toEqual({ pid: null, port: 10100, hostname: undefined, source: "config" });
+  });
+
+  test("listener ownership scan failure cannot authorize a matching healthz PID", async () => {
+    const live = await findLiveProxy({
+      readPidFn: () => 4242,
+      readRuntimeFn: () => ({ port: 58195, supervised: true }),
+      configFn: () => ({ port: 10100 }),
+      scanListenPidsFn: () => ({ ok: false, error: "netstat unavailable" }),
+      verifyPidFn: candidate => candidate,
+      fetchFn: (async () => healthz(OURS)) as typeof fetch,
+    });
+
+    expect(live).toEqual({ pid: null, port: 58195, hostname: undefined, source: "runtime" });
+  });
+
+  test("does not trust a matching healthz PID when process identity verification fails", async () => {
+    const live = await findLiveProxy({
+      readPidFn: () => 4242,
+      readRuntimeFn: () => ({ port: 58195 }),
+      scanListenPidsFn: () => ({ ok: true, pids: [4242] }),
+      verifyPidFn: () => null,
+      configFn: () => ({ port: 10100 }),
+      fetchFn: (async () => healthz(OURS)) as typeof fetch,
+    });
+
+    expect(live).toEqual({ pid: null, port: 58195, hostname: undefined, source: "runtime" });
+  });
+
+  test("an orphaned record backed by a pidless legacy proxy yields pid null without service ownership", async () => {
     const legacyBody = { status: "ok", version: "2.6.16", uptime: 5 }; // pre-identity healthz: no pid
     const live = await findLiveProxy({
       readPidFn: () => null,
-      readRuntimeFn: () => ({ pid: 1111, port: 58195, hostname: undefined }),
+      readRuntimeFn: () => ({ pid: 1111, port: 58195, hostname: undefined, supervised: true }),
       configFn: () => ({ port: 10100 }),
       fetchFn: (async (url: string | URL | Request) =>
         String(url).includes("58195") ? healthz(legacyBody) : healthz({ status: "ok" })) as typeof fetch,
     });
 
     // The record's pid 1111 may be dead/reused — synthesizing it would let `ocx stop`
-    // kill an unrelated process via the taskkill/kill fallback.
+    // kill an unrelated process via the taskkill/kill fallback. The same missing
+    // identity must also prevent a stale `supervised` marker claiming service ownership.
     expect(live).toEqual({ pid: null, port: 58195, hostname: undefined, source: "runtime" });
   });
 
@@ -140,6 +234,7 @@ describe("findLiveProxy", () => {
       readPidFn: () => 1111,
       readRuntimeFn: () => ({ port: 58195 }),
       configFn: () => ({ port: 58195 }),
+      ...verifiedOwner(9999, 58195),
       fetchFn: (async () => healthz({ ...OURS, pid: 9999 })) as typeof fetch,
     });
 
@@ -152,6 +247,7 @@ describe("findLiveProxy", () => {
     const legacyBody = { status: "ok", version: "2.6.16", uptime: 5 }; // no pid in body
     const live = await findLiveProxy({
       readPidFn: () => 1111, // cheap discovery says alive — but identity is unverified
+      scanListenPidsFn: () => ({ ok: true, pids: [1111] }),
       verifyPidFn: () => null, // full cmdline identity check fails (reused pid)
       readRuntimeFn: () => ({ port: 58195 }),
       configFn: () => ({ port: 10100 }),
@@ -170,6 +266,7 @@ describe("findLiveProxy", () => {
         verified.push(candidate);
         return candidate; // identity confirmed for the exact candidate
       },
+      scanListenPidsFn: () => ({ ok: true, pids: [1111] }),
       readRuntimeFn: () => ({ port: 58195 }),
       configFn: () => ({ port: 10100 }),
       fetchFn: (async () => healthz(legacyBody)) as typeof fetch,
@@ -183,6 +280,7 @@ describe("findLiveProxy", () => {
     const legacyBody = { status: "ok", version: "2.6.16", uptime: 5 };
     const live = await findLiveProxy({
       readPidFn: () => 1111,
+      scanListenPidsFn: () => ({ ok: true, pids: [1111] }),
       verifyPidFn: () => 2222, // pidfile rewritten between discovery and verification
       readRuntimeFn: () => ({ port: 58195 }),
       configFn: () => ({ port: 10100 }),

@@ -540,8 +540,6 @@ export async function handleClaudeMessages(
       const routeOverride = extractOcxRouteDirective(anthropicBody);
       if (routeOverride && typeof anthropicBody.model === "string") {
         anthropicBody.model = stripOneMillionMarker(routeOverride);
-        // Only a body we already recognised as one of ours may pin effort — the
-        // directive is trusted precisely because ocx-route proved the origin.
         effortOverride = extractOcxEffortDirective(anthropicBody);
       }
     }
@@ -571,9 +569,6 @@ export async function handleClaudeMessages(
     if (isRec(anthropicBody) && wantsNativePassthrough(req, config, anthropicBody.model)) {
       return await anthropicNativePassthrough(req, config, logCtx, logIds, anthropicBody, "/v1/messages");
     }
-    // Restore the exact tier the generated agent asked for. Claude Code 2.1.220
-    // rewrote it into `thinking.budget_tokens` on the way out, so the legacy
-    // shape must go — otherwise both survive and the budget wins.
     if (isRec(anthropicBody) && effortOverride) {
       anthropicBody.output_config = { effort: effortOverride };
       delete anthropicBody.thinking;

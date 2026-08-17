@@ -9,6 +9,7 @@ import { handleConfigCommand } from "../src/cli/config-command";
 import { handleGrokCommand } from "../src/cli/integrations";
 import { handleModelsRuntimeCommand } from "../src/cli/models-runtime";
 import { handleProviderRuntimeCommand } from "../src/cli/provider-runtime";
+import { collectApiCallSites } from "./helpers/api-call-sites";
 import { removeTempDir } from "./helpers/temp-dir";
 
 type Recorded = { path: string; method: string; body: unknown };
@@ -44,14 +45,17 @@ function sourceFiles(root: string): string[] {
 }
 
 describe("headless GUI parity CLI", () => {
+  // The endpoints are the ones the GUI actually requests. `collectApiCallSites`
+  // parses each file and takes only paths sitting inside a request target, so
+  // the documentation browser's bundled article corpus — which quotes other
+  // vendors' base URLs and names routes in Markdown tables — no longer arrives
+  // here disguised as GUI behaviour. See that helper for why prose was ever
+  // able to fail this test.
   test("every GUI management endpoint belongs to a documented CLI resource", () => {
     const guiRoot = join(import.meta.dir, "..", "gui", "src");
     const endpoints = new Set<string>();
     for (const path of sourceFiles(guiRoot)) {
-      const source = readFileSync(path, "utf8");
-      for (const match of source.matchAll(/\/api\/[A-Za-z0-9_./-]+/g)) {
-        endpoints.add(match[0].replace(/\.+$/, "").replace(/\/$/, ""));
-      }
+      for (const endpoint of collectApiCallSites(readFileSync(path, "utf8"), path)) endpoints.add(endpoint);
     }
     const coverage: Array<[string, string]> = [
       ["/api/claude-code", "ocx claude config"],
@@ -59,12 +63,31 @@ describe("headless GUI parity CLI", () => {
       ["/api/claude/", "ocx observe"],
       ["/api/codex-auth", "ocx account"],
       ["/api/oauth", "ocx account"],
+      ["/api/copilot-desktop", "ocx access"],
       ["/api/providers/keys", "ocx account"],
       ["/api/providers", "ocx provider"],
       ["/api/provider-", "ocx provider/models"],
       ["/api/selected-models", "ocx models"],
       ["/api/custom-models", "ocx models"],
       ["/api/model", "ocx models"],
+      // `ocx narrator voices --source edge --edge` and `ocx narrator speak`
+      // reach these two routes, so the catalogue and the synthesiser are both
+      // driveable from a shell rather than only from the voice picker.
+      ["/api/narrator", "ocx narrator"],
+      // `ocx schedule test-api`/`test-ha`/`ha-token status|clear` reach these
+      // three routes headlessly; `status`/`list`/`show`/`active` cover the
+      // rest of the family by honestly reporting that rules themselves are
+      // browser-only state (see src/cli/schedule.ts).
+      ["/api/schedule", "ocx schedule"],
+      ["/api/school-mode", "ocx school-mode"],
+      ["/api/pdf", "ocx pdf"],
+      ["/api/converter", "ocx convert"],
+      // The browser extension is the intended caller of `POST
+      // /api/downloads/capture`; `ocx downloads` reaches the whole family
+      // (capture/list/show/confirm/cancel/pause/resume/remove) so the
+      // dashboard's Downloading page and a headless script can never disagree
+      // about a transfer's state.
+      ["/api/downloads", "ocx downloads"],
       ["/api/changelog", "ocx changelog"],
       ["/api/combos", "ocx combo"],
       ["/api/debug", "ocx debug/observe"],
@@ -94,9 +117,44 @@ describe("headless GUI parity CLI", () => {
       ["/api/usage", "ocx observe usage"],
       ["/api/v2", "ocx v2/agent"],
       ["/api/windows-tray", "ocx tray"],
+      ["/api/changelog", "ocx changelog"],
+      ["/api/export", "ocx export data"],
+      ["/api/host", "ocx host/export/restart"],
+      ["/api/launch", "ocx launch"],
+      ["/api/terminal", "ocx terminal"],
     ];
     const uncovered = [...endpoints].filter(endpoint => !coverage.some(([prefix]) => endpoint === prefix || endpoint.startsWith(prefix)));
     expect(uncovered).toEqual([]);
+  });
+
+  // The guard above is only worth its green tick if the scan can tell the two
+  // apart, so prove both directions rather than assuming them: prose that names
+  // a route is not a call site, and a call site is still found through an
+  // interpolated base, a bare path, and an interpolated final segment.
+  test("the endpoint scan reads call sites, not documentation prose", () => {
+    // No scheme anywhere in this body, so only the "a URL has no whitespace"
+    // rule can be rejecting it — the case the corpus's Markdown tables hit.
+    const corpus = [
+      'export const DOCS_ARTICLES = [{"id":"guides/models","body":"The reference table lists',
+      "`GET /api/key-providers` and `PUT /api/disabled-models` under Models.\"}];",
+    ].join(" ");
+    expect([...collectApiCallSites(corpus, "generated-articles.ts")]).toEqual([]);
+
+    // Whitespace-free, so only the "somebody else's origin" rule can reject it.
+    const vendor = 'export const KILO_BASE = "https://api.kilo.ai/api/gateway";';
+    expect([...collectApiCallSites(vendor)]).toEqual([]);
+
+    const comment = "// School Mode's store polls `/api/school-mode` on its own\nexport const x = 1;";
+    expect([...collectApiCallSites(comment)]).toEqual([]);
+
+    const calls = [
+      "const a = await fetch(`${apiBase}/api/providers?name=${encodeURIComponent(name)}`);",
+      'const b = await fetch("/api/keys", { method: "POST" });',
+      "const c = await fetch(`${apiBase}/api/launch/install/${id}`);",
+    ].join("\n");
+    expect([...collectApiCallSites(calls)].sort()).toEqual([
+      "/api/keys", "/api/launch/install", "/api/providers",
+    ]);
   });
 
   test("provider edit reuses the management provider patch", async () => {

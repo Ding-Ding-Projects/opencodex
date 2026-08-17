@@ -390,8 +390,10 @@ describe("voice varies, facts do not", () => {
     },
     {
       key: "dimsum.toggleHint",
-      en: [/hundred/i, /first run/i, /update/i],
-      yue: [/一百/, /第一次/, /更新/],
+      // `\bten\b` rather than `/ten/i`, which "often" and "listen" would satisfy
+      // without the copy ever stating the odds.
+      en: [/\bten\b/i, /first run/i, /update/i],
+      yue: [/十次/, /第一次/, /更新/],
     },
   ];
 

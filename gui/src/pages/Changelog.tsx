@@ -7,14 +7,15 @@
  */
 
 import { useMemo, useState } from "react";
-import { Button, Card, Chip, Empty, Field, TextInput } from "../shell/m3-ui";
+import { Badge, Button, Card, Chip, Empty, Field, TextInput, type BadgeTone } from "../shell/m3-ui";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
-import { IconSearch } from "../icons";
+import { SearchFlagsRow } from "../shell/SearchFlagsRow";
+import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../shell/settings-search";
+import { IconChangelog, IconSearch } from "../icons";
 import { useKeyedClientResource } from "../client-resource";
 import { useT } from "../i18n/shared";
 import { useNotifications } from "../shell/notifications-context";
 import { readJsonIfOk } from "../fetch-json";
-import type { CSSProperties } from "react";
 
 interface Release {
   version: string;
@@ -55,29 +56,6 @@ const PRESETS = [
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-type Tone = "ok" | "warn" | "error" | "neutral";
-
-/** Status palette — a functional data colour, not chrome, so it stays a role pair. */
-const TONE_COLOURS: Record<Tone, { background: string; color: string }> = {
-  ok: { background: "var(--m3-ok-container)", color: "var(--m3-on-ok-container)" },
-  warn: { background: "var(--m3-warn-container)", color: "var(--m3-on-warn-container)" },
-  error: { background: "var(--m3-error-container)", color: "var(--m3-on-error-container)" },
-  neutral: { background: "var(--m3-surface-container-highest)", color: "var(--m3-on-surface-variant)" },
-};
-
-const BADGE: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  height: 24,
-  padding: "0 10px",
-  borderRadius: "var(--r-pill)",
-  fontFamily: "var(--mono)",
-  fontSize: "var(--t-label-s)",
-  fontWeight: 600,
-  letterSpacing: "0.2px",
-  whiteSpace: "nowrap",
-};
-
 /** `fix(gui)!: subject` — the shape `scripts/generate-changelog.ts` writes into CHANGELOG.md. */
 const CONVENTIONAL = /^(?<type>[a-z]+)(?<scope>\([^)]*\))?(?<breaking>!)?:\s*(?<rest>.+)$/;
 
@@ -87,11 +65,11 @@ const CONVENTIONAL = /^(?<type>[a-z]+)(?<scope>\([^)]*\))?(?<breaking>!)?:\s*(?<
  * conventional-commit type instead of being invented. An entry that carries no
  * type prefix keeps its full text and simply gets no badge.
  */
-function categorize(entry: string): { badge: string | null; text: string; tone: Tone } {
+function categorize(entry: string): { badge: string | null; text: string; tone: BadgeTone } {
   const m = CONVENTIONAL.exec(entry);
   if (!m?.groups) return { badge: null, text: entry, tone: "neutral" };
   const { type, scope, breaking, rest } = m.groups;
-  const tone: Tone = breaking || type === "security" ? "error"
+  const tone: BadgeTone = breaking || type === "security" ? "error"
     : type === "fix" || type === "revert" ? "warn"
     : type === "feat" ? "ok"
     : "neutral";
@@ -105,6 +83,13 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
   const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  /**
+   * The flags this field compiles with. State rather than the `"i"` this search
+   * used to hard-code: the builder beside the field composes a pattern *and* its
+   * flags, and a field that pinned `i` let the panel's preview change under `m`
+   * or `s` while the entry list behind it did not move.
+   */
+  const [flags, setFlags] = useState(DEFAULT_SEARCH_FLAGS);
 
   const poll = useKeyedClientResource(
     `ocx-changelog:${apiBase}`,
@@ -128,19 +113,15 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
   const hi = toValid ? to : "";
 
   const { rows, regexError } = useMemo(() => {
-    let matcher: (text: string) => boolean;
-    if (!query) matcher = () => true;
-    else if (useRegex) {
-      try {
-        const re = new RegExp(query, "i");
-        matcher = text => re.test(text);
-      } catch (e) {
-        return { rows: [] as Release[], regexError: e instanceof Error ? e.message : String(e) };
-      }
-    } else {
-      const needle = query.toLowerCase();
-      matcher = text => text.toLowerCase().includes(needle);
-    }
+    // The shared matcher rather than a `new RegExp(query, "i")` of its own, so
+    // the flags the builder applied are the flags these entries are filtered by.
+    // It also bounds the pattern — this search had no cap, and a changelog is the
+    // longest corpus on the screen — and drops `g`/`y`, whose `lastIndex` would
+    // otherwise make one matcher reused down a release's entries keep every
+    // other one, in an order nobody chose.
+    const compiled = settingsMatcher(query, useRegex, flags);
+    if (compiled.error) return { rows: [] as Release[], regexError: compiled.error };
+    const matcher = compiled.test;
 
     const filtered = releases
       .filter(r => (!lo || (r.date ?? "") >= lo) && (!hi || (r.date ?? "") <= hi))
@@ -152,7 +133,7 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
       .filter(r => !query || r.entries.length > 0);
 
     return { rows: filtered, regexError: null as string | null };
-  }, [releases, lo, hi, query, useRegex]);
+  }, [releases, lo, hi, query, useRegex, flags]);
 
   /**
    * Real changelog lines for the anchored builder to test a pattern against. Taken
@@ -274,7 +255,7 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
             placeholder={t("changelog.search")}
             aria-label={t("changelog.search")}
             aria-invalid={!!regexError}
-            aria-describedby="cl-regex-error"
+            aria-describedby={useRegex ? "cl-regex-error cl-regex-flags-state" : "cl-regex-error"}
             style={{ flex: "1 1 240px", width: "auto", minWidth: 0 }}
           />
           {/* Plain text stays the default; `.*` is an explicit opt-in on every search bar. */}
@@ -283,9 +264,13 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
           </Chip>
           <RegexBuilderButton
             value={query}
-            onApply={pattern => setQuery(pattern)}
+            // Both halves of what the builder composed. Taking the pattern and
+            // leaving the flags behind is what made the popover's flag chips
+            // decorative from this field's point of view.
+            onApply={(pattern, appliedFlags) => { setQuery(pattern); setFlags(appliedFlags); }}
             regex={useRegex}
             onRegexChange={setUseRegex}
+            flags={flags}
             sample={changelogSample}
           />
         </div>
@@ -293,6 +278,13 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
         <p id="cl-regex-error" role="alert" style={{ minHeight: 20, margin: "4px 0 0", color: "var(--m3-error)", fontSize: "var(--t-label-m)" }}>
           {regexError ? `${t("regex.invalid")}: ${regexError}` : ""}
         </p>
+
+        <SearchFlagsRow
+          regex={useRegex}
+          flags={flags}
+          onFlagsChange={setFlags}
+          id="cl-regex-flags-state"
+        />
 
         <div className="m3-row" style={{ gap: 8, marginTop: "var(--sp-2)" }}>
           <span style={{ ...MONO, flex: "1 1 auto", minWidth: 0, color: "var(--m3-on-surface-variant)", fontSize: "var(--t-label-m)" }}>
@@ -306,9 +298,9 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
       </Card>
 
       {!available ? (
-        <Empty title={t("changelog.unavailable")}>{t("changelog.unavailableBody")}</Empty>
+        <Empty title={t("changelog.unavailable")} icon={IconChangelog}>{t("changelog.unavailableBody")}</Empty>
       ) : rows.length === 0 ? (
-        <Empty title={t("changelog.noResults")}>{t("changelog.noResultsBody")}</Empty>
+        <Empty title={t("changelog.noResults")} icon={IconSearch}>{t("changelog.noResultsBody")}</Empty>
       ) : (
         rows.map(release => (
           <Card
@@ -329,7 +321,7 @@ export default function Changelog({ apiBase }: { apiBase: string }) {
                 const { badge, text, tone } = categorize(entry);
                 return (
                   <li key={i} className="m3-row" style={{ gap: 10, alignItems: "baseline", padding: "6px 0" }}>
-                    {badge && <span style={{ ...BADGE, ...TONE_COLOURS[tone] }}>{badge}</span>}
+                    {badge && <Badge tone={tone} style={MONO}>{badge}</Badge>}
                     <span style={{ flex: "1 1 260px", minWidth: 0, fontSize: "var(--t-body-s)" }}>{text}</span>
                   </li>
                 );

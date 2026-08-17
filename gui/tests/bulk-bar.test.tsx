@@ -13,7 +13,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 
 import BulkBar from "../src/shell/BulkBar";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 import { PrefsProvider } from "../src/theme/prefs";
 
 const globals = ["document", "window", "navigator", "localStorage", "sessionStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
@@ -55,7 +55,7 @@ async function render(options: Options = {}): Promise<{ container: HTMLElement; 
     root = createRoot(container);
     root.render(
       <PrefsProvider>
-        <LanguageProvider>
+        <TestLanguageProvider>
           <BulkBar
             items={options.items ?? [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }]}
             selected={new Set(options.selected ?? [])}
@@ -66,7 +66,7 @@ async function render(options: Options = {}): Promise<{ container: HTMLElement; 
             onInvert={() => {}}
             progress={options.progress ?? null}
           />
-        </LanguageProvider>
+        </TestLanguageProvider>
       </PrefsProvider>,
     );
   });

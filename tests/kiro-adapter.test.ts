@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createKiroAdapter } from "../src/adapters/kiro";
@@ -12,7 +12,6 @@ import { normalizeKiroModelId } from "../src/providers/kiro-models";
 import { configuredReasoningEfforts, mapReasoningEffort } from "../src/reasoning-effort";
 import { PROVIDER_REGISTRY } from "../src/providers/registry";
 import type { OcxParsedRequest, OcxProviderConfig } from "../src/types";
-import { removeTempDir } from "./helpers/temp-dir";
 
 const origHome = process.env.HOME;
 const origRegion = process.env.KIRO_REGION;
@@ -42,7 +41,7 @@ afterEach(() => {
   if (origCredsFile === undefined) delete process.env.KIRO_CREDS_FILE; else process.env.KIRO_CREDS_FILE = origCredsFile;
   if (origCredentialsFile === undefined) delete process.env.KIRO_CREDENTIALS_FILE; else process.env.KIRO_CREDENTIALS_FILE = origCredentialsFile;
   if (origOcxHome === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = origOcxHome;
-  removeTempDir(tmp);
+  rmSync(tmp, { recursive: true, force: true });
 });
 
 const provider = { adapter: "kiro", baseUrl: "https://runtime.us-east-1.kiro.dev", authMode: "oauth", apiKey: "tok-123" } as unknown as OcxProviderConfig;
@@ -74,9 +73,6 @@ describe("kiro adapter — buildRequest", () => {
     }
   });
 
-  // Prevents the regression where an account with no profile ARN was sent an IDE-shaped
-  // request with the `x-amzn-kiro-profile-arn` header merely omitted — a shape Kiro only
-  // accepts from an enterprise profile.
   test("Builder ID requests without a profile ARN use the Kiro CLI wire contract", async () => {
     const { url, method, headers, body } = await createKiroAdapter(provider).buildRequest(parsedWith([{ role: "user", content: "hi" }]));
     const payload = JSON.parse(body) as {
@@ -107,8 +103,6 @@ describe("kiro adapter — buildRequest", () => {
     expect(payload.conversationState.currentMessage.userInputMessage).not.toHaveProperty("userInputMessageContext.envState");
   });
 
-  // Prevents a stored profile ARN from a previous OAuth login leaking onto an API-key
-  // request, which authenticates a different identity than the ARN names.
   test("Kiro API keys force the CLI token type and ignore unrelated profile metadata", async () => {
     const apiKeyProvider = { ...provider, authMode: "key", apiKey: "ksk_example" } as unknown as OcxProviderConfig;
     const parsed = parsedWith([{ role: "user", content: "hi" }]);

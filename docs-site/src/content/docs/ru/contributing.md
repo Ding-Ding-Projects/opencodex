@@ -60,15 +60,24 @@ bun run build
 
 GitHub Actions намеренно остаются компактными:
 
-- **Cross-platform CI** (`.github/workflows/ci.yml`) запускается на pull request и push в `main`,
-  затрагивающих файлы рантайма, тестов, пакета, скриптов, TypeScript или воркфлоу. Его Bun-матрица
-  покрывает Linux, Windows и macOS: install, typecheck, тесты, privacy scan, smoke-сборка
-  release-helper, сборка GUI и `ocx help`. Отдельная линия на тех же трёх ОС подтверждает, что
-  npm global install работает без отдельно установленного Bun — за счёт runtime, входящего в
-  состав пакета.
+- **Windows CI** (`.github/workflows/ci.yml`) запускается на pull request и push в `main`, затрагивающих
+  файлы рантайма, тестов, пакета, скриптов, TypeScript или воркфлоу. Windows jobs выполняют install,
+  typecheck, тесты, privacy scan, smoke-сборку release-helper, сборку GUI, `ocx help` и проверяют npm
+  global install без отдельно установленного Bun — за счёт runtime, входящего в состав пакета.
 - **Release** (`.github/workflows/release.yml`) запускается вручную. Он не служит вторым полным
   CI-пайплайном; перед dry-run или publish он требует, чтобы для точного релизного коммита
-  (`GITHUB_SHA`) уже был успешный запуск Cross-platform CI.
+  (`GITHUB_SHA`) уже был успешный запуск Windows CI.
+- **Super express release** (`.github/workflows/super-express-release.yml`) — ручной путь упаковки
+  для Windows. Он разрешает выбранный ref в один неизменяемый SHA коммита и, как **Release**,
+  отказывается от публикации, если для этого точного SHA нет успешного Windows CI. Десктопный
+  релиз содержит намеренно неподписанные Squirrel.Windows `Setup.exe`, `RELEASES` и полный `.nupkg`.
+
+Неподписанный установщик Windows может вызвать предупреждение **Unknown Publisher** или Microsoft
+Defender SmartScreen. Соответствующие задания CI, упаковки и релиза запускают защитные сборщики
+артефактов даже после сбоя предыдущего шага. Они сохраняют в артефактах GitHub Actions только явно
+безопасные выходные файлы установщика/feed и метаданные запуска; сбой самого сборщика игнорируется,
+чтобы он не скрыл и не заменил исходный результат задания. Сохранение диагностических материалов не
+делает неудачную сборку пригодной для публикации.
 
 Для релизов используйте helper:
 

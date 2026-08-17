@@ -41,6 +41,15 @@ files:
   - src/**
   - gui/dist/**
   - package.json
+  # Only these two — not the whole scripts/ directory, most of which is
+  # release/dev tooling nobody runs from an installed app. electron/cli-path.mjs
+  # shells out to ensure-desktop-cli-path.ps1 (which dot-sources
+  # install-path.ps1) during --squirrel-install / --squirrel-updated to put
+  # `ocx` on PATH, reusing the exact same PATH-repair functions
+  # scripts/install.ps1 (the npm installer) already has tests for, rather than
+  # a second PATH-writing mechanism that only the desktop app has.
+  - scripts/install-path.ps1
+  - scripts/ensure-desktop-cli-path.ps1
   # Written by CI immediately before packaging. Its absence is not a build
   # failure — a local `electron-builder` run has no run number to stamp — and the
   # readers all fall back to "dev" rather than guessing. See
@@ -74,6 +83,12 @@ win:
     - target: squirrel
       arch: [x64]
   icon: gui/public/logo.png
+  # Code signing is permanently disabled. Keep all three controls explicit so
+  # neither electron-builder nor the Squirrel target can discover or invoke a
+  # signer when a developer machine happens to have credentials installed.
+  forceCodeSigning: false
+  signExecutable: false
+  signAndEditExecutable: false
 
 # Squirrel.Windows, not NSIS.
 #

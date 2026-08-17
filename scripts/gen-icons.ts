@@ -62,6 +62,14 @@ const MAP: Record<string, string> = {
   IconTrash: "delete",
   IconAlert: "warning",
   IconInfo: "info",
+  // The snackbar's tone marks. `IconCheck` is a bare tick used inside buttons
+  // and status chips, where it reads as "this one" rather than as a severity;
+  // the prototype's snackbars carry `check_circle` and `error`, which are the
+  // enclosed forms that scan as a severity badge next to a warning triangle.
+  // Repointing `IconCheck` at `check_circle` would have fixed the snackbar and
+  // quietly changed every copy button and provider row in the app.
+  IconCheckCircle: "check_circle",
+  IconError: "error",
   IconSearch: "search",
   IconArrowUp: "arrow_upward",
   IconArrowDown: "arrow_downward",
@@ -110,6 +118,34 @@ const MAP: Record<string, string> = {
   IconEyedropper: "colorize",
   IconDownload: "download",
   IconVolume: "volume_up",
+  // The in-app documentation browser's nav glyph. `menu_book` rather than the
+  // plainer `book` or `article`, because this destination is specifically a
+  // browsable collection of pages with a contents list, not a single document.
+  IconMenuBook: "menu_book",
+  // PDF tools' nav glyph. The literal upstream name for exactly this: a document
+  // page marked with the format it is being operated on, not a generic file icon.
+  IconPictureAsPdf: "picture_as_pdf",
+  // The provider Overview's "Test connection" button. The prototype's own glyph
+  // for exactly this action — a live-signal check, not a generic refresh or link.
+  IconNetworkCheck: "network_check",
+  // The universal file converter's nav glyph and its eight adapter categories.
+  // `sync_alt` reads as "turn one thing into another," which is what the whole
+  // surface does; the category glyphs are each upstream's literal name for that
+  // file kind rather than a shape picked for looking roughly right.
+  IconSyncAlt: "sync_alt",
+  IconImage: "image",
+  IconAudioFile: "audio_file",
+  IconVideoFile: "video_file",
+  IconFolderZip: "folder_zip",
+  IconTableChart: "table_chart",
+  IconCode: "code",
+  IconDataObject: "data_object",
+  IconUpload: "upload",
+  IconPlaylistAdd: "playlist_add",
+  // The streaming chat surface's nav glyph — upstream's literal name for a
+  // conversation bubble, distinct from `IconBot` (Subagents' single machine
+  // glyph) and from `IconSparkle` (Claude's own nav row).
+  IconChat: "chat",
 };
 
 /**
@@ -137,14 +173,19 @@ const ORDER = [
   "IconWinMinimize", "IconWinMaximize", "IconWinRestore",
   "IconTerminal", "IconActivity", "IconHardDrive", "IconCheck", "IconX",
   "IconPlus", "IconRefresh", "IconPause", "IconPlay", "IconTrash", "IconAlert",
-  "IconInfo", "IconSearch", "IconArrowUp", "IconArrowDown", "IconChevron",
+  "IconInfo", "IconCheckCircle", "IconError",
+  "IconSearch", "IconArrowUp", "IconArrowDown", "IconChevron",
   "IconGithub", "IconPower", "IconExternal", "IconKey", "IconLock",
   "IconTicket", "IconLink", "IconSun", "IconMoon", "IconMonitor", "IconGlobe",
   "IconSparkle", "IconShuffle", "IconGrip", "IconStar", "IconFilter",
   "IconPalette", "IconTranslate", "IconRegex", "IconChangelog", "IconHistory",
   "IconBell", "IconPin", "IconDevices", "IconBolt", "IconUndo", "IconCopy",
   "IconEyedropper", "IconDownload", "IconVolume",
-  "IconReceiptLong", "IconApi", "IconRestartAlt",
+  "IconReceiptLong", "IconApi", "IconRestartAlt", "IconMenuBook", "IconPictureAsPdf",
+  "IconNetworkCheck",
+  "IconSyncAlt", "IconImage", "IconAudioFile", "IconVideoFile", "IconFolderZip",
+  "IconTableChart", "IconCode", "IconDataObject", "IconUpload", "IconPlaylistAdd",
+  "IconChat",
 ];
 
 interface Geometry { inner: string; viewBox: string }

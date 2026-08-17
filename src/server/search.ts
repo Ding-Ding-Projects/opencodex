@@ -105,6 +105,11 @@ export async function handleSearch(
       headers,
       body: JSON.stringify(body),
       signal: linkedSignal.signal,
+      // Credential-bearing: do not follow a cross-origin 3xx. Bun strips `Authorization`
+      // across origins but forwards nonstandard headers such as `chatgpt-account-id`,
+      // `session_id`, and `x-codex-turn-metadata` to the redirect target (B3 security port,
+      // upstream c19f571a / #1471).
+      redirect: "manual",
     });
     const payload = await upstreamResponse.arrayBuffer();
     if (payload.byteLength > SEARCH_RESPONSE_MAX_BYTES) {

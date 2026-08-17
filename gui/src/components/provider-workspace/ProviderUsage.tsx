@@ -29,17 +29,34 @@ export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsa
     return modelUsage.toSorted((a, b) => b.totalTokens - a.totalTokens);
   }, [modelUsage]);
 
+  /**
+   * The panel's headline cost, and which lane produced it.
+   *
+   * The two lanes are totalled separately and the billable one wins the headline;
+   * they are never added together, because a direct total is money owed and an
+   * API-equivalent total is a comparison. Before this, only the direct lane was
+   * read at all, so an OAuth or subscription provider's whole usage panel
+   * reported no cost whatsoever despite every request having a priced equivalent.
+   */
   const providerCost = useMemo(() => {
     if (!sortedModels.length) return undefined;
-    let total = 0;
-    let hasCost = false;
+    let direct = 0;
+    let hasDirect = false;
+    let equivalent = 0;
+    let hasEquivalent = false;
     for (const m of sortedModels) {
       if (m.estimatedCostUsd !== undefined) {
-        total += m.estimatedCostUsd;
-        hasCost = true;
+        direct += m.estimatedCostUsd;
+        hasDirect = true;
+      }
+      if (m.apiEquivalentCostUsd !== undefined) {
+        equivalent += m.apiEquivalentCostUsd;
+        hasEquivalent = true;
       }
     }
-    return hasCost ? total : undefined;
+    if (hasDirect) return { total: direct, equivalent: false as const };
+    if (hasEquivalent) return { total: equivalent, equivalent: true as const };
+    return undefined;
   }, [sortedModels]);
 
   return (
@@ -50,8 +67,16 @@ export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsa
           <>
             <div className="pws-usage-metrics pws-usage-metrics-3" role="group" aria-label={t("pws.usageLast30d")}>
               <div className="pws-usage-metric">
-                <span className="pws-usage-metric-value mono">{formatCostUsd(providerCost, locale)}</span>
-                <span className="muted pws-usage-metric-label">{t("pws.estimatedCost")}</span>
+                <span className="pws-usage-metric-value mono">{formatCostUsd(providerCost?.total, locale)}</span>
+                <span className="muted pws-usage-metric-label">
+                  {t("pws.estimatedCost")}
+                  {providerCost?.equivalent && (
+                    <>
+                      {" "}
+                      <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+                    </>
+                  )}
+                </span>
               </div>
               <div className="pws-usage-metric">
                 <span className="pws-usage-metric-value">{formatRequestCount(usageTotals?.requests, locale)}</span>
@@ -100,7 +125,18 @@ export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsa
                             {row.model}
                           </button>
                         </td>
-                        <td className="num mono">{formatCostUsd(row.estimatedCostUsd, locale)}</td>
+                        <td className="num mono">
+                          {row.estimatedCostUsd !== undefined
+                            ? formatCostUsd(row.estimatedCostUsd, locale)
+                            : row.apiEquivalentCostUsd !== undefined
+                              ? (
+                                <>
+                                  {formatCostUsd(row.apiEquivalentCostUsd, locale)}{" "}
+                                  <span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>
+                                </>
+                              )
+                              : formatCostUsd(undefined, locale)}
+                        </td>
                         <td className="num mono">{formatTokenCount(row.totalTokens, locale)}</td>
                         <td className="num">{row.requests}</td>
                         <td>

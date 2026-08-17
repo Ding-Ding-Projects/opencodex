@@ -27,65 +27,63 @@ function count(text: string, fragment: string): number {
   return text.split(fragment).length - 1;
 }
 
-describe("GitHub Actions hardening", () => {
-  // A bash heredoc in a step that runs under pwsh is a parse error, not a
-  // portability wrinkle: `windows-latest` defaults every `run:` to PowerShell,
-  // which reads `<<` as a redirection missing its filename. It failed the
-  // Dashboard preview build on every push while the build itself was green, so
-  // the only thing lost was the artifact — the least visible way for a job to
-  // be broken. Every heredoc must therefore declare `shell: bash`.
-  test("every heredoc step on a Windows runner asks for bash", async () => {
-    const workflows = ["ci.yml", "gui-preview.yml", "release.yml", "service-lifecycle.yml"];
-    let checkedHeredocs = 0;
-    for (const name of workflows) {
-      const text = await readText(`.github/workflows/${name}`);
-      const parsed = Bun.YAML.parse(text) as {
-        jobs?: Record<string, {
-          "runs-on"?: string;
-          defaults?: { run?: { shell?: string } };
-          steps?: Array<{ name?: string; run?: string; shell?: string }>;
-        }>;
-      };
-      for (const [jobName, job] of Object.entries(parsed.jobs ?? {})) {
-        if (!String(job["runs-on"] ?? "").startsWith("windows")) continue;
-        const jobShell = job.defaults?.run?.shell;
-        for (const step of job.steps ?? []) {
-          if (typeof step.run !== "string" || !/<<-?\s*['"]?\w+/.test(step.run)) continue;
-          checkedHeredocs += 1;
-          const shell = step.shell ?? jobShell;
-          expect(
-            shell,
-            `${name} job "${jobName}" step "${step.name ?? "(unnamed)"}" uses a heredoc; pwsh cannot parse it`,
-          ).toBe("bash");
-        }
-      }
-    }
-    // Guard the guard: if the heredoc disappears entirely the assertion above
-    // would vacuously pass, so prove it actually inspected something.
-    expect(checkedHeredocs).toBeGreaterThan(0);
-  });
+type WorkflowStep = {
+  name?: string;
+  uses?: string;
+  if?: unknown;
+  run?: string;
+  env?: Record<string, unknown>;
+  with?: Record<string, unknown>;
+  "continue-on-error"?: unknown;
+};
 
-  test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
+type WorkflowJob = {
+  "runs-on"?: unknown;
+  steps?: WorkflowStep[];
+};
+
+type WorkflowDocument = {
+  jobs?: Record<string, WorkflowJob>;
+};
+
+const uploadArtifactAction =
+  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+
+function expectAlwaysAndNonMasking(step: WorkflowStep, label: string): void {
+  expect(String(step.if ?? ""), `${label} must run after any earlier result`).toContain("always()");
+  expect(step["continue-on-error"], `${label} must not mask the original job result`).toBe(true);
+}
+
+function expectRunMetadata(step: WorkflowStep, label: string): void {
+  const run = String(step.run ?? "");
+  const envEntries = Object.entries(step.env ?? {});
+  const statusEnv = envEntries.find(([, value]) => String(value).includes("job.status"));
+
+  expect(run, `${label} must write a metadata record`).toMatch(/run-metadata\.(?:json|txt)/i);
+  expect(run, `${label} metadata must record the run id`).toContain("GITHUB_RUN_ID");
+  expect(run, `${label} metadata must record the commit SHA`).toContain("GITHUB_SHA");
+  expect(run, `${label} metadata must record the runner operating system`).toContain("RUNNER_OS");
+  expect(run, `${label} metadata must record the runner architecture`).toContain("RUNNER_ARCH");
+  expect(statusEnv, `${label} must bind job.status into the collector environment`).toBeDefined();
+  expect(run, `${label} metadata must record the bound job status`).toContain(statusEnv?.[0] ?? "");
+}
+
+describe("GitHub Actions hardening", () => {
+  test("Windows CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
 
-    // 25 for the test matrix. It was 20, sized off the Windows full suite's
-    // 10m04s on run 30503517934; the extra five minutes pay for the Test step's
-    // crash-retry, because a Bun panic on the bad runner image burns ~42s before
-    // the attempt that actually runs the suite. The invariant is that every job
-    // stays bounded — the exact ceiling is maintained here alongside ci.yml, and
-    // this assertion failing is the intended way to notice it moved.
-    expect(count(workflow, "timeout-minutes: 25")).toBe(1);
+    expect(workflow).toContain("name: Windows CI");
+    expect(workflow).not.toContain("ubuntu-latest");
+    expect(workflow).not.toContain("macos-latest");
+    expect(workflow).toContain("runs-on: windows-latest");
+    expect(workflow).not.toContain("matrix:");
+    expect(count(workflow, "timeout-minutes: 20")).toBe(1);
     expect(count(workflow, "timeout-minutes: 8")).toBe(1);
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
     expect(workflow).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
     expect(workflow).toContain("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e");
-    expect(workflow).toContain("bun test --isolate --timeout 20000 tests");
-    // The per-test timeout is raised for the runner, not for any test. Bun's
-    // default 5000ms failed two consecutive runs on two *different* tests, both
-    // of which pass locally in well under a second — two different tests hitting
-    // the same wall is the wall moving. Asserted so a later "tidy-up" that drops
-    // the flag fails here rather than resurfacing as flaky releases.
-    expect(workflow).toContain("--timeout 20000");
+    expect(workflow).toContain("bun test --isolate tests");
+    expect(workflow).toContain("bun test --isolate tests --max-concurrency=8 --timeout=30000");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
@@ -156,27 +154,111 @@ describe("GitHub Actions hardening", () => {
       "tsconfig.json",
     ];
     expect([...(ci.on?.pull_request?.paths ?? [])].sort()).toEqual(ciPaths);
-    // Push must have NO filter — a strict superset of the pull_request one, so
-    // nothing reaches a branch checked on one trigger and not the other.
-    //
-    // It is deliberately not "the same list". `Auto release` gates publishing on
-    // a successful CI run existing for the exact commit, and a filtered push
-    // makes that unanswerable for a commit touching only excluded files: no run,
-    // no verdict, and the release waits out its timeout for something that was
-    // never going to start. 84d8f16b built a 182 MB installer and published
-    // nothing, because it changed only a workflow file that was not on this list.
-    expect(ci.on?.push?.paths).toBeUndefined();
+    // Push and pull_request have to cover the same surfaces, or a change lands
+    // on dev having been checked on one trigger and not the other.
+    expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
   });
 
-  test("cross-platform CI keeps the GUI lint and build gates", async () => {
+  test("Windows CI keeps the GUI build gate", async () => {
     // Review finding (PR #97): the GUI build gate was silently dropped once; assert the
     // enhanced gate (PR #99) stays wired so broken GUI builds cannot merge unnoticed.
     const workflow = await readText(".github/workflows/ci.yml");
 
-    expect(workflow).toContain("- name: GUI lint");
-    expect(workflow).toContain("bun run lint");
     expect(workflow).toContain("- name: GUI build");
     expect(workflow).toContain("bun run build");
+  });
+
+  test("no workflow runs lint, so no lint verdict can withhold a build or a release", async () => {
+    // Lint is deliberately not a gate anywhere. ESLint stays installed and is run
+    // on demand (`bun run lint:gui`); nothing in Actions runs it.
+    //
+    // Assert against parsed steps rather than raw file text: the comments left where
+    // the lint steps used to be mention `bun run lint:gui`, so a substring check over
+    // the whole file would pass regardless of what the job actually runs.
+    const runsLint = (step: WorkflowStep): boolean =>
+      /\beslint\b|\brun\s+lint\b/.test(step.run ?? "");
+
+    for (const path of [".github/workflows/ci.yml", ".github/workflows/gui-preview.yml"]) {
+      const parsed = Bun.YAML.parse(await readText(path)) as WorkflowDocument;
+      const lintSteps = Object.entries(parsed.jobs ?? {}).flatMap(([jobName, job]) =>
+        (job.steps ?? [])
+          .filter(runsLint)
+          .map(step => `${jobName}:${step.name ?? "(unnamed)"}`),
+      );
+      expect(lintSteps, `${path} must not run lint`).toEqual([]);
+    }
+  });
+
+  test("Windows producers retain safe artifacts after failures", async () => {
+    const producers: Array<{ path: string; jobs: string[] }> = [
+      { path: ".github/workflows/ci.yml", jobs: ["test", "npm-global-smoke"] },
+      { path: ".github/workflows/release.yml", jobs: ["publish"] },
+      { path: ".github/workflows/service-lifecycle.yml", jobs: ["windows-schtasks"] },
+      { path: ".github/workflows/deploy-docs.yml", jobs: ["build"] },
+      { path: ".github/workflows/react-doctor.yml", jobs: ["react-doctor"] },
+      { path: ".github/workflows/auto-release.yml", jobs: ["release"] },
+      { path: ".github/workflows/desktop-installer.yml", jobs: ["build"] },
+      { path: ".github/workflows/gui-preview.yml", jobs: ["build"] },
+      { path: ".github/workflows/super-express-release.yml", jobs: ["release"] },
+    ];
+
+    for (const producer of producers) {
+      const workflow = Bun.YAML.parse(await readText(producer.path)) as WorkflowDocument;
+      const artifactJobs = Object.entries(workflow.jobs ?? {})
+        .filter(([, job]) => (job.steps ?? []).some(step => step.uses === uploadArtifactAction))
+        .map(([jobName]) => jobName)
+        .sort();
+      expect(artifactJobs, `${producer.path} artifact-producing jobs changed`).toEqual(
+        [...producer.jobs].sort(),
+      );
+
+      for (const jobName of producer.jobs) {
+        const job = workflow.jobs?.[jobName];
+        expect(job, `${producer.path}:${jobName} must exist`).toBeDefined();
+        expect(job?.["runs-on"], `${producer.path}:${jobName} must run only on Windows`).toBe(
+          "windows-latest",
+        );
+
+        const steps = job?.steps ?? [];
+        const uploadIndexes = steps.flatMap((step, index) =>
+          step.uses === uploadArtifactAction ? [index] : [],
+        );
+        expect(uploadIndexes.length, `${producer.path}:${jobName} must pin upload-artifact`).toBeGreaterThan(0);
+
+        for (const uploadIndex of uploadIndexes) {
+          const upload = steps[uploadIndex]!;
+          const label = `${producer.path}:${jobName}:${upload.name ?? "artifact upload"}`;
+          expectAlwaysAndNonMasking(upload, label);
+          expect(upload.with?.["if-no-files-found"], `${label} must warn when no safe file exists`).toBe(
+            "warn",
+          );
+          expect(Number(upload.with?.["retention-days"]), `${label} must use bounded retention`).toBeGreaterThan(0);
+
+          const collector = steps
+            .slice(0, uploadIndex)
+            .reverse()
+            .find(step => /^Collect\b/i.test(step.name ?? ""));
+          expect(collector, `${producer.path}:${jobName} needs a collector before its upload`).toBeDefined();
+          const collectorLabel = `${producer.path}:${jobName}:${collector?.name ?? "collector"}`;
+          expectAlwaysAndNonMasking(collector ?? {}, collectorLabel);
+          expectRunMetadata(collector ?? {}, collectorLabel);
+        }
+      }
+    }
+
+    const release = Bun.YAML.parse(await readText(".github/workflows/release.yml")) as WorkflowDocument;
+    const releaseCollector = release.jobs?.publish?.steps?.find(step => step.name === "Collect release artifacts");
+    expect(releaseCollector?.run).toContain("*.tgz");
+
+    const desktop = Bun.YAML.parse(
+      await readText(".github/workflows/desktop-installer.yml"),
+    ) as WorkflowDocument;
+    const desktopCollector = desktop.jobs?.build?.steps?.find(
+      step => step.name === "Collect installer evidence",
+    );
+    expect(desktopCollector?.run).toContain("dist-desktop");
+    expect(desktopCollector?.run).toContain(".nupkg");
+    expect(desktopCollector?.run).toContain('$_.Name -eq "RELEASES"');
   });
 
   test("stale needs-info workflow is schedule-only and least-privilege", async () => {
@@ -231,22 +313,23 @@ describe("GitHub Actions hardening", () => {
     expect(text).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
-  test("service lifecycle is least-privilege, bounded, and cannot swallow health failures", async () => {
+  test("Windows service lifecycle is least-privilege, bounded, and cannot swallow health failures", async () => {
     const workflow = await readText(".github/workflows/service-lifecycle.yml");
 
     expect(workflow).toContain("permissions:\n  contents: read");
-    // Per-SHA and never cancelled (c23ebad3): this validates a commit, and a
-    // cancelled run leaves that commit tested by nothing.
-    expect(workflow).toContain("group: service-lifecycle-${{ github.sha }}");
-    expect(workflow).toContain("cancel-in-progress: false");
-    expect(count(workflow, "timeout-minutes: 10")).toBe(3);
-    expect(count(workflow, "if: ${{ !cancelled() }}")).toBe(3);
-    expect(workflow).not.toContain("always()");
+    expect(workflow).toContain("group: service-lifecycle-${{ github.ref }}");
+    expect(workflow).toContain("cancel-in-progress: true");
+    expect(count(workflow, "timeout-minutes: 10")).toBe(1);
+    expect(count(workflow, "if: ${{ !cancelled() }}")).toBe(1);
+    expect(workflow).toContain("if: ${{ always() }}");
     expect(workflow).not.toContain('healthz || echo "healthz not ready yet"');
     expect(workflow).not.toContain("sleep 8");
-    expect(workflow).toContain("systemd service has no positive MainPID before crash test");
+    expect(workflow).toContain("windows-schtasks:");
+    expect(workflow).not.toContain("linux-systemd:");
+    expect(workflow).not.toContain("macos-launchd:");
+    expect(workflow).not.toContain("ubuntu-latest");
+    expect(workflow).not.toContain("macos-latest");
     expect(workflow).toContain("Get-ScheduledTask -TaskName opencodex-proxy -ErrorAction SilentlyContinue");
-    expect(workflow).toContain("launchd artifact or proxy survived uninstall");
     expect(workflow).toContain("scheduled task or proxy survived uninstall");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
@@ -601,7 +684,7 @@ describe("GitHub Actions hardening", () => {
     // `defaults:`, and no `<<:` merge key to reintroduce any of them sideways.
     const [, job] = jobs[0]!;
     expect(Object.keys(job).sort()).toEqual(["runs-on", "steps"]);
-    expect(job["runs-on"]).toBe("ubuntu-latest");
+    expect(job["runs-on"]).toBe("windows-latest");
 
     // Checkout trusted scripts, then run the gate. Anything more is an extra
     // privileged action nobody reviewed.
@@ -1362,7 +1445,7 @@ describe("GitHub Actions hardening", () => {
       expect(commentBody).toContain("`dev`");
       expect(commentBody).toContain("`dev2-go`");
       // Points at the documentation rather than assuming the reader knows.
-      expect(commentBody).toContain("https://lidge-jun.github.io/opencodex/contributing/");
+      expect(commentBody).toContain("https://opencodex.me/contributing/");
       // And carries the state the next run needs.
       expect(commentBody).toContain(MARKER);
       expect(commentBody).toContain('"version":1');
@@ -1915,7 +1998,13 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("timeout-minutes: 15");
     expect(workflow).toContain("timeout-minutes: 10");
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
-    expect(workflow).toContain("withastro/action@e84f40bd8d2caa9e768ec82ad30dd81f0b280853");
+    // The Pages build is deliberately explicit on Windows: the hosted Astro
+    // wrapper previously mis-rendered the root locale search JSON. Keep the
+    // replacement pinned and assert the upload action that actually feeds the
+    // deploy job rather than requiring the retired Bash wrapper.
+    expect(workflow).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
+    expect(workflow).toContain("actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9");
+    expect(workflow).not.toContain("withastro/action@");
     expect(workflow).toContain("actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
@@ -1923,32 +2012,78 @@ describe("GitHub Actions hardening", () => {
   test("issue-quality workflow rejects workflow_dispatch pull request numbers before mutation", async () => {
     const workflow = await readText(".github/workflows/enforce-issue-quality.yml");
 
-    // One job. The translation jobs are gone with GitHub Models, and their
-    // absence is asserted rather than merely true — a re-added `ai-inference`
-    // step would be a call to a retired service that answers 410, and a red
-    // check on every issue opened.
-    expect(workflow).not.toContain("ai-inference");
-    expect(workflow).not.toContain("models: read");
-    expect(workflow).not.toMatch(/\n {2}translate:/);
-    expect(workflow).not.toMatch(/\n {2}translate-comment:/);
+    expect(workflow).toContain("issue_comment:");
+    expect(workflow).toContain("Translate non-English issue comments");
+    expect(workflow).toContain("shouldTranslateComment");
+    expect(workflow).toContain("buildTranslatedCommentBody");
+    expect(workflow).toContain("github.rest.issues.updateComment");
+    expect(workflow).toContain("group: issue-translation-${{ github.event.issue.number }}");
+    expect(workflow).not.toContain("issue-comment-translation-${{ github.event.comment.id }}");
+    expect(workflow).toContain("if: github.event_name == 'issue_comment'");
+    expect(workflow).toMatch(
+      /translate:\s*\n\s*name: Translate non-English issues\s*\n\s*if: github\.event_name == 'issues' \|\| github\.event_name == 'workflow_dispatch'/,
+    );
     expect(workflow).toMatch(
       /validate:\s*\n\s*if: github\.event_name == 'issues' \|\| github\.event_name == 'workflow_dispatch'/,
     );
 
+    const commentJob = workflow.split(/\n {2}translate-comment:\n/)[1]!.split(/\n {2}[a-zA-Z]/)[0]!;
+    expect(commentJob).toContain("parse-issue-translation-response.cjs");
+    expect(commentJob).toContain("Apply inline comment translation");
+    expect(commentJob).toContain("continue-on-error: true");
+    expect(commentJob).toContain("Record comment translation availability");
+    expect(commentJob).toContain("steps.ai.outcome == 'success'");
+    expect(commentJob).toContain("isPreparedSourceStillCurrent");
+    expect(commentJob).toContain("updateComment");
+    expect(commentJob).toContain("requires_translation == 'true'");
+    expect(commentJob).toContain("group: issue-translation-${{ github.event.issue.number }}");
+    expect(commentJob).toContain("# Required to rewrite the triggering issue comment in place.");
+    expect(commentJob).toContain("sourceKey:");
+    // Same fail-closed parse → apply gate as the issue path.
+    const commentParse = commentJob
+      .split("- name: Parse AI response")[1]!
+      .split("- name: Apply inline comment translation")[0]!;
+    expect(commentParse).toContain("parse-issue-translation-response.cjs");
+    const commentRun = commentParse.split(/\n\s*run:\s*/)[1];
+    expect(commentRun).toBeDefined();
+    expect(commentRun!).not.toContain("${{");
+    const commentApply = commentJob
+      .split("- name: Apply inline comment translation")[1]!
+      .split("- name: Persist comment translation control state")[0]!;
+    const guardAt = commentApply.indexOf("isPreparedSourceStillCurrent({");
+    const updateAt = commentApply.indexOf("updateComment");
+    const missingAt = commentApply.indexOf("missingRequiredTranslationFields({");
+    expect(guardAt).toBeGreaterThanOrEqual(0);
+    expect(updateAt).toBeGreaterThanOrEqual(0);
+    expect(missingAt).toBeGreaterThanOrEqual(0);
+    expect(missingAt).toBeLessThan(updateAt);
+    expect(guardAt).toBeLessThan(updateAt);
+    expect(commentApply).toContain("omitted required field(s)");
+
     // Job-scoped permissions only (no top-level issues:write; no actions:write).
     expect(workflow).toMatch(
-      /jobs:\s*\n\s*validate:[\s\S]*?permissions:\s*\n\s*contents: read\s*\n\s*#.*\n\s*issues: write/,
+      /jobs:\s*\n\s*translate:[\s\S]*?permissions:\s*\n(?:\s*#.*\n)*\s*contents: read\s*\n(?:\s*#.*\n)*\s*issues: write\s*\n(?:\s*#.*\n)*\s*models: read/,
+    );
+    const translateJob = workflow.split(/\n {2}translate:\n/)[1]!.split(/\n {2}[a-zA-Z]/)[0]!;
+    expect(translateJob).not.toMatch(/actions:\s*write/);
+    expect(workflow).toMatch(
+      /jobs:\s*\n\s*translate:[\s\S]*?validate:[\s\S]*?permissions:\s*\n\s*contents: read\s*\n\s*#.*\n\s*issues: write/,
     );
     const beforeJobs = workflow.split(/jobs:\s*\n/)[0]!;
     expect(beforeJobs).not.toMatch(/^\s*permissions:/m);
-    const validateJob = workflow.split(/\n {2}validate:\n/)[1]!;
-    expect(validateJob).not.toMatch(/actions:\s*write/);
 
-    // Non-cancelling per-issue concurrency at workflow scope.
+    // Non-cancelling per-issue concurrency at workflow and translate-job scope.
     expect(workflow).toContain("group: issue-quality-${{ github.event.issue.number || inputs.issue_number }}");
-    expect(beforeJobs).toMatch(
+    expect(workflow).toContain("group: issue-translation-${{ github.event.issue.number || inputs.issue_number }}");
+    const workflowConcurrency = workflow.split(/jobs:\s*\n/)[0]!;
+    expect(workflowConcurrency).toMatch(
       /concurrency:\s*\n\s*group: issue-quality-[^\n]*\n\s*cancel-in-progress:\s*false/,
     );
+    expect(translateJob).toMatch(
+      /concurrency:\s*\n\s*group: issue-translation-[^\n]*\n\s*cancel-in-progress:\s*false/,
+    );
+    expect(translateJob).toContain("translation-state-degraded");
+    expect(translateJob).toContain("core.summary");
 
     // Trusted scripts always come from the repository default branch.
     const checkoutStep = workflow
@@ -1962,12 +2097,6 @@ describe("GitHub Actions hardening", () => {
       .split("- name: Validate issue quality")[1]!
       .split("script: |")[1]!
       .split(/\n {6}- name:/)[0]!;
-
-    // The translation *reader* moved into issue-quality.cjs and is still needed:
-    // issues translated before the retirement still carry the block, and
-    // validating generated text as the reporter's own would fail a good issue.
-    expect(script).toContain("stripTranslationBlock");
-    expect(script).not.toContain("issue-translation.cjs");
 
     // Invalid issue numbers fail before any issues API call.
     const invalidNumberIdx = script.indexOf("Invalid workflow_dispatch issue_number:");
@@ -1995,6 +2124,99 @@ describe("GitHub Actions hardening", () => {
     expect(prGuardIdx).toBeLessThan(firstMutationIdx);
     expect(script).toContain("if (pullRequestFailure) {");
     expect(script).toContain("core.setFailed(pullRequestFailure);");
+
+    const translateScript = workflow
+      .split("- name: Prepare translation")[1]!
+      .split("- name: Detect and translate")[0]!;
+    const branchGuardIdxTranslate = translateScript.indexOf(
+      "rejectsWorkflowDispatchNonDefaultBranch(",
+    );
+    const issuesGetIdxTranslate = translateScript.indexOf("github.rest.issues.get({");
+    expect(branchGuardIdxTranslate).toBeGreaterThan(-1);
+    expect(issuesGetIdxTranslate).toBeGreaterThan(-1);
+    expect(branchGuardIdxTranslate).toBeLessThan(issuesGetIdxTranslate);
+    expect(translateScript).toContain("resolveControlState");
+    expect(translateScript).toContain("Never trust author-editable issue body markers");
+
+    const applyScript = workflow
+      .split("- name: Apply inline translation")[1]!
+      .split("- name: Persist translation control state")[0]!;
+    const staleGuardIdx = applyScript.indexOf("isPreparedSourceStillCurrent({");
+    const issueUpdateIdx = applyScript.indexOf("github.rest.issues.update(");
+    expect(staleGuardIdx).toBeGreaterThan(-1);
+    expect(issueUpdateIdx).toBeGreaterThan(-1);
+    expect(staleGuardIdx).toBeLessThan(issueUpdateIdx);
+    expect(applyScript).toContain("persistTranslationControlState");
+    expect(applyScript).toContain("Translation control state not persisted");
+    expect(applyScript).toContain("sourceComplete");
+    expect(applyScript).toContain("source remains retryable");
+    expect(applyScript).toContain("missingRequiredTranslationFields");
+    expect(applyScript).toContain("omitted required field(s)");
+    expect(applyScript).toMatch(/sourceComplete,\s*\n\s*\}/);
+    expect(applyScript.indexOf("missingRequiredTranslationFields({")).toBeLessThan(
+      applyScript.indexOf("github.rest.issues.update("),
+    );
+
+    const parseStep = workflow
+      .split("- name: Parse AI response")[1]!
+      .split("- name: Apply inline translation")[0]!;
+    expect(parseStep).toContain("parse-issue-translation-response.cjs");
+    expect(parseStep).not.toContain("node -e");
+    expect(parseStep).not.toContain("node <<");
+    // AI output must stay in env, never interpolated into the shell run script.
+    expect(parseStep.split(/\n\s*run:\s*/)[1] || "").not.toContain("${{");
+
+    const persistStep = workflow
+      .split("- name: Persist translation control state")[1]!
+      .split(/\n {2}[a-zA-Z]/)[0]!;
+    expect(persistStep).toContain("always()");
+    expect(persistStep).toContain("requires_translation != 'true'");
+    expect(persistStep).toContain("persistTranslationControlState");
+    expect(persistStep).toContain("SOURCE_COMPLETE");
+    expect(persistStep).toContain("detectedLanguageForControlPersist");
+    expect(persistStep).toContain('const sourceComplete = process.env.SOURCE_COMPLETE === "true"');
+    expect(persistStep).toMatch(/sourceComplete,\s*\n\s*\}/);
+    // Missing DETECTED_LANG on incomplete/skipped parse must not default to English.
+    expect(persistStep).not.toContain('DETECTED_LANG || "English"');
+    expect(persistStep).not.toContain("DETECTED_LANG || 'English'");
+    expect(persistStep).not.toContain("silent_state");
+    expect(persistStep).not.toContain("cleanup_comment_ids");
+    expect(workflow).not.toContain("Save translation control state cache");
+    expect(workflow).not.toContain("Remove migrated English control comments");
+    expect(workflow).not.toContain("Restore translation control state cache");
+
+    const commentPersist = workflow
+      .split("- name: Persist comment translation control state")[1]!
+      .split(/\n {2}[a-zA-Z]/)[0]!;
+    expect(commentPersist).toContain('const sourceComplete = process.env.SOURCE_COMPLETE === "true"');
+    expect(commentPersist).toContain("detectedLanguageForControlPersist");
+    expect(commentPersist).toMatch(/sourceComplete,\s*\n\s*\}/);
+    expect(commentPersist).not.toContain('DETECTED_LANG || "English"');
+    expect(commentPersist).not.toContain("DETECTED_LANG || 'English'");
+    const commentApplyStep = workflow
+      .split("- name: Apply inline comment translation")[1]!
+      .split("- name: Persist comment translation control state")[0]!;
+    expect(commentApplyStep).toContain("sourceComplete");
+    expect(commentApplyStep).toContain("source remains retryable");
+    expect(commentApplyStep).toContain("missingRequiredTranslationFields");
+    expect(commentApplyStep).toContain("omitted required field(s)");
+    const commentMissingAt = commentApplyStep.indexOf("missingRequiredTranslationFields({");
+    const commentUpdateAt = commentApplyStep.indexOf("updateComment");
+    expect(commentMissingAt).toBeGreaterThanOrEqual(0);
+    expect(commentUpdateAt).toBeGreaterThanOrEqual(0);
+    expect(commentMissingAt).toBeLessThan(commentUpdateAt);
+
+    // Helper contract: always-visible bookkeeping; sticky oldest upsert; body non-authoritative.
+    const helperSrc = await readText(".github/scripts/issue-translation.cjs");
+    expect(helperSrc).toContain("shouldOmitVisibleBookkeeping");
+    expect(helperSrc).toContain("findStickyControlComment");
+    expect(helperSrc).toContain("detectedLanguageForControlPersist");
+    expect(helperSrc).toContain("Automated translation bookkeeping");
+    expect(helperSrc).toContain("canonical comment first");
+    expect(helperSrc).toContain("Authoritative control state comes only from verified bot-owned comments");
+    expect(helperSrc).toContain("sourceComplete");
+    expect(helperSrc).not.toContain("writeFileControlState");
+    expect(helperSrc).not.toContain(".ocx-translation-state");
   });
 
   test("React Doctor workflow is SHA-pinned, engine-pinned, gating, and read-only", async () => {
@@ -2034,9 +2256,12 @@ describe("GitHub Actions hardening", () => {
     expect(rootPkg).not.toContain("react-doctor@latest");
     expect(doctorConfig).toContain('"blocking": "warning"');
     expect(rootPkg).toContain('"doctor:gui:if-changed": "bun scripts/doctor-gui-if-changed.ts"');
+    // `lint:gui` survives as the deliberate on-demand entry point, but it is not
+    // wired into `prepush`: lint gates nothing, locally or in CI.
     expect(rootPkg).toContain('"lint:gui": "cd gui && bun run lint"');
+    expect(rootPkg).not.toContain("bun run lint:gui && ");
     // Gating steps include React Doctor after privacy scan on gui/ pushes.
-    expect(rootPkg).toContain("bun run typecheck && bun run lint:gui && bun run test");
+    expect(rootPkg).toContain("bun run typecheck && bun run test");
     expect(rootPkg).toContain("bun run privacy:scan && bun run doctor:gui:if-changed");
   });
 });

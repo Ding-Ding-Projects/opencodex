@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readPackageIdentity } from "../lib/build-identity";
 
 const repoRoot = dirname(fileURLToPath(new URL("../../package.json", import.meta.url)));
 
@@ -96,6 +97,62 @@ const helpEntries: Record<string, HelpEntry> = {
   login: { usage: "ocx login <provider>", summary: "OAuth or API-key login for a provider." },
   logout: { usage: "ocx logout <provider>", summary: "Remove a stored provider login." },
   gui: { usage: "ocx gui", summary: "Open the opencodex dashboard." },
+  changelog: {
+    usage: "ocx changelog [--from <date>] [--to <date>] [--search <text>] [--regex] [--limit <n>] [--json]",
+    summary: "Show released versions and their changes.",
+    details: [
+      "--from/--to       Inclusive ISO date range (YYYY-MM-DD).",
+      "--search <text>   Case-insensitive text search; add --regex for a JavaScript regex.",
+      "--limit <n>       Maximum releases (default 20, 0 means all).",
+      "--json            Machine-readable output.",
+    ],
+  },
+  export: {
+    usage: "ocx export <path> --yes | ocx export --history [--json] | ocx export data <dataset> [--format <format>] [--out <path>] [--list]",
+    summary: "Export data or a full state backup; full state exports contain plaintext secrets.",
+    details: [
+      "data <dataset>    Export a redacted dashboard dataset; use --list to see datasets and formats.",
+      "--history         List local account/config snapshots.",
+      "<path> --yes      Export complete config, account, and auth state, including plaintext secrets.",
+      "",
+      "The full-state form requires a private mode-0600 file and cannot write to stdout.",
+      "Store its output encrypted and never commit or upload it.",
+    ],
+  },
+  host: {
+    usage: "ocx host <status|enable|disable> [--hostname <addr>] [--new-key [name]] [--yes] [--json]",
+    summary: "Expose the authenticated proxy and dashboard to trusted devices on your network.",
+    details: [
+      "status    Show the bind address, credential state, and URLs for other devices.",
+      "enable    Bind to the network. Requires --yes and a data-plane credential.",
+      "disable   Return to loopback (this machine only).",
+      "--new-key [name] generates a credential; name is only a short label, never a secret value.",
+      "",
+      "A remote dashboard must authenticate with that remote proxy's ADMIN token.",
+      "The command never accepts that token (or any credential) in argv; enter it only in the dashboard prompt.",
+      "Direct HTTP is suitable only on a trusted LAN; prefer an SSH tunnel for untrusted links.",
+    ],
+  },
+  launch: {
+    usage: "ocx launch [list|<target>] [--json]",
+    summary: "Open an installed agent CLI or desktop app.",
+    details: [
+      "list      Show the fixed catalog and installation state (the safe default).",
+      "<target>  Launch one catalog id; arbitrary executable paths and arguments are not accepted.",
+    ],
+  },
+  terminal: {
+    usage: "ocx terminal [list|run <preset>] [--command \"...\"] [--wait <ms>] [--json]",
+    summary: "Run a command through a local opencodex terminal session.",
+    details: [
+      "list                 Show the fixed preset catalog (the safe default).",
+      "run <preset>         Start one local session, collect output, then close it.",
+      "--command \"...\"    Optional command sent to the session.",
+      "--wait <ms>          Collection time from 1 to 120000 (default 4000).",
+      "",
+      "Command-line arguments may be visible to other local processes. Never put secrets in --command.",
+    ],
+  },
   update: {
     usage: "ocx update [--tag latest|preview]",
     summary: "Update opencodex. Preview installs stay on the preview tag unless overridden.",
@@ -160,10 +217,131 @@ const helpEntries: Record<string, HelpEntry> = {
     usage: "ocx observe <logs|usage|storage|memory|debug|claude-inbound|injection> ...",
     summary: "Inspect proxy requests, usage, storage, memory, and debug data.",
   },
+  narrator: {
+    usage: "ocx narrator <status|voices|speak> [--source <local|edge|all>] [--lang <tag>] [--voice <name>] [--edge] [--json]",
+    summary: "List narrator voices and speak a line without a browser.",
+    details: [
+      "status    Installed voices, the synthesis bounds, and where the narrator's settings actually live.",
+      "voices    List installed platform voices; --source edge|all adds the Microsoft Edge online catalogue.",
+      "speak     Synthesize one line to an MP3; --out <path> or --out - for stdout.",
+      "--lang <tag> filters by language (zh matches zh-HK and zh-CN); --search matches names and locales.",
+      "--rate and --pitch are multipliers from 0.5 to 2, where 1 is the voice's own normal delivery.",
+      "",
+      "--edge is required by every path that reaches the network, and is never implied.",
+      "Edge online voices send the text you pass to Microsoft over the internet every time they speak;",
+      "installed platform voices stay on this computer and need no network at all.",
+      "That service is the undocumented one Edge uses to read pages aloud and can change or be blocked",
+      "at any time, so a sudden refusal is the service refusing this client rather than a fault in your text.",
+      "",
+      "Whether the narrator speaks, its language, and the voice chosen per language are the dashboard's own",
+      "browser-profile state, not server configuration, so this command reports them as unreadable rather",
+      "than guessing. Change them in the dashboard under Language & voice.",
+    ],
+  },
+  "school-mode": {
+    usage: "ocx school-mode <status|enable|disable|credential|rename> ...",
+    summary: "Read and change the shared School Mode record without a browser.",
+    details: [
+      "status                    Whether the mode is on, the name in use, whether an unlock credential",
+      "                          exists, whether the shared record is readable, and the exact folder",
+      "                          that resets everything if deleted. Never reports anything about the",
+      "                          credential's value, length or composition.",
+      "enable                    Turn it on. Refused until an unlock credential exists, because there",
+      "                          would otherwise be no way to turn it back off.",
+      "disable                   Turn it off. The secret is read from STANDARD INPUT, never an",
+      "                          argument: an argument reaches the process list, the shell history and",
+      "                          any log that records a command line.",
+      "credential                Set or change the unlock secret; both are read from standard input.",
+      "                          Changing an existing one requires the current one.",
+      "rename <name> | --clear   The name every surface must use, or restore the shipped one.",
+      "",
+      "Unlike ocx narrator and ocx schedule, these are real answers rather than signposts: School",
+      "Mode's whole purpose is one record shared across apps, so it lives on disk and the server owns",
+      "it. It is a user-experience lock, not a security boundary — deleting the folder resets it.",
+    ],
+  },
+  schedule: {
+    usage: "ocx schedule <status|list|show|active|test-api|test-ha|ha-token> ...",
+    summary: "Headless checks for scheduled-settings rules, without a browser.",
+    details: [
+      "status/list/show/active   Rules live only in the dashboard's own browser profile (local storage",
+      "                          key ocx-m3:schedule), so these report that plainly and name where to",
+      "                          manage rules instead — the same shape ocx narrator status uses for the",
+      "                          narrator's own browser-only preferences.",
+      "test-api <url>            Test an api-sourced rule's endpoint through the same server-side",
+      "                          resolve-api route the dashboard uses (SSRF-checked, bounded, https or",
+      "                          loopback http only).",
+      "test-ha --base-url <url> --entity-id <id> --token-ref <ref>",
+      "                          Test a Home Assistant-gated rule's entity through the same server-side",
+      "                          ha-state route the dashboard uses.",
+      "ha-token status --token-ref <ref>",
+      "                          Whether a Home Assistant token is stored for a rule — never its value.",
+      "ha-token clear --token-ref <ref>",
+      "                          Delete a stored Home Assistant token.",
+      "",
+      "There is deliberately no ha-token set: storing a token requires the plaintext value, and this",
+      "command never accepts, prints, or logs a secret. Type it once into the dashboard's own password",
+      "field under Scheduled settings.",
+    ],
+  },
+  pdf: {
+    usage: "ocx pdf <inspect|metadata|split|merge|extract|reorder|rotate> ...",
+    summary: "Inspect, split, merge, extract, reorder, rotate and edit metadata on local PDF files.",
+    details: [
+      "inspect <path>            Page count, per-page size/rotation, metadata, and capability boundaries",
+      "                          (not-a-pdf/malformed/encrypted/bounds-exceeded) — the same disclosure the",
+      "                          dashboard's PDF tools page shows before any write.",
+      "metadata read <path>      Print title/author/subject/keywords/creator/producer/dates.",
+      "metadata write <path> --destination <path> [--title ...] [--author ...] ...",
+      "                          Write only the fields given; every other field is left exactly as it was.",
+      "split <path> --ranges 1-2,3-5 --destinations a.pdf,b.pdf",
+      "                          One output file per range, in the same order as --ranges/--destinations.",
+      "merge --sources a.pdf,b.pdf --destination out.pdf",
+      "                          Concatenate every source's pages, in the order given.",
+      "extract <path> --pages 3,1,2 --destination out.pdf",
+      "                          Pull the listed pages into one new PDF, in the order listed (repeats allowed).",
+      "reorder <path> --order 3,1,2 --destination out.pdf",
+      "                          Every existing page exactly once, in the new order.",
+      "rotate <path> --rotations 1:90,2:180 --destination out.pdf [--relative]",
+      "                          Set (or, with --relative, add to) each listed page's rotation.",
+      "",
+      "Every mutating command requires --acknowledge-signed when the source carries a digital signature —",
+      "pdf-lib cannot preserve one, so an edit always invalidates it, and this flag is the caller confirming",
+      "it saw that disclosure. Encrypted sources are refused outright: there is no password-input channel.",
+      "Every write is atomic and is reopened from disk to confirm the actual page order, count, rotation",
+      "and metadata match the request before the command reports success; a mismatch deletes the output",
+      "and reports the exact failure. Local-machine-gated like ocx export data --open-vscode: refused the",
+      "instant the proxy is reachable from the LAN.",
+    ],
+  },
+  convert: {
+    usage: "ocx convert <catalog|detect> ...",
+    summary: "The universal file converter's categorized adapter catalogue and byte-level file detection.",
+    details: [
+      "catalog                    Every known format across all eight categories, and whether it is bundled",
+      "                          and enabled right now or disabled with its exact missing dependency.",
+      "detect <path>               Byte-level detection of a local file — magic numbers and bounded text",
+      "                          heuristics only, never a filename extension or claimed content-type.",
+      "",
+      "Only the Documents/PDF family is actually enabled today, adopting the seven operations ocx pdf",
+      "already implements (see 'ocx pdf'). Every other category is listed honestly as disabled, naming",
+      "the real dependency it is missing, rather than hidden from the catalogue. Local-machine-gated like",
+      "ocx pdf: refused the instant the proxy is reachable from the LAN.",
+    ],
+  },
   logs: { usage: "ocx logs [filters] [--follow] [--json|--jsonl]", summary: "Alias of ocx observe logs." },
   usage: { usage: "ocx usage [--range <7d|30d|all>] [--surface <all|codex|claude|grok>] [--json]", summary: "Alias of ocx observe usage." },
   storage: { usage: "ocx storage [--json]", summary: "Alias of ocx observe storage." },
   memory: { usage: "ocx memory [--json]", summary: "Alias of ocx observe memory." },
+  "memory-sync": {
+    usage: "ocx memory-sync <status|install|uninstall|profile> ...",
+    summary: "Synchronize canonical global agent memory or inspect project profiles without injecting them.",
+    details: [
+      "Repository options: --repo PATH, OPENCODEX_GLOBAL_MEMORY_REPO, or ../agent-global-memory from a source checkout.",
+      "Mutations require --yes unless --dry-run is supplied. The repository origin must be Ding-Ding-Projects/agent-global-memory.",
+      "Profiles: ocx memory-sync profile list|show <slug> [--json] (read-only project-scoped reference material).",
+    ],
+  },
   access: {
     usage: "ocx access <key|endpoints|models|test> ...",
     summary: "Manage OpenCodex admission API keys and inspect external endpoints.",
@@ -171,63 +349,6 @@ const helpEntries: Record<string, HelpEntry> = {
   "api-key": { usage: "ocx api-key <list|create|remove> ...", summary: "Alias of ocx access key." },
   grok: { usage: "ocx grok <status|exclude|include|set|clear|apply> ...", summary: "Manage and apply the Grok Build model fence." },
   integration: { usage: "ocx integration <claude|grok> ...", summary: "Manage supported client integrations." },
-  export: { usage: "ocx export <path|-> --yes  |  ocx export --history", summary: "Export config + accounts + auth (SECRETS INCLUDED), or list account-change snapshots." },
-  host: {
-    // This is the ONLY help text `ocx host --help` can reach: cli/index.ts routes
-    // any help flag into printSubcommandUsage(command) before the command runs.
-    usage: "ocx host <status|enable|disable|token> [--hostname <addr>] [--new-key [name]] [--key <value>] [--yes] [--json]",
-    summary: "Expose the proxy and dashboard to other devices on your network.",
-    details: [
-      "status    Show the bind address, credential state, and the URLs other devices use.",
-      "enable    Bind to the network. Requires --yes and a data-plane credential.",
-      "disable   Return to loopback (this machine only).",
-      "token     Legacy no-op: the dashboard and /api/* no longer use an ADMIN token.",
-      "",
-      "--hostname <addr>  Bind address for enable (default: 0.0.0.0, all interfaces).",
-      "--new-key [name]   Generate a data-plane API key and print it once.",
-      "--key <value>      Store a user-chosen data-plane key (>= 12 chars, no whitespace).",
-      "                   Custom keys sit in plaintext in config.json — never reuse a password.",
-      "--yes              Confirm that the proxy becomes reachable by other devices.",
-      "--json             Machine-readable output.",
-      "",
-      "Only use this on a network you trust. Anyone who can reach the port and holds the",
-      "key can drive the proxy and every provider account behind it.",
-    ],
-  },
-  launch: {
-    usage: "ocx launch [list|<target>] [--json]",
-    summary: "Open an agent CLI or its desktop app (Codex, Grok, Claude).",
-    details: [
-      "list      Show every target and whether it is installed on this machine (the default).",
-      "<target>  Launch one target by id, e.g. codex-cli, claude-desktop, grok-cli.",
-      "",
-      "--json    Machine-readable output.",
-      "",
-      "Targets are a fixed catalog resolved against PATH and known install locations, so a",
-      "target that is not installed is reported rather than guessed at. No console window is",
-      "ever created: a CLI opens in a real terminal application, and a machine without one is",
-      "told so instead of getting a legacy console popup.",
-    ],
-  },
-  terminal: {
-    usage: "ocx terminal [list|run <preset>] [--command \"...\"] [--wait <ms>] [--json]",
-    summary: "Run a command through an opencodex terminal session.",
-    details: [
-      "list                Show every preset (the default).",
-      "run <preset>        Start a session, optionally send one command, print the output, and",
-      "                    close it again.",
-      "",
-      "--command \"...\"     The command to send.",
-      "--wait <ms>         How long to collect output before printing (default 4000, max 120000).",
-      "--json              Machine-readable output.",
-      "",
-      "You are already in a terminal, so this is not trying to be one. It exists for the",
-      "scriptable half of the dashboard's Terminal screen: the session runs where opencodex",
-      "runs. Sessions are piped rather than pseudo-terminals, so a full-screen TUI will not",
-      "render — non-interactive commands work normally.",
-    ],
-  },
-  changelog: { usage: "ocx changelog [--from <date>] [--to <date>] [--search <text>] [--regex] [--limit <n>] [--json]", summary: "Show released versions and their changes." },
   system: {
     usage: "ocx system <status|settings|startup|diagnostics|sync|update> ...",
     summary: "Manage headless runtime settings, startup, sync, diagnostics, and updates.",
@@ -313,7 +434,15 @@ function packageVersion(): string {
 }
 
 export function printVersion(): void {
-  console.log(`opencodex ${packageVersion()}`);
+  // The package name rides along on this same line, kept single-line and
+  // script-friendly (tests parse the leading "opencodex <version>" with a
+  // regex and require exactly one output line): a user with more than one
+  // `ocx` on their machine — a stale global install, a different fork — can
+  // tell which npm package this one actually is without a second command.
+  // `ocx doctor` carries the fuller build/commit identity where multi-line
+  // output is safe.
+  const { name } = readPackageIdentity();
+  console.log(`opencodex ${packageVersion()} (${name})`);
 }
 
 export function printUsage(): void {
@@ -341,6 +470,11 @@ Usage:
   ocx login <provider>        OAuth or API-key provider login
   ocx logout <provider>       Remove a stored OAuth login
   ocx gui                     Open the opencodex dashboard
+  ocx changelog [opts]        Show released versions and their changes
+  ocx export <sub>            Export dashboard data or a confirmed full-state backup
+  ocx host <sub>              Configure trusted-LAN remote access
+  ocx launch [target]         Open an installed agent CLI or desktop app
+  ocx terminal <sub>          Run a command through a local opencodex terminal session
   ocx update [--tag <tag>]    Update opencodex (keeps preview installs on @preview)
   ocx restart                  Stop and restart the proxy
   ocx v2 <sub>                multi_agent_v2 surface (status|on|off|mode|threads)
@@ -351,6 +485,11 @@ Usage:
   ocx combo <sub>             Combo failover/round-robin routing
   ocx agent <sub>             Subagents, injection, effort caps, and sidecars
   ocx observe <sub>           Logs, usage, storage, memory, and debug data
+  ocx narrator <sub>          Narrator voices and speech (installed voices; --edge adds Microsoft's)
+  ocx schedule <sub>          Headless checks for scheduled-settings rules (status|test-api|test-ha|ha-token)
+  ocx pdf <sub>               Inspect, split, merge, extract, reorder, rotate, edit metadata on local PDFs
+  ocx convert <sub>           File converter catalogue and byte-level detection (catalog|detect)
+  ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply
   ocx changelog [opts]        Released versions and their changes

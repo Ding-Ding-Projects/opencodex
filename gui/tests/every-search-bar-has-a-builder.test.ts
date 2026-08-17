@@ -82,10 +82,33 @@ function searchFieldKeys(source: string): string[] {
 
 function builderCount(source: string): number {
   // `SearchField` is the wrapper that already contains a `RegexBuilderButton`,
-  // so either one satisfies the rule.
+  // and `MenuFilterField` is the menu-flavoured wrapper around `SearchField`,
+  // so any of the three satisfies the rule.
+  //
+  // `MenuFilterField` was a real blind spot until a caller passed it a
+  // `placeholder`. Every earlier adopter left the placeholder to the
+  // component's own default, so no `placeholder={t("…search…")}` ever appeared
+  // in their source and the count never looked at them. The first file to name
+  // its own placeholder — `shell/TabGroupPicker.tsx` — was therefore reported as
+  // a search bar with zero builders, when it renders a builder through two
+  // layers of wrapper. Left unfixed, the cheapest way to satisfy this test would
+  // have been to delete the placeholder, which is the "copy-paste to satisfy a
+  // test" outcome this file's own header warns against.
+  //
+  // The allowance is not free: the test below proves `MenuFilterField` really
+  // does render a `SearchField`, so it cannot decay into a hollow excuse.
   return (source.match(/<RegexBuilderButton/g) ?? []).length
-    + (source.match(/<SearchField/g) ?? []).length;
+    + (source.match(/<SearchField/g) ?? []).length
+    + (source.match(/<MenuFilterField/g) ?? []).length;
 }
+
+// `MenuFilterField` counts as a builder above only because it wraps one. If it
+// ever stops rendering `SearchField`, every menu counting on it silently loses
+// its builder and nothing else in this file would notice.
+test("MenuFilterField still renders the SearchField it is counted for", () => {
+  const source = readFileSync(join(SRC, "shell", "MenuFilterField.tsx"), "utf8");
+  expect(source.includes("<SearchField")).toBe(true);
+});
 
 test("no search bar is rendered without a regex builder beside it", () => {
   const offenders: string[] = [];

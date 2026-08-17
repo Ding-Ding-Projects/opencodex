@@ -102,6 +102,10 @@ export async function handleHostCommand(args: string[], io: HostCommandIo = {}):
   const config = loadConfig();
 
   if (action === "status") {
+    if (args.slice(1).some(arg => arg.startsWith("--") && arg !== "--json")) {
+      console.error("ocx host: status accepts only --json.");
+      return 2;
+    }
     printStatus(describeHost(config), json);
     return 0;
   }

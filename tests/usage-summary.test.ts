@@ -19,6 +19,11 @@ function entry(overrides: Partial<PersistedUsageEntry> & { ts: number }): Persis
     ...(rest.usage ? { usage: rest.usage } : {}),
     ...(rest.totalTokens !== undefined ? { totalTokens: rest.totalTokens } : {}),
     ...(rest.attempts ? { attempts: rest.attempts } : {}),
+    ...(rest.cacheRetention ? { cacheRetention: rest.cacheRetention } : {}),
+    ...(rest.promptInputTokens !== undefined ? { promptInputTokens: rest.promptInputTokens } : {}),
+    ...(rest.requestedServiceTier ? { requestedServiceTier: rest.requestedServiceTier } : {}),
+    ...(rest.configuredServiceTier ? { configuredServiceTier: rest.configuredServiceTier } : {}),
+    ...(rest.responseServiceTier ? { responseServiceTier: rest.responseServiceTier } : {}),
   };
 }
 
@@ -53,27 +58,32 @@ describe("parseUsageSurface", () => {
 });
 
 describe("summarizeUsage", () => {
-  test("aggregates estimated cost via model-level prices and counts unpriced rows", () => {
+  test("prices exact direct API rows and counts subscriptions and unknown models by reason", () => {
     const entries: PersistedUsageEntry[] = [
-      // priced via openai bundle model-level price (5/30): cost = (100*5 + 10*30)/1e6 = 0.0008
       entry({
         ts: FIXED_NOW - 1000,
-        provider: "openai",
-        model: "gpt-5.5",
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
         usageStatus: "reported",
         usage: { inputTokens: 100, outputTokens: 10 },
       }),
-      // priced via anthropic exact bundle (fable-5: 10/50/1/12.5)
       entry({
         ts: FIXED_NOW - 2000,
-        provider: "anthropic",
+        provider: "anthropic-apikey",
         model: "claude-fable-5",
+        cacheRetention: "short",
         usageStatus: "reported",
         usage: { inputTokens: 200, outputTokens: 20 },
       }),
-      // unpriced: no price anywhere
       entry({
         ts: FIXED_NOW - 3000,
+        provider: "anthropic",
+        model: "claude-fable-5",
+        usageStatus: "reported",
+        usage: { inputTokens: 5, outputTokens: 1 },
+      }),
+      entry({
+        ts: FIXED_NOW - 4000,
         provider: "nope",
         model: "nope-model",
         usageStatus: "reported",
@@ -82,13 +92,279 @@ describe("summarizeUsage", () => {
     ];
     const all = summarizeUsage(entries, "30d", FIXED_NOW);
     expect(all.summary.pricedRequests).toBe(2);
-    expect(all.summary.unpricedRequests).toBe(1);
-    const expected = (100 * 5 + 10 * 30) / 1e6 + (200 * 10 + 20 * 50) / 1e6;
+    expect(all.summary.unpricedRequests).toBe(2);
+    expect(all.summary.unpricedReasons).toEqual({
+      pricing_product_unpriced: 1,
+      price_unmatched: 1,
+    });
+    const expected = (100 * 0.14 + 10 * 0.28) / 1e6 + (200 * 10 + 20 * 50) / 1e6;
     expect(all.summary.estimatedCostUsd).toBeCloseTo(expected, 9);
-    // range filtering also applies to the cost sum
+    expect(all.models.find(row => row.provider === "deepseek")?.estimatedCostUsd).toBeGreaterThan(0);
+    expect(all.models.find(row => row.provider === "anthropic-apikey")?.estimatedCostUsd).toBeGreaterThan(0);
+    expect(all.providers.find(row => row.provider === "deepseek")?.estimatedCostUsd).toBeGreaterThan(0);
+    expect(all.providers.find(row => row.provider === "anthropic-apikey")?.estimatedCostUsd).toBeGreaterThan(0);
     const none = summarizeUsage(entries, "7d", FIXED_NOW + 8 * 86_400_000);
     expect(none.summary.estimatedCostUsd).toBe(0);
     expect(none.summary.pricedRequests).toBe(0);
+  });
+
+  test("adds non-billing OpenAI and Anthropic subscription equivalents without altering direct totals", () => {
+    const entries: PersistedUsageEntry[] = [
+      entry({
+        ts: FIXED_NOW - 1,
+        provider: "openai-apikey",
+        model: "gpt-5.6-luna",
+        usageStatus: "reported",
+        usage: { inputTokens: 1_000, outputTokens: 100 },
+        promptInputTokens: 1_000,
+      }),
+      entry({
+        ts: FIXED_NOW - 2,
+        provider: "openai-pabcdef",
+        model: "gpt-5.6-luna",
+        usageStatus: "reported",
+        usage: { inputTokens: 2_000, outputTokens: 200 },
+        promptInputTokens: 2_000,
+      }),
+      entry({
+        ts: FIXED_NOW - 3,
+        provider: "anthropic-pabcdef",
+        model: "claude-opus-5",
+        usageStatus: "reported",
+        usage: { inputTokens: 1_000, outputTokens: 100 },
+      }),
+      entry({
+        ts: FIXED_NOW - 4,
+        provider: "anthropic",
+        model: "unknown-model",
+        usageStatus: "reported",
+        usage: { inputTokens: 1_000, outputTokens: 100 },
+      }),
+    ];
+    const sum = summarizeUsage(entries, "30d", FIXED_NOW);
+    expect(sum.summary.direct).toMatchObject({
+      pricedRequests: 1,
+      unpricedRequests: 0,
+      sources: [expect.objectContaining({
+        provider: "openai-apikey",
+        model: "gpt-5.6-luna",
+        sourceClassification: "direct_api_key",
+        pricedRequests: 1,
+      })],
+    });
+    expect(sum.summary.apiEquivalent).toMatchObject({
+      pricedRequests: 2,
+      unpricedRequests: 1,
+      unpricedReasons: { price_unmatched: 1 },
+    });
+    expect(sum.summary.apiEquivalent.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: "openai-pabcdef",
+        model: "gpt-5.6-luna",
+        sourceClassification: "subscription_api_equivalent",
+        pricedRequests: 1,
+      }),
+      expect.objectContaining({
+        provider: "anthropic-pabcdef",
+        model: "claude-opus-5",
+        sourceClassification: "subscription_api_equivalent",
+        pricedRequests: 1,
+      }),
+      expect.objectContaining({
+        provider: "anthropic",
+        model: "unknown-model",
+        unpricedRequests: 1,
+        unpricedReasons: { price_unmatched: 1 },
+      }),
+    ]));
+    // Legacy aggregate stays strict: only direct actual list-price traffic counts.
+    expect(sum.summary.pricedRequests).toBe(1);
+  });
+
+  test("historical OpenAI rows without raw prompt context are unpriced, not priced short", () => {
+    // Before the long-context band existed there was one OpenAI rate, so a row
+    // with no persisted prompt size could safely be priced at it. Now there are
+    // two rates either side of 272k and the prompt size is what chooses between
+    // them, so a row that never recorded one cannot be priced at all: guessing
+    // "short" would silently halve every long request that predates the metric.
+    const historic = entry({
+      ts: FIXED_NOW - 1,
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      usageStatus: "reported",
+      usage: { inputTokens: 500, outputTokens: 50 },
+    });
+    const sum = summarizeUsage([historic], "30d", FIXED_NOW);
+    expect(sum.summary.apiEquivalent).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 1,
+      unpricedReasons: { pricing_context_missing: 1 },
+    });
+    expect(sum.summary.direct).toMatchObject({ pricedRequests: 0, unpricedRequests: 0 });
+
+    // The same row prices normally once the prompt size is on it.
+    const recorded = summarizeUsage([entry({
+      ts: FIXED_NOW - 1,
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      usageStatus: "reported",
+      usage: { inputTokens: 500, outputTokens: 50 },
+      promptInputTokens: 500,
+    })], "30d", FIXED_NOW);
+    expect(recorded.summary.apiEquivalent).toMatchObject({ pricedRequests: 1, unpricedRequests: 0 });
+  });
+
+  test("extreme finite timestamps fail closed in Usage without throwing", () => {
+    for (const timestamp of [Number.MAX_VALUE, -Number.MAX_VALUE]) {
+      const row = entry({
+        ts: timestamp,
+        provider: "anthropic-apikey",
+        model: "claude-sonnet-5",
+        cacheRetention: "short",
+        usageStatus: "reported",
+        usage: { inputTokens: 100, outputTokens: 10 },
+      });
+      expect(() => summarizeUsage([row], "30d", timestamp)).not.toThrow();
+      const sum = summarizeUsage([row], "30d", timestamp);
+      expect(sum.summary).toMatchObject({
+        pricedRequests: 0,
+        unpricedRequests: 1,
+        unpricedReasons: { pricing_condition_unmatched: 1 },
+      });
+    }
+  });
+
+  test("invalid usage reasons match Logs instead of becoming price_unmatched", () => {
+    const nonfinite = summarizeUsage([entry({
+      ts: FIXED_NOW - 1,
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      usageStatus: "reported",
+      usage: { inputTokens: Number.NaN, outputTokens: 1 },
+    })], "30d", FIXED_NOW);
+    expect(nonfinite.summary).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 1,
+      unpricedReasons: { invalid_usage: 1 },
+    });
+
+    const contradictory = summarizeUsage([entry({
+      ts: FIXED_NOW - 1,
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      usageStatus: "reported",
+      usage: { inputTokens: 50, outputTokens: 1, cacheReadInputTokens: 40, cacheCreationInputTokens: 20 },
+    })], "30d", FIXED_NOW);
+    expect(contradictory.summary).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 1,
+      unpricedReasons: { invalid_cache_breakdown: 1 },
+    });
+  });
+
+  test("combo usage failures never receive a false pricing reason", () => {
+    const combo = (usage: PersistedUsageEntry["usage"] | undefined): PersistedUsageEntry => entry({
+      ts: FIXED_NOW - 1,
+      provider: "combo",
+      model: "combo/invalid",
+      usageStatus: usage ? "reported" : "unreported",
+      ...(usage ? { usage } : {}),
+      attempts: [{
+        ordinal: 1,
+        timestamp: FIXED_NOW - 1,
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        adapter: "openai-chat",
+        status: 200,
+        durationMs: 1,
+        sendCount: 1,
+        recoveryKinds: [],
+        usageStatus: usage ? "reported" : "unreported",
+        ...(usage ? { usage } : {}),
+      }],
+    });
+
+    const missing = summarizeUsage([combo(undefined)], "30d", FIXED_NOW);
+    expect(missing.summary).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 0,
+      unmeteredRequests: 1,
+      unpricedReasons: {},
+    });
+
+    const invalid = summarizeUsage([
+      combo({ inputTokens: Number.NaN, outputTokens: 1 }),
+    ], "30d", FIXED_NOW);
+    expect(invalid.summary).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 1,
+      unpricedReasons: { invalid_usage: 1 },
+    });
+    expect(invalid.summary.unpricedReasons).not.toHaveProperty("price_unmatched");
+  });
+
+  test("legacy Anthropic cache-write rows without retention remain explicitly unpriced", () => {
+    const legacy = entry({
+      ts: FIXED_NOW - 1000,
+      provider: "anthropic-apikey",
+      model: "claude-opus-5",
+      usageStatus: "reported",
+      usage: { inputTokens: 100, outputTokens: 10, cacheCreationInputTokens: 50 },
+    });
+    const sum = summarizeUsage([legacy], "30d", FIXED_NOW);
+    expect(sum.summary).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 1,
+      estimatedCostUsd: 0,
+      unpricedReasons: { pricing_context_missing: 1 },
+    });
+    expect(sum.models[0]?.estimatedCostUsd).toBeUndefined();
+    expect(sum.providers[0]?.estimatedCostUsd).toBeUndefined();
+  });
+
+  test("a combo with one subscription attempt remains wholly unpriced", () => {
+    const combo = entry({
+      ts: FIXED_NOW - 1000,
+      provider: "combo",
+      model: "combo/mixed",
+      usageStatus: "reported",
+      usage: { inputTokens: 200, outputTokens: 20 },
+      attempts: [
+        {
+          ordinal: 1,
+          provider: "deepseek",
+          model: "deepseek-v4-flash",
+          adapter: "openai-chat",
+          status: 200,
+          durationMs: 1,
+          sendCount: 1,
+          recoveryKinds: [],
+          usageStatus: "reported",
+          usage: { inputTokens: 100, outputTokens: 10 },
+        },
+        {
+          ordinal: 2,
+          provider: "cursor",
+          model: "claude-opus-5",
+          adapter: "cursor",
+          status: 200,
+          durationMs: 1,
+          sendCount: 1,
+          recoveryKinds: [],
+          usageStatus: "estimated",
+          usage: { inputTokens: 100, outputTokens: 10, estimated: true },
+        },
+      ],
+    });
+    const sum = summarizeUsage([combo], "30d", FIXED_NOW);
+    expect(sum.summary).toMatchObject({
+      pricedRequests: 0,
+      unpricedRequests: 1,
+      estimatedCostUsd: 0,
+      unpricedReasons: { pricing_product_unpriced: 1 },
+    });
+    expect(sum.models.every(row => row.estimatedCostUsd === undefined)).toBe(true);
+    expect(sum.providers.every(row => row.estimatedCostUsd === undefined)).toBe(true);
   });
 
   test("filters totals, days, models, and providers by persisted request surface", () => {
@@ -618,7 +894,7 @@ describe("summarizeUsage", () => {
       totalTokens: 2530,
     });
     expect(byModel["google-antigravity/gemini-3.1-pro"]?.resolvedModel).toBeUndefined();
-    expect(byModel["google-antigravity/gemini-3.1-pro"]?.estimatedCostUsd).toBeGreaterThan(0);
+    expect(byModel["google-antigravity/gemini-3.1-pro"]?.estimatedCostUsd).toBeUndefined();
 
     expect(byModel["google-antigravity/future-cca-model"]).toMatchObject({
       model: "future-cca-model",

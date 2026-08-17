@@ -11,6 +11,7 @@ import {
   runProcessTreeCommand,
 } from "./install-process.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "./tray-update-plan.mjs";
+import { parseConcreteUpdateVersion } from "./version-resolution.mjs";
 
 /**
  * A `codex-history-backup-*.json` surviving a stop means the native-history restore was
@@ -110,12 +111,12 @@ export function updateSpawnTarget(
 }
 
 /**
- * The GUI update worker sets OCX_SERVICE=1 and has stdio ignored — inheriting that for
+ * The GUI update worker sets OCX_BACKGROUND=1 and has stdio ignored — inheriting that for
  * Background package-manager children can open stacked visible consoles on Windows.
  * Pipe instead and relay bounded output after the child exits. (Ported from PR #167.)
  */
 function updateChildStdio(): "inherit" | "pipe" {
-  if (process.env.OCX_SERVICE === "1") return "pipe";
+  if (process.env.OCX_BACKGROUND === "1") return "pipe";
   if (typeof process.stdout.isTTY === "boolean" && !process.stdout.isTTY) return "pipe";
   return "inherit";
 }
@@ -127,17 +128,21 @@ function logSpawnOutput(label: string, result: { stdout?: string | Buffer | null
   if (stderr) console.error(stderr.length > 4000 ? `${label}${stderr.slice(-4000)}` : stderr);
 }
 
-/** Latest published version from the registry (best-effort; null if npm isn't available). */
-export function latestVersion(tag: string): string | null {
+/** Latest published version from the registry (null when resolution is unavailable or fails). */
+export function latestVersion(tag: string, spawn: typeof spawnSync = spawnSync): string | null {
   const npm = npmSpawnTarget(["view", `${PKG}@${tag}`, "version"]);
   if (!npm) return null;
-  const r = spawnSync(npm.bin, npm.args, {
-    encoding: "utf8",
-    timeout: 12000,
-    windowsHide: true,
-    ...npm.options,
-  });
-  return r.status === 0 ? (r.stdout.trim() || null) : null;
+  try {
+    const r = spawn(npm.bin, npm.args, {
+      encoding: "utf8",
+      timeout: 12000,
+      windowsHide: true,
+      ...npm.options,
+    });
+    return r.status === 0 ? parseConcreteUpdateVersion(r.stdout) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The global-install command opencodex would run to update on this channel. */
@@ -206,6 +211,12 @@ export async function runUpdate(): Promise<void> {
   if (latest && latest === current) {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     return;
+  }
+  if (!latest) {
+    console.error(
+      "⚠️  Could not resolve a concrete registry version; aborting before stopping the tray, service, or proxy and before package replacement.",
+    );
+    process.exit(1);
   }
 
   // Pre-flight integrity metadata check — runs BEFORE the proxy is stopped so an

@@ -13,7 +13,7 @@ import {
 } from "../src/account-pool-strategy";
 import AccountPoolStrategyControls from "../src/components/AccountPoolStrategyControls";
 import CodexPoolStrategySetting from "../src/components/CodexPoolStrategySetting";
-import { LanguageProvider } from "../src/i18n/provider";
+import { TestLanguageProvider } from "./helpers/providers";
 
 let previousLanguage: unknown;
 
@@ -145,7 +145,7 @@ describe("account pool strategy helpers", () => {
 describe("AccountPoolStrategyControls", () => {
   test("renders strategy options and hides sticky unless round-robin", () => {
     const quota = renderToStaticMarkup(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <AccountPoolStrategyControls
           strategy="quota"
           stickyDraft="1"
@@ -153,7 +153,7 @@ describe("AccountPoolStrategyControls", () => {
           onStickyDraftChange={() => {}}
           onStickyCommit={() => {}}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
     expect(quota).toContain("Quota");
     expect(quota).toContain("Round-robin");
@@ -162,7 +162,7 @@ describe("AccountPoolStrategyControls", () => {
     expect(quota).not.toContain("Sticky successes before rotate");
 
     const rr = renderToStaticMarkup(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <AccountPoolStrategyControls
           strategy="round-robin"
           stickyDraft="2"
@@ -170,7 +170,7 @@ describe("AccountPoolStrategyControls", () => {
           onStickyDraftChange={() => {}}
           onStickyCommit={() => {}}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
     expect(rr).toContain("Sticky successes before rotate");
     expect(rr).toContain('value="2"');
@@ -178,7 +178,7 @@ describe("AccountPoolStrategyControls", () => {
 
   test("keeps the visual field label by default (Anthropic card has its own title)", () => {
     const markup = renderToStaticMarkup(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <AccountPoolStrategyControls
           strategy="quota"
           stickyDraft="1"
@@ -186,7 +186,7 @@ describe("AccountPoolStrategyControls", () => {
           onStickyDraftChange={() => {}}
           onStickyCommit={() => {}}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
     expect(markup).toContain('class="field-label"');
     expect(markup).not.toContain('class="sr-only"');
@@ -194,7 +194,7 @@ describe("AccountPoolStrategyControls", () => {
 
   test("strategyLabelHidden drops the duplicate visual label but keeps the accessible name", () => {
     const markup = renderToStaticMarkup(
-      <LanguageProvider>
+      <TestLanguageProvider>
         <AccountPoolStrategyControls
           strategy="quota"
           stickyDraft="1"
@@ -203,7 +203,7 @@ describe("AccountPoolStrategyControls", () => {
           onStickyDraftChange={() => {}}
           onStickyCommit={() => {}}
         />
-      </LanguageProvider>,
+      </TestLanguageProvider>,
     );
     expect(markup).not.toContain('class="field-label"');
     expect(markup).toContain('class="sr-only"');
@@ -240,9 +240,9 @@ describe("CodexPoolStrategySetting optimistic strategy select", () => {
     await act(async () => {
       mountedRoot = createRoot(host);
       mountedRoot.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           <CodexPoolStrategySetting apiBase="http://proxy" />
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
     await act(async () => { await flush(); });
@@ -297,9 +297,9 @@ describe("CodexPoolStrategySetting optimistic strategy select", () => {
     await act(async () => {
       mountedRoot = createRoot(host);
       mountedRoot.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           <CodexPoolStrategySetting apiBase="http://proxy" />
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
     await act(async () => { await flush(); });
@@ -336,9 +336,9 @@ describe("CodexPoolStrategySetting optimistic strategy select", () => {
     await act(async () => {
       mountedRoot = createRoot(host);
       mountedRoot.render(
-        <LanguageProvider>
+        <TestLanguageProvider>
           <CodexPoolStrategySetting apiBase="http://proxy" />
-        </LanguageProvider>,
+        </TestLanguageProvider>,
       );
     });
     await act(async () => { await flush(); });

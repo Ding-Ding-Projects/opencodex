@@ -16,9 +16,10 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleSquirrelEvent } from "./squirrel.mjs";
+import { handleSquirrelEvent, planSquirrelEvent } from "./squirrel.mjs";
 import { readBuildStamp } from "./build-stamp.mjs";
 import { describeConflict, planProxyAdoption } from "./proxy-adoption.mjs";
+import { installCliOnPath, recordDesktopCliPathStatus } from "./cli-path.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
@@ -54,7 +55,27 @@ const HEALTH_POLL_MS = 250;
  *
  * `app.exit(0)` rather than `app.quit()`: quit runs `before-quit` and the whole
  * shutdown path, and this process has started nothing to shut down.
+ *
+ * `--squirrel-install` and `--squirrel-updated` are also when this app makes
+ * sure its own `ocx` shim is on the user's PATH (`./cli-path.mjs`) — without
+ * this, a Squirrel-only install (no npm, nobody ran scripts/install.ps1 by
+ * hand) ships a GUI and no usable command line. It runs BEFORE
+ * handleSquirrelEvent below so it completes while Squirrel is still waiting
+ * on this process, and it must never throw or block that exit: installCliOnPath
+ * already fails closed and returns a result object instead of throwing for
+ * every failure it anticipates, and the try/catch here is the last-resort net
+ * for anything it does not.
  */
+const squirrelPlan = planSquirrelEvent(process.argv, process.execPath, process.platform);
+if (squirrelPlan && (squirrelPlan.event === "--squirrel-install" || squirrelPlan.event === "--squirrel-updated")) {
+  try {
+    recordDesktopCliPathStatus(installCliOnPath(process.execPath));
+  } catch {
+    // Never let a PATH-install surprise block Squirrel's own install/update —
+    // it is waiting on this process to exit within about a second either way.
+  }
+}
+
 if (handleSquirrelEvent({ spawn, exit: code => app.exit(code) })) {
   // Nothing below this line may run: the process is on its way out.
 } else if (!app.requestSingleInstanceLock()) {
@@ -287,6 +308,70 @@ function registerWindowIpc() {
   ipcMain.handle("app:exit", () => { quitting = true; app.quit(); });
 
   /**
+   * The two channels behind the toy-lock recovery route and the Support
+   * Tickets "resolution" step (see `gui/src/shell/app-data-path.ts`).
+   *
+   * Both are the same shape as every other bridge call in this file: a fixed
+   * channel, no caller-supplied argument, so the renderer can ask "where is
+   * it?" and "open it" and nothing else — it cannot name an arbitrary path for
+   * this to open. `app.getPath("userData")` is Electron's own answer for
+   * "where does this app's data actually live on this machine", which is what
+   * lets the recovery copy name the real folder instead of a guessed one.
+   */
+  /**
+   * The native file/folder picker, for every path text box in the app.
+   *
+   * Until this existed there was no `showOpenDialog` anywhere in the tree, and
+   * the converter and PDF screens said so to the user's face: "No page in this
+   * app has a native file-browse dialog yet." Honest, and still a text box
+   * asking somebody to type `C:\Users\...\Documents\file` by hand.
+   *
+   * Modal to the window that asked, so it cannot end up behind the app, and
+   * always resolves — a cancelled dialog is `{ ok: true, canceled: true }`
+   * rather than a rejection, because "the user changed their mind" is a normal
+   * outcome and a renderer should not have to tell it apart from a failure by
+   * catching.
+   *
+   * The renderer chooses `mode`, never a raw Electron properties array: this
+   * side decides what the modes mean, so a compromised or simply buggy renderer
+   * cannot ask for a picker this app never intended to offer.
+   */
+  ipcMain.handle("dialog:open-path", async (event, payload) => {
+    const window = windowFor(event);
+    if (!window) return { ok: false, canceled: false, error: "no window" };
+    const mode = payload?.mode === "directory" ? "directory" : payload?.mode === "save" ? "save" : "file";
+    const title = typeof payload?.title === "string" ? payload.title : undefined;
+    // Only ever used as a starting directory. A defaultPath the renderer made
+    // up cannot read anything on its own; the user still has to choose.
+    const defaultPath = typeof payload?.defaultPath === "string" && payload.defaultPath
+      ? payload.defaultPath
+      : undefined;
+    try {
+      if (mode === "save") {
+        const res = await dialog.showSaveDialog(window, { title, defaultPath });
+        return { ok: true, canceled: res.canceled, path: res.canceled ? undefined : res.filePath };
+      }
+      const res = await dialog.showOpenDialog(window, {
+        title,
+        defaultPath,
+        properties: [mode === "directory" ? "openDirectory" : "openFile"],
+      });
+      return { ok: true, canceled: res.canceled, path: res.canceled ? undefined : res.filePaths[0] };
+    } catch (err) {
+      return { ok: false, canceled: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("appData:path", () => app.getPath("userData"));
+  ipcMain.handle("appData:open", async () => {
+    const dir = app.getPath("userData");
+    // `shell.openPath` resolves to an error string on failure, "" on success —
+    // never rejects, so there is nothing to catch here.
+    const error = await shell.openPath(dir);
+    return { ok: !error, path: dir, error: error || undefined };
+  });
+
+  /**
    * Is it running, and start it if not.
    *
    * The dashboard's offline screen used to say "Cannot connect to proxy. Is it
@@ -318,6 +403,14 @@ function registerWindowIpc() {
       // act on rather than a stack frame.
       return { ok: false, error: String(error?.message ?? error) };
     }
+  });
+
+  ipcMain.handle("downloads:open-popup", (_event, payload) => {
+    const kind = payload?.kind === "start" || payload?.kind === "complete" ? payload.kind : null;
+    const id = typeof payload?.id === "string" && payload.id ? payload.id : null;
+    if (!kind || !id) return { ok: false };
+    openDownloadPopup(kind, id);
+    return { ok: true };
   });
 }
 
@@ -390,6 +483,82 @@ function createWindow(port) {
     }
   });
   mainWindow.on("closed", () => { mainWindow = null; });
+}
+
+/* ------------------------------------------------------ download popups -- */
+
+/**
+ * The Start-download and Download-complete surfaces the browser-extension
+ * download-capture contract asks be "above the originating browser window" —
+ * real OS-level `alwaysOnTop` windows, not an in-app overlay, so they float
+ * over Chrome/Edge/Firefox and not just over this app's own window.
+ *
+ * Keyed by `kind:id` so `DownloadsBridge.tsx` polling from a webContents that
+ * is still alive can call this repeatedly for the same record without
+ * stacking duplicate windows — a second call for an id already open focuses
+ * the existing one instead. Content is the SAME build the dashboard serves,
+ * just a different route (`pages/DownloadPopup.tsx` via `main.tsx`'s
+ * popup-mode branch): no second UI implementation to keep in sync.
+ */
+const downloadPopups = new Map();
+
+function openDownloadPopup(kind, id) {
+  const key = `${kind}:${id}`;
+  const existing = downloadPopups.get(key);
+  if (existing && !existing.isDestroyed()) {
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const icon = iconPath();
+  // These heights are sized for the REAL content `pages/DownloadPopup.tsx`
+  // renders at default density/font-scale, not guessed. 220/180 (this
+  // window's dimensions before this fix) were too short for the six-child
+  // "start" card and the up-to-five-child "complete" card to lay out without
+  // shrinking — see the long comment on `.m3-dlpopup` in
+  // `gui/src/styles/m3-shell.css` for the exact flexbox mechanism that made
+  // the shortfall invisible (the filename/URL paragraphs collapsed to a ~2px
+  // line box) rather than an obvious clipped/overflowing card.
+  // `scripts/download-popup-layout-check.ts` measured the real, unsquished
+  // content height of every child in a real browser at these exact window
+  // dimensions: icon 34 + title 19.19 + file 21 + url 18.75 + hint 18.75 +
+  // actions 56 = 167.69, plus five `--sp-2` (10px) gaps and top+bottom
+  // `--sp-4` (19px) padding = 255.69px for "start"; the "complete" card drops
+  // the hint row but can still show icon/title/file/url/actions =
+  // 148.94 + four gaps + padding = 226.94px. Both get rounded up with a
+  // margin for locale/DPI/font-metric variance rather than shipped exact —
+  // `.m3-dlpopup`'s own `overflow-y: auto` is the remaining safety net for
+  // whatever margin still is not enough (a longer bilingual string, a larger
+  // font-scale preference).
+  const win = new BrowserWindow({
+    width: 360,
+    height: kind === "start" ? 260 : 230,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    backgroundColor: "#101010",
+    title: kind === "start" ? "opencodex — Start download" : "opencodex — Download",
+    ...(icon ? { icon } : {}),
+    webPreferences: {
+      preload: join(HERE, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  // "Always on top" over ordinary windows still normally sits under another
+  // app's own always-on-top surfaces; the "screen-saver" level is what macOS
+  // and Windows both treat as floating above regular application windows,
+  // which is the actual ask here. Harmless where the platform ignores the level.
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.once("ready-to-show", () => win.show());
+  win.loadURL(`http://${HOST}:${proxyPort}/#/downloads?popup=${kind}&id=${encodeURIComponent(id)}`);
+  win.on("closed", () => { downloadPopups.delete(key); });
+  downloadPopups.set(key, win);
 }
 
 function showWindow() {

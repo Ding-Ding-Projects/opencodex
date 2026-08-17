@@ -101,9 +101,14 @@ export default function CodexPoolStrategySetting({ apiBase }: { apiBase: string 
   const loading = !ready && !loadError;
 
   return (
-    <div className="card" style={{ marginTop: 16 }} aria-busy={loading || saving}>
-      <strong>{t("accountPool.strategy")}</strong>
-      <div className="card-sub" style={{ marginTop: 4 }} role={loadError ? "alert" : undefined}>
+    // M3 restyle: matches the sibling `CodexAutoSwitchSetting` card exactly —
+    // `m3-card`/`m3-card-title`/`m3-card-sub` are what the M3 stylesheet
+    // actually themes; the legacy `card`/`card-sub` classes below it are only
+    // in `styles.css` and rendered this card in the pre-M3 visual language
+    // while every card around it had already moved on.
+    <div className="m3-card" style={{ marginTop: "var(--sp-3)" }} aria-busy={loading || saving}>
+      <strong className="m3-card-title">{t("accountPool.strategy")}</strong>
+      <div className="card-sub m3-card-sub" style={{ marginTop: 4 }} role={loadError ? "alert" : undefined}>
         {loadError
           ? t("accountPool.strategyLoadFailed")
           : loading
@@ -144,7 +149,7 @@ export default function CodexPoolStrategySetting({ apiBase }: { apiBase: string 
         />
       )}
       {error && (
-        <div role="alert" className="card-sub" style={{ marginTop: 8, color: "var(--danger, #c44)" }}>
+        <div role="alert" className="card-sub m3-card-sub" style={{ marginTop: 8, color: "var(--m3-error)" }}>
           {error}
         </div>
       )}
