@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { atomicWriteFile, expandUserPath, getConfigDir, websocketsEnabled } from "../../config";
-import { CODEX_CONFIG_PATH, CODEX_MODELS_CACHE_PATH, DEFAULT_CATALOG_PATH, readRootTomlString, resolveCodexConfigPath } from "../paths";
+import { CODEX_MODELS_CACHE_PATH, DEFAULT_CATALOG_PATH, readRootTomlString, resolveCodexConfigPath } from "../paths";
 import { clearModelCache, DEFAULT_MODEL_CACHE_TTL_MS, getFreshCached, getStaleCached, isModelsFetchCoolingDown, markModelsFetchFailure, setCached } from "../model-cache";
 import { buildModelsRequest, resolveModelsAuthToken } from "../../oauth";
 import type { OcxConfig, OcxProviderConfig } from "../../types";
@@ -31,7 +31,7 @@ import { redactSecretString } from "../../lib/redact";
 import upstreamModelsSnapshot from "../data/upstream-models.json";
 
 
-import { activeCodexModelsCachePath, applyJawcodeCatalogMetadata, applyMultiAgentMode, applyNativeOpenAiContextOverride, catalogModelSlug, ensureCatalogBackup, ensureStrictCatalogFields, findNativeTemplate, isRoutedModelCompatibilityExcluded, normalizeRoutedCatalogEntry, normalizeServiceTiers, readCatalog, readCatalogBackup, readCodexCatalogPath, readNativeBaseline } from "./parsing";
+import { activeCodexConfigPath, activeCodexModelsCachePath, applyJawcodeCatalogMetadata, applyMultiAgentMode, applyNativeOpenAiContextOverride, catalogModelSlug, ensureCatalogBackup, ensureStrictCatalogFields, findNativeTemplate, isRoutedModelCompatibilityExcluded, normalizeRoutedCatalogEntry, normalizeServiceTiers, readCatalog, readCatalogBackup, readCodexCatalogPath, readNativeBaseline } from "./parsing";
 import type { CatalogModel, MultiAgentMode, RawEntry } from "./parsing";
 import { applyNativeVisibility, disabledNativeSlugs, isUnsupportedOpenAiNativeSlug, nativeOpenAiSlugs, shouldUpgradeToUpstreamEntry, upstreamNativeEntry } from "./metadata";
 import { loadCatalogForSync, resetBundledCatalogCacheForTests } from "./bundled";
@@ -41,6 +41,25 @@ import { clearLastComboCatalogOmissions, comboCatalogWarningSignatures, comboMas
 import type { ComboCatalogOmission } from "./aggregation";
 
 export const MAX_SPAWN_AGENT_MODEL_OVERRIDES = 5;
+
+const MAX_AUTO_REVIEW_MODEL_LENGTH = 256;
+
+/** Read the optional root-level review target without allowing table values or control bytes in the catalog. */
+export function configuredAutoReviewModel(): string | undefined {
+  let content: string;
+  try {
+    content = readFileSync(activeCodexConfigPath(), "utf8");
+  } catch {
+    return undefined;
+  }
+  const raw = readRootTomlString(content, "auto_review_model");
+  if (raw === null) return undefined;
+  const model = raw.trim();
+  if (!model || model.length > MAX_AUTO_REVIEW_MODEL_LENGTH || /[\u0000-\u001f\u007f]/u.test(model)) {
+    return undefined;
+  }
+  return model;
+}
 
 export type SpawnAgentSurface = "v1" | "v2";
 
@@ -515,6 +534,13 @@ export async function syncCatalogModels(config: OcxConfig): Promise<{
   catalog.models = mergeCatalogEntriesForSync(catalog.models ?? [], goEntries, baseline, featured, wsEnabled, goIds, template, disabledNativeSlugs(config), gatheredProviderNames, multiAgentMode, exactComboSlugs, hasPhysicalComboProvider, includeNativeOpenAi);
   clampCatalogModelsToCodexSupport(catalog.models);
 
+  const autoReviewModel = configuredAutoReviewModel();
+  catalog.models = catalog.models.map((entry) => {
+    const next = { ...entry } as RawEntry;
+    if (autoReviewModel) next.auto_review_model_override = autoReviewModel;
+    else delete next.auto_review_model_override;
+    return next;
+  });
   atomicWriteFile(catalogPath, JSON.stringify(catalog, null, 2) + "\n");
   return { added: goEntries.length, path: catalogPath, catalogWritten: true, comboOmissions };
 }
