@@ -73,6 +73,8 @@ export function useProviderAccountPools(deps: {
   const [addingKeyFor, setAddingKeyFor] = useState<string | null>(null);
   const [newKeyValue, setNewKeyValue] = useState("");
   const accountRequestGenerationRef = useRef<Record<string, number>>({});
+  /** Per-provider, exactly like the one above — see `fetchKeyPools`. */
+  const keyPoolGenerationRef = useRef<Record<string, number>>({});
   const switchingAccountRef = useRef<{ provider: string; accountId: string } | null>(null);
 
   const fetchAccountSets = useCallback(async (providers: string[]) => {
@@ -124,12 +126,35 @@ export function useProviderAccountPools(deps: {
     return results.every(Boolean);
   }, [aliveRef, apiBase]);
 
+  /**
+   * Two separate staleness bugs lived here, and they need different fixes.
+   *
+   * (1) The result used to REPLACE the whole map. Callers pass the provider list
+   * they know about, computed from a `keyPools` closure that may already be
+   * stale, so a call carrying fewer providers could erase one the previous call
+   * had just added. Concretely: adding the first key to a new provider issues a
+   * three-provider fetch, then switching an existing provider's active key
+   * issues a two-provider fetch from the older closure; if the smaller one lands
+   * second, the new provider vanishes from state and its card renders empty —
+   * right after a success toast said the key was added. Merging fixes that
+   * without needing to know which call is newer.
+   *
+   * (2) Merging alone still lets a slow response for a provider overwrite a
+   * fresher one for that SAME provider. That needs ordering, so each provider
+   * carries a generation exactly as `fetchAccountSets` above already does, and a
+   * response whose generation has been superseded is dropped.
+   */
   const fetchKeyPools = useCallback(async (providers: string[]) => {
     const entries = await Promise.all(providers.map(async name => {
+      const generation = (keyPoolGenerationRef.current[name] ?? 0) + 1;
+      keyPoolGenerationRef.current[name] = generation;
       const data = await fetch(`${apiBase}/api/providers/keys?name=${encodeURIComponent(name)}`).then(async r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).catch(() => null) as { keys?: ApiKeyEntry[] } | null;
+      if (keyPoolGenerationRef.current[name] !== generation) return null;
       return [name, data?.keys ?? []] as const;
     }));
-    setKeyPools(Object.fromEntries(entries));
+    const fresh = entries.filter((e): e is readonly [string, ApiKeyEntry[]] => e !== null);
+    if (fresh.length === 0) return;
+    setKeyPools(current => ({ ...current, ...Object.fromEntries(fresh) }));
   }, [apiBase]);
 
   const switchAccount = async (provider: string, account: OAuthAccount) => {
