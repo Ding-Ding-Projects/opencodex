@@ -982,6 +982,8 @@ export interface OcxProviderConfig {
    * full set so the user can pick). See devlog issue_052_provider-model-allowlist.
    */
   selectedModels?: string[];
+  /** Models retained in the catalog when authoritative live discovery omits them. */
+  retainModels?: string[];
   /** Provider-wide Codex-visible context-window cap for routed catalog entries. */
   contextWindow?: number;
   /** Model-specific Codex-visible context-window caps. Values cap live metadata, never raise it. */

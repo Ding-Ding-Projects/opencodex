@@ -255,7 +255,11 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
     && prov.googleMode === "vertex"
     && (prov.models?.length ?? 0) === 0
     && Boolean(prov.defaultModel);
-  const configuredIds = seedVertexDefault && prov.defaultModel ? [prov.defaultModel] : (prov.models ?? []);
+  const configuredIds = Array.from(new Set([
+    ...(seedVertexDefault && prov.defaultModel ? [prov.defaultModel] : []),
+    ...(prov.models ?? []),
+    ...(prov.retainModels ?? []),
+  ]));
   const configured: CatalogModel[] = configuredIds.map(id => ({
     id,
     provider: name,
@@ -476,6 +480,62 @@ export function shouldRetainConfiguredProviderModel(providerName: string, modelI
   if (CALLABLE_CONFIGURED_COMPATIBILITY_MODELS[providerName]?.has(modelId)) return true;
   if (providerName === "opencode-free") return modelId === "big-pickle" || modelId.endsWith("-free");
   return false;
+}
+
+/**
+ * Fold dated-release aliases and retain configured rows that must survive an
+ * authoritative live roster (compatibility allow-list, combo targets, Vertex
+ * default). Used on every discovery return — live, fresh cache, stale, and
+ * failure fallback — so a warm cache captured before a combo existed still
+ * surfaces the configured target (OCX-111 / #1308).
+ *
+ * Cache writes should pass `retainComboTargets: false` so combo retention is
+ * re-applied on read against the current capture, not frozen into the TTL entry.
+ */
+export function mergeConfiguredModelsIntoLiveCatalog(opts: {
+  name: string;
+  provider: OcxProviderConfig;
+  models: readonly CatalogModel[];
+  configured: readonly CatalogModel[];
+  retainConfiguredModelIds?: ReadonlySet<string>;
+  contextCap?: number;
+  seedVertexDefault?: boolean;
+  retainComboTargets?: boolean;
+}): { models: CatalogModel[]; droppedConfiguredIds: string[] } {
+  const {
+    name,
+    provider: prov,
+    configured,
+    retainConfiguredModelIds,
+    contextCap,
+    seedVertexDefault,
+    retainComboTargets = true,
+  } = opts;
+  const out = [...opts.models];
+  const present = new Set(out.map(model => model.id));
+  const droppedConfiguredIds: string[] = [];
+  const providerRetainModels = Array.isArray(prov.retainModels) ? new Set(prov.retainModels) : undefined;
+  for (const candidate of configured) {
+    if (present.has(candidate.id)) continue;
+    const dated = out.find(live => isDatedVariantId(live.id, candidate.id));
+    if (dated) {
+      out.push(applyProviderConfigHints(name, prov, { ...dated, id: candidate.id }, contextCap));
+      present.add(candidate.id);
+      continue;
+    }
+    if (
+      seedVertexDefault === true
+      || shouldRetainConfiguredProviderModel(name, candidate.id)
+      || (retainComboTargets && retainConfiguredModelIds?.has(candidate.id) === true)
+      || (providerRetainModels?.has(candidate.id) === true)
+    ) {
+      out.push(candidate);
+      present.add(candidate.id);
+      continue;
+    }
+    droppedConfiguredIds.push(candidate.id);
+  }
+  return { models: out, droppedConfiguredIds };
 }
 
 export function filterCatalogVisibleModels(
