@@ -451,6 +451,7 @@ const preBunAnthropicSlots = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
 // child would otherwise allocate a visible console window on Windows.
 const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2)], {
   windowsHide: true,
+  retryCommand: process.argv[2],
   env: { ...process.env, OCX_PRE_BUN_ANTHROPIC_ENV: preBunAnthropicSlots.join(",") },
 });
 if (result.error) {

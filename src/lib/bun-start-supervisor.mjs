@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 export const BUN_CRASH_MARKER = "oh no: Bun has crashed";
 /** Maximum retained stderr, in bytes. Crash output is diagnostic, never unbounded state. */
 export const BUN_CRASH_STDERR_MAX_BYTES = 64 * 1024;
-/** A direct start gets one, and only one, panic-qualified retry. */
+/** A proxy-establishing direct start gets one, and only one, panic-qualified retry. */
 export const BUN_CRASH_RETRY_LIMIT = 1;
 
 class BoundedStderr {
@@ -44,8 +44,9 @@ function isAbnormalExit(code, signal) {
   return signal !== null || (code !== null && code !== 0);
 }
 
-function hasErrorCode(error, code) {
-  return error && typeof error === "object" && "code" in error && error.code === code;
+export function isRetryableBunCommand(argsOrCommand) {
+  const command = Array.isArray(argsOrCommand) ? argsOrCommand[0] : argsOrCommand;
+  return command === "start" || command === "ensure";
 }
 
 /**
@@ -61,20 +62,27 @@ export function runBunWithCrashRetry(command, args, options = {}) {
     spawnImpl = spawn,
     writeStderr = chunk => process.stderr.write(chunk),
     maxRetries = BUN_CRASH_RETRY_LIMIT,
+    retryCommand,
     env,
     cwd,
     windowsHide,
   } = options;
-  const retries = Math.max(0, Math.min(BUN_CRASH_RETRY_LIMIT, Number(maxRetries) || 0));
-  const stderrTail = new BoundedStderr();
+  const retryTarget = retryCommand ?? args[0] ?? "command";
+  const retries = isRetryableBunCommand(retryTarget)
+    ? Math.max(0, Math.min(BUN_CRASH_RETRY_LIMIT, Number(maxRetries) || 0))
+    : 0;
   let child = null;
   let retryCount = 0;
+  let panicQualifiedAttempts = 0;
   let parentSignal = null;
   let finished = false;
   const forwardedSignals = process.platform === "win32"
     ? ["SIGINT", "SIGTERM"]
     : ["SIGINT", "SIGTERM", "SIGHUP"];
   const handlers = [];
+  const emitDiagnostic = text => {
+    try { writeStderr(text); } catch { /* diagnostics must not change launch semantics */ }
+  };
 
   return new Promise(resolve => {
     const removeHandlers = () => {
@@ -86,13 +94,14 @@ export function runBunWithCrashRetry(command, args, options = {}) {
       if (finished) return;
       finished = true;
       removeHandlers();
-      resolve({ ...result, retries: retryCount, stderrTail: stderrTail.toString() });
+      resolve({ ...result, retries: retryCount, stderrTail: result.stderrTail ?? "" });
     };
 
     const launch = () => {
       if (finished) return;
       let spawnError = null;
       let closed = false;
+      const stderrTail = new BoundedStderr();
       try {
         child = spawnImpl(command, args, {
           cwd,
@@ -124,12 +133,23 @@ export function runBunWithCrashRetry(command, args, options = {}) {
         const effectiveSignal = parentSignal ?? signal ?? null;
         const abnormal = parentSignal === null && isAbnormalExit(code, signal);
         const panic = abnormal && stderrTail.toString().includes(BUN_CRASH_MARKER);
+        if (panic) panicQualifiedAttempts += 1;
         if (panic && retryCount < retries) {
           retryCount += 1;
+          emitDiagnostic(`opencodex: Bun crashed during ${retryTarget}; retrying once.\n`);
           launch();
           return;
         }
-        finish({ code: parentSignal ? null : (code ?? null), signal: effectiveSignal });
+        if (panic && panicQualifiedAttempts >= 2) {
+          emitDiagnostic(
+            "opencodex: Bun crashed twice. Try OPENCODEX_BUN_PATH with a tested canary runtime or upgrade Bun.\n",
+          );
+        }
+        finish({
+          code: parentSignal ? null : (code ?? null),
+          signal: effectiveSignal,
+          stderrTail: stderrTail.toString(),
+        });
       };
 
       child.once("error", error => {
@@ -156,8 +176,4 @@ export function runBunWithCrashRetry(command, args, options = {}) {
     }
     launch();
   });
-}
-
-export function isBunCrashResult(result) {
-  return Boolean(result && result.error === undefined && result.retries > 0);
 }
