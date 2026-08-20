@@ -76,11 +76,38 @@ describe("ocx.mjs npm launcher (source invariants)", () => {
     expect(source).not.toContain('${override} is missing, unreadable');
   });
 
-  test("shares the Node-safe Bun binary validator across both runtime paths", () => {
-    expect(source).toContain('import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";');
-    expect(runtimeSource).toContain('import { isRealBunBinary } from "./bun-binary-validator.mjs";');
-    expect(runtimeSource).toContain("export { isRealBunBinary };");
-    expect(validatorSource).toContain("export const REAL_BUN_MIN_BYTES = 1_000_000;");
-    expect(validatorSource).toMatch(/export function isRealBunBinary\(path\) \{[\s\S]*?try \{[\s\S]*?statSync\(path\)[\s\S]*?catch \{[\s\S]*?return false;/);
+  test("shares the Node-safe Bun regular-file size gate across both runtime paths", () => {
+    const launcherLines = source.replaceAll("\r\n", "\n").split("\n");
+    const runtimeLines = runtimeSource.replaceAll("\r\n", "\n").split("\n");
+    const validatorLines = validatorSource.replaceAll("\r\n", "\n").split("\n");
+
+    expect(launcherLines).toContain('import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";');
+    expect(runtimeLines).toContain('import { isRealBunBinary } from "./bun-binary-validator.mjs";');
+    expect(runtimeLines).toContain("export { isRealBunBinary };");
+    expect(validatorLines.filter(line => line.startsWith("import "))).toEqual([
+      'import { statSync } from "node:fs";',
+    ]);
+    expect(validatorLines.filter(line => line.startsWith("export const REAL_BUN_MIN_BYTES"))).toEqual([
+      "export const REAL_BUN_MIN_BYTES = 1_000_000;",
+    ]);
+
+    const signature = "export function isRealBunBinary(path, stat = statSync) {";
+    expect(validatorLines.filter(line => line.startsWith("export function isRealBunBinary"))).toEqual([
+      signature,
+    ]);
+    const functionStart = validatorLines.indexOf(signature);
+    // This exact body is intentionally only a regular-file and size predicate. It
+    // returns false on filesystem errors; it neither executes nor identifies Bun.
+    expect(validatorLines.slice(functionStart, functionStart + 8)).toEqual([
+      signature,
+      "  try {",
+      "    const stats = stat(path);",
+      "    return stats.isFile() && stats.size >= REAL_BUN_MIN_BYTES;",
+      "  } catch {",
+      "    return false;",
+      "  }",
+      "}",
+    ]);
+    expect(validatorLines[functionStart + 8]).toBe("");
   });
 });
