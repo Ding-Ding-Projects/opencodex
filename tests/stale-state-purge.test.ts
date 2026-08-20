@@ -51,6 +51,19 @@ describe("snapshot-guarded stale-state purge", () => {
     expect(existsSync(runtimePath)).toBe(false);
   });
 
+  test("removeRuntimePortIfValueIs compares the complete snapshotted owner", async () => {
+    const { getConfigDir, removeRuntimePortIfValueIs } = await import("../src/config");
+    const runtimePath = join(getConfigDir(), "runtime-port.json");
+    const snapshot = { pid: 42, port: 58195, hostname: "127.0.0.1", supervised: false };
+
+    writeFileSync(runtimePath, JSON.stringify(snapshot));
+    expect(removeRuntimePortIfValueIs({ ...snapshot, port: 58196 })).toBe(false);
+    expect(existsSync(runtimePath)).toBe(true);
+    expect(removeRuntimePortIfValueIs(snapshot)).toBe(true);
+    expect(existsSync(runtimePath)).toBe(false);
+    expect(removeRuntimePortIfValueIs(null)).toBe(true);
+  });
+
   test("handleStop snapshots stale state before probing and purges through the guards", () => {
     const cliSource = readFileSync(join(import.meta.dir, "..", "src", "cli", "index.ts"), "utf8");
     const stopFn = cliSource.slice(

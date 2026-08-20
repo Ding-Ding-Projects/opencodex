@@ -108,8 +108,8 @@ combined local gate. It is not yet claimed as merged, pushed, released, or exact
 
 | Work | Current state |
 | --- | --- |
-| Stale journal ordering | Healthy proxy ownership is established before recovery; only a definitively dead owner restores journaled Codex state. PID removal is snapshot-guarded against a concurrent starter. |
-| Bun native crash | The external Node launcher retries only `start` and `ensure`, once, after an abnormal exit with Bun's official crash marker. Retained stderr is bounded to 64 KiB per attempt, forwarded once, and never used across attempts. |
+| Stale journal ordering | Healthy proxy ownership is established before recovery; only a definitively dead owner restores journaled Codex state. PID and runtime records are removed only when their complete preflight snapshots still match, and a concurrent new owner prevents reconciliation. |
+| Bun native crash | The external Node launcher retries only `start` and `ensure`, once, after an abnormal exit with Bun's official crash marker. An attempt-local latch preserves that exact classification after tail eviction; retained diagnostics remain bounded to 64 KiB and raw forwarding honors writable backpressure. The journal warning alone never classifies a crash, and this does not claim to fix Bun itself. |
 | Runtime override | `OPENCODEX_BUN_PATH` is normalized, validated through the shared real-binary gate, and honored by both the direct launcher and durable service/shim selection. |
 | Codex path | The documented `ocx codex` dispatcher target exists again and is behavior-tested across startup races, runtime refusal, argument/stdio forwarding, signals, and Windows command shims. |
 | Local evidence | 112 passed, 3 platform skips, 0 failed, 563 assertions; root typecheck and diff hygiene passed after a locked dependency install. Full repository, docs, privacy, packaging, integration-line, remote CI, and release evidence remain pending. |

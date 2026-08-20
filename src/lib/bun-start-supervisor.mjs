@@ -61,6 +61,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
   const {
     spawnImpl = spawn,
     writeStderr = chunk => process.stderr.write(chunk),
+    stderrDrainSource = process.stderr,
     maxRetries = BUN_CRASH_RETRY_LIMIT,
     retryCommand,
     signalSource = process,
@@ -104,6 +105,10 @@ export function runBunWithCrashRetry(command, args, options = {}) {
       let spawnError = null;
       let closed = false;
       const stderrTail = new BoundedStderr();
+      const marker = Buffer.from(BUN_CRASH_MARKER);
+      let markerCarry = Buffer.alloc(0);
+      let sawExactMarker = false;
+      let resumeAfterDrain = null;
       try {
         child = spawnImpl(command, args, {
           cwd,
@@ -116,16 +121,50 @@ export function runBunWithCrashRetry(command, args, options = {}) {
         return;
       }
 
-      if (child.stderr && typeof child.stderr.on === "function") {
-        child.stderr.on("data", chunk => {
+      const stderrStream = child.stderr;
+      const clearDrainListener = () => {
+        if (!resumeAfterDrain) return;
+        stderrDrainSource?.removeListener?.("drain", resumeAfterDrain);
+        resumeAfterDrain = null;
+      };
+
+      if (stderrStream && typeof stderrStream.on === "function") {
+        stderrStream.on("data", chunk => {
           stderrTail.append(chunk);
-          try { writeStderr(chunk); } catch { /* stderr disappearing must not kill the launcher */ }
+          if (!sawExactMarker) {
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+            const window = markerCarry.length > 0 ? Buffer.concat([markerCarry, bytes]) : bytes;
+            sawExactMarker = window.indexOf(marker) !== -1;
+            if (!sawExactMarker) {
+              const carryLength = Math.min(marker.length - 1, window.length);
+              markerCarry = Buffer.from(window.subarray(window.length - carryLength));
+            }
+          }
+
+          try {
+            const forwarded = writeStderr(chunk);
+            if (
+              forwarded === false
+              && resumeAfterDrain === null
+              && typeof stderrStream.pause === "function"
+              && typeof stderrStream.resume === "function"
+              && typeof stderrDrainSource?.once === "function"
+            ) {
+              stderrStream.pause();
+              resumeAfterDrain = () => {
+                resumeAfterDrain = null;
+                stderrStream.resume();
+              };
+              stderrDrainSource.once("drain", resumeAfterDrain);
+            }
+          } catch { /* stderr disappearing must not kill the launcher */ }
         });
       }
 
       const close = (code, signal) => {
         if (closed || finished) return;
         closed = true;
+        clearDrainListener();
         // Spawn errors are never runtime crashes, even if a test double reports
         // both `error` and `close`.
         if (spawnError) {
@@ -134,7 +173,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
         }
         const effectiveSignal = parentSignal ?? signal ?? null;
         const abnormal = parentSignal === null && isAbnormalExit(code, signal);
-        const panic = abnormal && stderrTail.toString().includes(BUN_CRASH_MARKER);
+        const panic = abnormal && sawExactMarker;
         if (panic) panicQualifiedAttempts += 1;
         if (panic && retryCount < retries) {
           retryCount += 1;

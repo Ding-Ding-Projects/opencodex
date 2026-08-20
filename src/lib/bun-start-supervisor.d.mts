@@ -15,6 +15,10 @@ export interface BunStartResult {
 export interface BunStartOptions {
   spawnImpl?: typeof import("node:child_process").spawn;
   writeStderr?: (chunk: Buffer | string) => unknown;
+  stderrDrainSource?: {
+    once(event: "drain", listener: () => void): unknown;
+    removeListener?(event: "drain", listener: () => void): unknown;
+  };
   maxRetries?: number;
   retryCommand?: string;
   signalSource?: {

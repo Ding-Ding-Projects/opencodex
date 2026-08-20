@@ -94,9 +94,10 @@ Invariants:
   warn without exposing the supplied path and fall back to the bundled runtime.
 - The launcher lazy-runs Bun's `install.js` when required, then invokes `src/cli/index.ts` through the
   Node-safe `bun-start-supervisor.mjs`. Only `start` and `ensure` receive one retry after an abnormal
-  exit containing Bun's exact crash marker; stderr is forwarded byte-for-byte and bounded to a
-  64 KiB attempt-local diagnostic tail. All other commands and failure classes preserve the original
-  single-attempt exit semantics.
+  exit containing Bun's exact crash marker; stderr is forwarded byte-for-byte with writable
+  backpressure, its diagnostic tail is bounded to 64 KiB per attempt, and a separate marker latch
+  prevents later diagnostic noise from erasing a real classification. All other commands and failure
+  classes preserve the original single-attempt exit semantics.
 - `package.json` carries `"trustedDependencies": ["bun"]` so `bun install` runs the dependency's
   postinstall, and `"engines": { "node": ">=18" }` (Bun is no longer a user prerequisite).
 - `src/service.ts` and `src/codex/shim.ts` bake `durableBunPath()` (the bundled binary, stable under

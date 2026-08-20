@@ -1769,12 +1769,34 @@ export function removeRuntimePort(expectedPid?: number): void {
  * still matches what the caller saw BEFORE its liveness probe. A concurrent `ocx start` can
  * write fresh records mid-probe; an unconditional purge would erase the new proxy's state.
  */
-export function removePidIfValueIs(snapshot: number | null): void {
-  if (!existsSync(getPidPath())) return;
-  if (readPidFileValue() !== snapshot) return;
+export function removePidIfValueIs(snapshot: number | null): boolean {
+  if (!existsSync(getPidPath())) return snapshot === null;
+  if (readPidFileValue() !== snapshot) return false;
   try {
     unlinkSync(getPidPath());
-  } catch { /* ignore */ }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runtimePortStateEquals(left: RuntimePortState | null, right: RuntimePortState | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.pid === right.pid
+    && left.port === right.port
+    && left.hostname === right.hostname
+    && left.supervised === right.supervised;
+}
+
+export function removeRuntimePortIfValueIs(snapshot: RuntimePortState | null): boolean {
+  if (!runtimePortStateEquals(readRuntimePort(), snapshot)) return false;
+  if (snapshot === null) return true;
+  try {
+    unlinkSync(getRuntimePortPath());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function removeRuntimePortIfPidIs(snapshotPid: number | null): void {

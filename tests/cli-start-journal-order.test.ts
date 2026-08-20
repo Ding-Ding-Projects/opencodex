@@ -153,15 +153,18 @@ afterEach(async () => {
 });
 
 describe("start and ensure journal ownership (#1230)", () => {
-  test("stale PID cleanup compares the preflight snapshot before journal recovery", () => {
+  test("stale ownership cleanup compares both preflight snapshots before journal recovery", () => {
     const helperStart = cliSource.indexOf("async function findProxyOwnerBeforeJournalRecovery(");
     const helperEnd = cliSource.indexOf("async function handleStart(", helperStart);
     expect(helperStart).toBeGreaterThanOrEqual(0);
     expect(helperEnd).toBeGreaterThan(helperStart);
     const helper = cliSource.slice(helperStart, helperEnd);
     expect(helper).toContain("const pidSnapshot = readPidFileValue();");
-    expect(helper).toContain("removePidIfValueIs(pidSnapshot);");
-    expect(helper.indexOf("removePidIfValueIs(pidSnapshot);")).toBeLessThan(helper.indexOf("await reconcileJournalAsync();"));
+    expect(helper).toContain("const runtimeSnapshot = readRuntimePort();");
+    expect(helper).toContain("const pidPurged = removePidIfValueIs(pidSnapshot);");
+    expect(helper).toContain("const runtimePurged = removeRuntimePortIfValueIs(runtimeSnapshot);");
+    expect(helper).toContain("!pidPurged || !runtimePurged || readPidFileValue() !== null || readRuntimePort() !== null");
+    expect(helper.indexOf("const runtimePurged = removeRuntimePortIfValueIs(runtimeSnapshot);")).toBeLessThan(helper.indexOf("await reconcileJournalAsync();"));
   });
 
   test("a healthy proxy owner preserves the journal for both start and ensure", async () => {
