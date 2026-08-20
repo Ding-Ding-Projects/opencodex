@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
+import { runBunWithCrashRetry } from "../src/lib/bun-start-supervisor.mjs";
 import { isSupportedNativeTarget, launchForwardingChild, resolveNativeGoBinary } from "./native-runtime.mjs";
 
 const PKG = "@bitkyc08/opencodex";
@@ -634,5 +635,20 @@ if (goBinary) {
   // Source checkouts and unsupported targets retain the bridge behavior.
   refreshLegacyCodexShimRuntime();
   const bun = resolveBun();
-  launchForwardingChild(bun, [cliPath, ...process.argv.slice(2)], "Bun runtime");
+  // The packaged Go runtime never enters this supervisor. Source checkouts and
+  // unsupported targets still need an external process boundary for native Bun
+  // panics, which cannot be caught from inside the Bun child.
+  const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2)], {
+    windowsHide: true,
+    retryCommand: process.argv[2],
+  });
+  if (result.error) {
+    console.error(`opencodex: failed to launch Bun runtime: ${result.error.message}`);
+    process.exit(1);
+  }
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+  } else {
+    process.exit(result.code ?? 1);
+  }
 }
