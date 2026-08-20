@@ -23,6 +23,12 @@ records another available port. It writes PID/runtime-port state and refuses to 
 instance. On start it syncs each provider's models into Codex's catalog. On shutdown it restores
 native Codex — unless it was launched as a managed service (`OCX_SERVICE=1`).
 
+A healthy owner is identity-checked before stale journal recovery, so a dead launcher PID cannot
+make a live proxy lose its injected Codex state. On the TypeScript fallback, the external Node
+launcher retries `start` once only for an abnormal exit carrying Bun's official crash marker;
+ordinary command failures are never retried. The packaged Go runtime does not invoke Bun for its
+native proxy process. See [Bun Startup Crashes on Windows](/troubleshooting/bun-startup-crashes/).
+
 ```bash
 ocx start
 ocx start --port 8080
@@ -60,7 +66,9 @@ background, and sync the live port back into Codex.
 ### `ocx ensure`
 
 Idempotently ensure a background proxy is running, then sync its live model catalog. If
-`codexAutoStart` is `false`, it prints that autostart is disabled and does nothing.
+`codexAutoStart` is `false`, it prints that autostart is disabled and does nothing. The external
+launcher gives `ensure` the same one-attempt, panic-qualified Bun retry as `start`; it does not retry
+an ordinary nonzero result.
 
 ### `ocx status [--json]`
 
