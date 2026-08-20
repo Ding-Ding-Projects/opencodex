@@ -492,6 +492,7 @@ Usage:
   ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply
+  ocx school-mode <sub>       Universal cross-app English-only toggle (status|enable|disable|rename)
   ocx changelog [opts]        Released versions and their changes
   ocx host <sub>              Expose the proxy to other devices on your network
   ocx launch [target]         Open an agent CLI or desktop app (Codex, Grok, Claude)

@@ -48,10 +48,9 @@ describe("automatic CLI launch policy wiring", () => {
   test("start probes liveness even when the pid file is missing", async () => {
     const source = await read("src/cli/index.ts");
     const start = slice(source, "async function handleStart(", "async function handleEnsure(");
-    const probeAt = start.indexOf("const existingLive = await findLiveProxy()");
-    const pidGateAt = start.indexOf("if (existingPid)");
-    expect(probeAt).toBeGreaterThanOrEqual(0);
-    expect(pidGateAt).toBeGreaterThan(probeAt);
+    expect(start).toContain(
+      "const owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });",
+    );
   });
 
   test("start serializes the final probe/bind and rechecks identity after a collision", async () => {

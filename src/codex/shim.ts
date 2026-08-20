@@ -400,7 +400,10 @@ case "$ocx_subcommand" in
     ;;
   *)
     if [ -z "$OCX_SHIM_BYPASS" ]; then
-      ${shQuote(bunPath)} ${shQuote(cliPath)} ensure >/dev/null 2>&1 || true
+      # Ensure routing is ready before Codex starts. A failed ensure gets one
+      # bounded retry, but neither result can prevent the real Codex launch.
+      ${shQuote(bunPath)} ${shQuote(cliPath)} ensure >/dev/null 2>&1 ||
+        ${shQuote(bunPath)} ${shQuote(cliPath)} ensure >/dev/null 2>&1 || true
     fi
     ;;
 esac
@@ -456,7 +459,7 @@ if "%~1"=="" goto ensure_ocx\r
 shift\r
 goto scan_codex_args\r
 :ensure_ocx\r
-"%OCX_BUN%" "%OCX_CLI%" ensure >nul 2>nul\r
+"%OCX_BUN%" "%OCX_CLI%" ensure >nul 2>nul || "%OCX_BUN%" "%OCX_CLI%" ensure >nul 2>nul\r
 :run_codex\r
 "%OCX_REAL_CODEX%" %*\r
 `;
@@ -491,7 +494,10 @@ foreach ($argValue in $args) {
 }
 $skipEnsure = $env:OCX_SHIM_BYPASS -or $internalCommands -contains $subcommand -or @("--help", "-h", "--version", "-V") -contains $subcommand
 if (-not $skipEnsure) {
+  # Ensure routing is ready before Codex starts. A failed ensure gets one
+  # bounded retry, but neither result can prevent the real Codex launch.
   & ${psString(bunPath)} ${psString(cliPath)} ensure *> $null
+  if ($LASTEXITCODE -ne 0) { & ${psString(bunPath)} ${psString(cliPath)} ensure *> $null }
 }
 & ${psString(realCodexPath)} @args
 exit $LASTEXITCODE

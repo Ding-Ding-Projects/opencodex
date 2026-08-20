@@ -61,7 +61,13 @@ function runPackagedLauncherProbe(registry: "failed" | "malformed") {
     copyFileSync(join(root, "src", "update", name), join(packageRoot, "src", "update", name));
   }
   mkdirSync(join(packageRoot, "src", "lib"), { recursive: true });
-  copyFileSync(join(root, "src", "lib", "trusted-path.mjs"), join(packageRoot, "src", "lib", "trusted-path.mjs"));
+  for (const name of [
+    "trusted-path.mjs",
+    "bun-binary-validator.mjs",
+    "bun-start-supervisor.mjs",
+  ]) {
+    copyFileSync(join(root, "src", "lib", name), join(packageRoot, "src", "lib", name));
+  }
   writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ version: "0.0.0", type: "module" }));
 
   for (const [name, contents] of Object.entries(protectedState)) {

@@ -7,6 +7,11 @@ import { join } from "node:path";
  * cannot be imported by tests. Guard its Windows-critical invariants at the source level.
  */
 const source = readFileSync(join(import.meta.dir, "..", "bin", "ocx.mjs"), "utf8");
+const runtimeSource = readFileSync(join(import.meta.dir, "..", "src", "lib", "bun-runtime.ts"), "utf8");
+const validatorSource = readFileSync(
+  join(import.meta.dir, "..", "src", "lib", "bun-binary-validator.mjs"),
+  "utf8",
+);
 
 describe("ocx.mjs npm launcher (source invariants)", () => {
   test("both npm call sites use the trusted absolute invocation, never a shell lookup", () => {
@@ -48,5 +53,61 @@ describe("ocx.mjs npm launcher (source invariants)", () => {
   test("--tag is allowlisted before reaching package-manager arguments", () => {
     expect(source).toContain('if (explicit === "preview" || explicit === "latest") return explicit;');
     expect(source).not.toMatch(/if \(tagIndex !== -1 && process\.argv\[tagIndex \+ 1\]\) return process\.argv/);
+  });
+
+  test("valid Bun overrides are selected before the bundled runtime", () => {
+    expect(source).toContain('const BUN_OVERRIDE_ENV = "OPENCODEX_BUN_PATH";');
+    expect(source).toContain("const overridePath = resolve(override);");
+    expect(source).toContain("if (isRealBunBinary(overridePath)) return overridePath;");
+
+    const resolveStart = source.indexOf("function resolveBun() {");
+    const overrideCheck = source.indexOf("process.env[BUN_OVERRIDE_ENV]?.trim()", resolveStart);
+    const overrideResolve = source.indexOf("resolve(override)", overrideCheck);
+    const bundledLookup = source.indexOf("bunDir = bunBinDir()", resolveStart);
+    expect(resolveStart).toBeGreaterThanOrEqual(0);
+    expect(overrideCheck).toBeGreaterThan(resolveStart);
+    expect(overrideResolve).toBeGreaterThan(overrideCheck);
+    expect(bundledLookup).toBeGreaterThan(overrideResolve);
+  });
+
+  test("invalid Bun overrides warn safely and fall back without throwing", () => {
+    expect(source).toContain('import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";');
+    expect(source).toContain("is missing, unreadable, or not a complete Bun binary; falling back to the bundled runtime.");
+    expect(source).not.toContain('${override} is missing, unreadable');
+  });
+
+  test("shares the Node-safe Bun regular-file size gate across both runtime paths", () => {
+    const launcherLines = source.replaceAll("\r\n", "\n").split("\n");
+    const runtimeLines = runtimeSource.replaceAll("\r\n", "\n").split("\n");
+    const validatorLines = validatorSource.replaceAll("\r\n", "\n").split("\n");
+
+    expect(launcherLines).toContain('import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";');
+    expect(runtimeLines).toContain('import { isRealBunBinary } from "./bun-binary-validator.mjs";');
+    expect(runtimeLines).toContain("export { isRealBunBinary };");
+    expect(validatorLines.filter(line => line.startsWith("import "))).toEqual([
+      'import { statSync } from "node:fs";',
+    ]);
+    expect(validatorLines.filter(line => line.startsWith("export const REAL_BUN_MIN_BYTES"))).toEqual([
+      "export const REAL_BUN_MIN_BYTES = 1_000_000;",
+    ]);
+
+    const signature = "export function isRealBunBinary(path, stat = statSync) {";
+    expect(validatorLines.filter(line => line.startsWith("export function isRealBunBinary"))).toEqual([
+      signature,
+    ]);
+    const functionStart = validatorLines.indexOf(signature);
+    // This exact body is intentionally only a regular-file and size predicate. It
+    // returns false on filesystem errors; it neither executes nor identifies Bun.
+    expect(validatorLines.slice(functionStart, functionStart + 8)).toEqual([
+      signature,
+      "  try {",
+      "    const stats = stat(path);",
+      "    return stats.isFile() && stats.size >= REAL_BUN_MIN_BYTES;",
+      "  } catch {",
+      "    return false;",
+      "  }",
+      "}",
+    ]);
+    expect(validatorLines[functionStart + 8]).toBe("");
   });
 });

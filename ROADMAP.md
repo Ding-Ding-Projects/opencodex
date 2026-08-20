@@ -101,6 +101,19 @@ out directly against the source.
 | Failure evidence | Every artifact producer defensively collects allowlisted outputs and run/SHA/job/runner metadata behind `always()` without masking the original failure. Step-specific YAML tests guard the collector, upload, and real release asset arguments. |
 | Verification | Typecheck, privacy, GUI lint/build, docs build, and focused workflow, Squirrel, export, and storage tests are green locally. Exact-commit GitHub Actions and release evidence remain pending until the integration commit lands. |
 
+## In progress — Bun crash-resilient startup (2026-08-20)
+
+The Windows startup repair is implemented on `codex/fix-bun-proxy-startup` and has passed its first
+combined local gate. It is not yet claimed as merged, pushed, released, or exact-commit-CI verified.
+
+| Work | Current state |
+| --- | --- |
+| Stale journal ordering | Healthy proxy ownership is established before recovery; only a definitively dead owner restores journaled Codex state. PID removal is snapshot-guarded against a concurrent starter. |
+| Bun native crash | The external Node launcher retries only `start` and `ensure`, once, after an abnormal exit with Bun's official crash marker. Retained stderr is bounded to 64 KiB per attempt, forwarded once, and never used across attempts. |
+| Runtime override | `OPENCODEX_BUN_PATH` is normalized, validated through the shared real-binary gate, and honored by both the direct launcher and durable service/shim selection. |
+| Codex path | The documented `ocx codex` dispatcher target exists again and is behavior-tested across startup races, runtime refusal, argument/stdio forwarding, signals, and Windows command shims. |
+| Local evidence | 112 passed, 3 platform skips, 0 failed, 563 assertions; root typecheck and diff hygiene passed after a locked dependency install. Full repository, docs, privacy, packaging, integration-line, remote CI, and release evidence remain pending. |
+
 ## Completed — plug-and-play local startup (2026-08-04)
 
 This refresh was implemented and verified on `codex/plug-and-play-startup` for integration into

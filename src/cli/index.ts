@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { currentExternalCodexModelProvider, restoreNativeCodex, shouldInjectApiAuthHeader } from "../codex/inject";
 import { stripGrokConfig } from "../grok/inject";
 import { restoreLegacyOpenaiHistory } from "../codex/history-provider";
-import { reconcileJournal } from "../codex/journal";
+import { reconcileJournalAsync } from "../codex/journal";
 import {
   codexAutoStartEnabled,
   getConfigDir,
@@ -148,6 +148,29 @@ async function chooseListenPort(requestedPort?: number): Promise<number> {
   }
 }
 
+/**
+ * Establish ownership before recovering a journal. A healthy proxy must keep its
+ * Codex state and journal untouched; only a probe that found no owner may recover
+ * a stale session. The PID snapshot is compared again before cleanup so a
+ * concurrent starter cannot have its freshly-written PID file removed by the
+ * losing process.
+ */
+async function findProxyOwnerBeforeJournalRecovery(
+  options: { probeConfiguredPort?: boolean } = {},
+): Promise<{ live: Awaited<ReturnType<typeof findLiveProxy>>; pidSnapshot: number | null }> {
+  const pidSnapshot = readPidFileValue();
+  const hasRuntimeOwner = readRuntimePort() !== null;
+  const shouldProbe = pidSnapshot !== null || hasRuntimeOwner || options.probeConfiguredPort === true;
+  const live = shouldProbe ? await findLiveProxy() : null;
+  if (live) return { live, pidSnapshot };
+
+  // The probe established that the snapshotted owner is stale. Compare before
+  // deleting so a concurrent start that rewrote the PID file keeps its state.
+  removePidIfValueIs(pidSnapshot);
+  if (!currentExternalCodexModelProvider()) await reconcileJournalAsync();
+  return { live: null, pidSnapshot };
+}
+
 async function handleStart(options: { block?: boolean } = {}) {
   // Native (WinSW) service mode has no batch wrapper to read the service token file
   // into the environment, so the app loads it here before the server binds. The server
@@ -155,17 +178,15 @@ async function handleStart(options: { block?: boolean } = {}) {
   const serviceToken = loadServiceTokenFromFile(process.env);
   if (serviceToken) process.env.OPENCODEX_API_AUTH_TOKEN = serviceToken;
   const requestedPort = parsePortOption();
-  if (!currentExternalCodexModelProvider()) reconcileJournal();
-  const existingPid = readPid();
-  // Runtime metadata can outlive a missing/corrupt pid file. Probe unconditionally
-  // so a second start never creates a duplicate on a fallback port.
-  const existingLive = await findLiveProxy();
+  // Runtime metadata can outlive a missing/corrupt pid file, and both ownership
+  // files can disappear while the configured listener remains healthy. Probe the
+  // configured port before journal recovery so a second start never restores a
+  // live owner's Codex state or creates a duplicate daemon.
+  const owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });
+  const existingLive = owner.live;
   if (existingLive) {
-    console.error(`⚠️  Proxy already running (PID ${existingLive.pid ?? existingPid ?? "unknown"}, port ${existingLive.port}). Use 'ocx stop' first.`);
+    console.error(`⚠️  Proxy already running (PID ${existingLive.pid ?? owner.pidSnapshot ?? "unknown"}, port ${existingLive.port}). Use 'ocx stop' first.`);
     process.exit(1);
-  }
-  if (existingPid) {
-    removePid(existingPid);
   }
 
   // Interactive-only update prompt. Must run BEFORE we bind a port / write a
@@ -392,13 +413,13 @@ async function handleStart(options: { block?: boolean } = {}) {
 }
 
 async function handleEnsure() {
-  if (!currentExternalCodexModelProvider()) reconcileJournal();
+  const owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });
   const config = loadConfig();
   if (!codexAutoStartEnabled(config)) {
     console.log("Codex autostart is disabled.");
     return;
   }
-  const live = await findLiveProxy();
+  const live = owner.live;
     if (live) {
       await syncModelsToCodex(live.port).catch(e => {
         console.error(`⚠️  Model sync skipped: ${e instanceof Error ? e.message : String(e)}`);
@@ -1123,11 +1144,6 @@ switch (command) {
     process.exitCode = await handleScheduleCommand(args.slice(1));
     break;
   }
-  case "school-mode": {
-    const { handleSchoolModeCommand } = await import("./school-mode");
-    process.exitCode = await handleSchoolModeCommand(args.slice(1));
-    break;
-  }
   case "pdf": {
     const { handlePdfCommand } = await import("./pdf");
     process.exitCode = await handlePdfCommand(args.slice(1));
@@ -1156,6 +1172,11 @@ switch (command) {
   case "grok": {
     const { handleGrokCommand } = await import("./integrations");
     process.exitCode = await handleGrokCommand(args.slice(1));
+    break;
+  }
+  case "school-mode": {
+    const { handleSchoolModeCommand } = await import("./school-mode");
+    process.exitCode = await handleSchoolModeCommand(args.slice(1));
     break;
   }
   case "changelog": {

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isRealBunBinary, bundledBunPath, durableBunPath, durableBunRuntime, overrideBunPath } from "../src/lib/bun-runtime";
@@ -25,6 +25,16 @@ describe("isRealBunBinary (size gate vs placeholder stub)", () => {
     const real = join(tmp, "bun-real.exe");
     writeFileSync(real, Buffer.alloc(1_000_000));
     expect(isRealBunBinary(real)).toBe(true);
+  });
+
+  it("rejects a directory even when its name looks like a binary", () => {
+    const directory = join(tmp, "bun-directory.exe");
+    mkdirSync(directory);
+    const directoryStats = statSync(directory);
+    expect(isRealBunBinary(directory, () => ({
+      isFile: () => directoryStats.isFile(),
+      size: 1_000_000,
+    }))).toBe(false);
   });
 
   it("rejects a non-existent path", () => {
@@ -61,6 +71,32 @@ describe("bundledBunPath / durableBunPath", () => {
     else process.env.OPENCODEX_BUN_PATH = previousOverride;
   });
 
+  it("resolves a relative override against the launcher cwd", () => {
+    const launcherCwd = join(tmp, "launcher-cwd");
+    const real = join(launcherCwd, "relative-bun.exe");
+    const previousCwd = process.cwd();
+    const inheritedOverride = process.env.OPENCODEX_BUN_PATH;
+    mkdirSync(launcherCwd, { recursive: true });
+    writeFileSync(real, Buffer.alloc(1_000_000));
+    const canonicalReal = realpathSync(real);
+
+    try {
+      process.chdir(launcherCwd);
+      process.env.OPENCODEX_BUN_PATH = "  relative-bun.exe  ";
+      expect(overrideBunPath()).toBe(canonicalReal);
+      expect(durableBunRuntime()).toEqual({
+        path: canonicalReal,
+        source: "override",
+        overrideEnv: "OPENCODEX_BUN_PATH",
+      });
+      expect(durableBunPath()).toBe(canonicalReal);
+    } finally {
+      process.chdir(previousCwd);
+      if (inheritedOverride === undefined) delete process.env.OPENCODEX_BUN_PATH;
+      else process.env.OPENCODEX_BUN_PATH = inheritedOverride;
+    }
+  });
+
   it("resolves the installed bundled bun binary (dev has the bun dep)", () => {
     const p = bundledBunPath();
     // In this repo the `bun` dependency is installed, so the real binary resolves.
@@ -70,11 +106,18 @@ describe("bundledBunPath / durableBunPath", () => {
   });
 
   it("durableBunPath returns the bundled path when present, else process.execPath", () => {
-    const bundled = bundledBunPath();
-    const durable = durableBunPath();
-    expect(typeof durable).toBe("string");
-    expect(durable.length).toBeGreaterThan(0);
-    if (bundled) expect(durable).toBe(bundled);
-    else expect(durable).toBe(process.execPath);
+    const inheritedOverride = process.env.OPENCODEX_BUN_PATH;
+    delete process.env.OPENCODEX_BUN_PATH;
+    try {
+      const bundled = bundledBunPath();
+      const durable = durableBunPath();
+      expect(typeof durable).toBe("string");
+      expect(durable.length).toBeGreaterThan(0);
+      if (bundled) expect(durable).toBe(bundled);
+      else expect(durable).toBe(process.execPath);
+    } finally {
+      if (inheritedOverride === undefined) delete process.env.OPENCODEX_BUN_PATH;
+      else process.env.OPENCODEX_BUN_PATH = inheritedOverride;
+    }
   });
 });
