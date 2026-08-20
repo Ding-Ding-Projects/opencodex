@@ -435,12 +435,6 @@ if (process.argv[2] === "update" && isNodeModulesInstall() && !isBunGlobalInstal
 
 const bun = resolveBun();
 
-// Node does not load project dotenv files, while Bun does. Record the launcher’s
-// own credential provenance before handing control to Bun so dotenv cannot turn
-// a subscriber login into an accidental API-key route.
-const preBunAnthropicSlots = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
-  .filter(name => typeof process.env[name] === "string" && process.env[name] !== "");
-
 // Run the Bun child asynchronously and FORWARD termination signals to it, then wait
 // for its graceful shutdown before this launcher exits. The previous blocking
 // spawnSync() could not run JS signal handlers and did not forward signals, so a
@@ -452,7 +446,6 @@ const preBunAnthropicSlots = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
 const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2)], {
   windowsHide: true,
   retryCommand: process.argv[2],
-  env: { ...process.env, OCX_PRE_BUN_ANTHROPIC_ENV: preBunAnthropicSlots.join(",") },
 });
 if (result.error) {
   console.error(`opencodex: failed to launch Bun runtime: ${result.error.message}`);

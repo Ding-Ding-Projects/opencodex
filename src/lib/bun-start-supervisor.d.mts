@@ -17,6 +17,11 @@ export interface BunStartOptions {
   writeStderr?: (chunk: Buffer | string) => unknown;
   maxRetries?: number;
   retryCommand?: string;
+  signalSource?: {
+    on(signal: NodeJS.Signals, listener: () => void): unknown;
+    removeListener(signal: NodeJS.Signals, listener: () => void): unknown;
+  };
+  platform?: NodeJS.Platform;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   windowsHide?: boolean;

@@ -63,6 +63,8 @@ export function runBunWithCrashRetry(command, args, options = {}) {
     writeStderr = chunk => process.stderr.write(chunk),
     maxRetries = BUN_CRASH_RETRY_LIMIT,
     retryCommand,
+    signalSource = process,
+    platform = process.platform,
     env,
     cwd,
     windowsHide,
@@ -76,7 +78,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
   let panicQualifiedAttempts = 0;
   let parentSignal = null;
   let finished = false;
-  const forwardedSignals = process.platform === "win32"
+  const forwardedSignals = platform === "win32"
     ? ["SIGINT", "SIGTERM"]
     : ["SIGINT", "SIGTERM", "SIGHUP"];
   const handlers = [];
@@ -86,7 +88,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
 
   return new Promise(resolve => {
     const removeHandlers = () => {
-      for (const [signal, handler] of handlers) process.removeListener(signal, handler);
+      for (const [signal, handler] of handlers) signalSource.removeListener(signal, handler);
       handlers.length = 0;
     };
 
@@ -171,7 +173,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
         parentSignal = signal;
         try { child?.kill(signal); } catch { /* child already exited */ }
       };
-      process.on(signal, handler);
+      signalSource.on(signal, handler);
       handlers.push([signal, handler]);
     }
     launch();

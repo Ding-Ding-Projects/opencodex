@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { unlinkSync } from "node:fs";
 import {
   BUN_CRASH_MARKER,
@@ -8,7 +10,9 @@ import {
 } from "../src/lib/bun-start-supervisor.mjs";
 
 const node = process.execPath;
-const staleSessionWarning = "warning: stale session state was found; continuing with a fresh session";
+const staleSessionWarning = "⚠️  Previous session (PID 13440) did not shut down cleanly. Codex state restored from journal.";
+const panicLine = "panic(thread 3616): Segmentation fault at address 0xFFFFFFFFFFFFFFFF";
+const crashLine = "oh no: Bun has crashed. This indicates a bug in Bun, not your code.";
 
 function childScript(body: string): string {
   return String.raw`const fs = require("node:fs"); ${body}`;
@@ -41,8 +45,8 @@ describe("Node-safe Bun start supervisor", () => {
         if (!fs.existsSync(${JSON.stringify(marker)})) {
           fs.writeFileSync(${JSON.stringify(marker)}, "1");
           process.stderr.write(${JSON.stringify(staleSessionWarning + "\n")});
-          process.stderr.write(${JSON.stringify("panic(thread 1): Internal assertion failure\n")});
-          process.stderr.write(${JSON.stringify(BUN_CRASH_MARKER + "\n")});
+          process.stderr.write(${JSON.stringify(panicLine + "\n")});
+          process.stderr.write(${JSON.stringify(crashLine + "\n")});
           process.exit(139);
         }
         process.stderr.write("proxy attempt two" + String.fromCharCode(10));
@@ -52,7 +56,7 @@ describe("Node-safe Bun start supervisor", () => {
       expect(result.signal).toBeNull();
       expect(result.retries).toBe(1);
       expect(output.join("")).toBe(
-        `${staleSessionWarning}\npanic(thread 1): Internal assertion failure\n${BUN_CRASH_MARKER}\nopencodex: Bun crashed during start; retrying once.\nproxy attempt two\n`,
+        `${staleSessionWarning}\n${panicLine}\n${crashLine}\nopencodex: Bun crashed during start; retrying once.\nproxy attempt two\n`,
       );
       expect(output.join("").match(new RegExp(BUN_CRASH_MARKER, "g"))).toHaveLength(1);
     } finally {
@@ -63,14 +67,36 @@ describe("Node-safe Bun start supervisor", () => {
   test("stops after a crash twice and emits one actionable runtime hint", async () => {
     const { output, result } = await runFixture(`
       process.stderr.write(${JSON.stringify(staleSessionWarning + "\n")});
-      process.stderr.write(${JSON.stringify("panic(thread 1): Internal assertion failure\n")});
-      process.stderr.write(${JSON.stringify(BUN_CRASH_MARKER + "\n")});
+      process.stderr.write(${JSON.stringify(panicLine + "\n")});
+      process.stderr.write(${JSON.stringify(crashLine + "\n")});
       process.exit(139);
     `);
     expect(result.code).toBe(139);
     expect(result.retries).toBe(1);
     expect(output.join("").match(new RegExp(BUN_CRASH_MARKER, "g"))).toHaveLength(2);
     expect(output.join("").match(/Try OPENCODEX_BUN_PATH/g)).toHaveLength(1);
+  });
+
+  test("does not let attempt one crash output classify an ordinary attempt two", async () => {
+    const marker = fixturePath("ordinary-second");
+    try {
+      const { output, result } = await runFixture(`
+        if (!fs.existsSync(${JSON.stringify(marker)})) {
+          fs.writeFileSync(${JSON.stringify(marker)}, "1");
+          process.stderr.write(${JSON.stringify(panicLine + "\\n")});
+          process.stderr.write(${JSON.stringify(crashLine + "\\n")});
+          process.exit(139);
+        }
+        process.stderr.write("ordinary follow-up failure" + String.fromCharCode(10));
+        process.exit(7);
+      `);
+      expect(result.retries).toBe(1);
+      expect(result.code).toBe(7);
+      expect(result.stderrTail).not.toContain(BUN_CRASH_MARKER);
+      expect(output.join("")).not.toContain("Bun crashed twice");
+    } finally {
+      cleanup(marker);
+    }
   });
 
   test("does not retry a warning without the official crash marker", async () => {
@@ -107,12 +133,33 @@ describe("Node-safe Bun start supervisor", () => {
     expect(result.stderrTail).toContain(BUN_CRASH_MARKER);
   });
 
-  test("never retries a parent-termination signal", async () => {
-    if (process.platform === "win32") return;
-    const { output, result } = await runFixture(`
-      process.stderr.write(${JSON.stringify(BUN_CRASH_MARKER)});
-      process.kill(process.pid, "SIGTERM");
-    `);
+  test("never retries parent termination and forwards the signal to the child on every platform", async () => {
+    const signalSource = new EventEmitter();
+    const output: string[] = [];
+    let killedWith: NodeJS.Signals | undefined;
+    let child;
+    const spawnImpl = (...spawnArgs: Parameters<typeof import("node:child_process").spawn>) => {
+      child = spawn(...spawnArgs);
+      const originalKill = child.kill.bind(child);
+      child.kill = (signal?: NodeJS.Signals) => {
+        killedWith = signal;
+        return originalKill(signal);
+      };
+      setTimeout(() => signalSource.emit("SIGTERM"), 5);
+      return child;
+    };
+    const result = await runBunWithCrashRetry(
+      node,
+      ["-e", childScript(`process.stderr.write(${JSON.stringify(BUN_CRASH_MARKER)}); setTimeout(() => {}, 1000);`)],
+      {
+        retryCommand: "start",
+        signalSource,
+        platform: "win32",
+        spawnImpl,
+        writeStderr: chunk => output.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk)),
+      },
+    );
+    expect(killedWith).toBe("SIGTERM");
     expect(result.signal).toBe("SIGTERM");
     expect(result.retries).toBe(0);
     expect(output.join("")).not.toContain("retrying");
