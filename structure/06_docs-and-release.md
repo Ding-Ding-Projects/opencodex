@@ -86,9 +86,15 @@ npm dependency (esbuild-style: a tiny main package plus platform-specific `@oven
 
 Invariants:
 
-- `bin/ocx.mjs` resolves the bundled binary via `require.resolve("bun/package.json")` and a size gate
-  (`>= 1 MB`) that rejects the ~450-byte placeholder stub left by `--ignore-scripts`/pnpm; it then
-  lazy-runs `install.js` and execs `src/cli/index.ts` under Bun, propagating exit code and signal.
+- `bin/ocx.mjs` first validates `OPENCODEX_BUN_PATH` when explicitly set, otherwise resolves the
+  bundled binary via `require.resolve("bun/package.json")` and the same shared size/readability gate
+  (`>= 1 MB`) that rejects the ~450-byte placeholder stub left by `--ignore-scripts`/pnpm. Rejected
+  overrides warn without exposing the supplied path and fall back to the bundled runtime.
+- The launcher lazy-runs Bun's `install.js` when required, then invokes `src/cli/index.ts` through the
+  Node-safe `bun-start-supervisor.mjs`. Only `start` and `ensure` receive one retry after an abnormal
+  exit containing Bun's exact crash marker; stderr is forwarded byte-for-byte and bounded to a
+  64 KiB attempt-local diagnostic tail. All other commands and failure classes preserve the original
+  single-attempt exit semantics.
 - `package.json` carries `"trustedDependencies": ["bun"]` so `bun install` runs the dependency's
   postinstall, and `"engines": { "node": ">=18" }` (Bun is no longer a user prerequisite).
 - `src/service.ts` and `src/codex/shim.ts` bake `durableBunPath()` (the bundled binary, stable under
