@@ -348,21 +348,6 @@ const helpEntries: Record<string, HelpEntry> = {
   },
   "api-key": { usage: "ocx api-key <list|create|remove> ...", summary: "Alias of ocx access key." },
   grok: { usage: "ocx grok <status|exclude|include|set|clear|apply> ...", summary: "Manage and apply the Grok Build model fence." },
-  "school-mode": {
-    usage: "ocx school-mode <status|enable|disable|set-credential|rename> [--json]",
-    summary: "The universal, cross-app English-only toggle: status, on/off, credential, and rename.",
-    details: [
-      "status          Whether the mode is on, the unlock credential state, and the shared file's location.",
-      "enable          Turn it on; refused until an unlock credential has been set.",
-      "disable         Turn it off; reads the PIN/password from stdin.",
-      "set-credential  Set or change the PIN/password; reads the current one first if one is set.",
-      "rename <name>   Change the display name every surface must use; --clear restores the shipped name.",
-      "",
-      "This reaches the exact same shared record and management routes the GUI's School Mode card does, so",
-      "the two can never disagree about the state. It is a for-fun toggle, not a security boundary: a",
-      "forgotten PIN is reset by deleting the shared file \"status\" prints the path to.",
-    ],
-  },
   integration: { usage: "ocx integration <claude|grok> ...", summary: "Manage supported client integrations." },
   system: {
     usage: "ocx system <status|settings|startup|diagnostics|sync|update> ...",
