@@ -178,9 +178,11 @@ async function handleStart(options: { block?: boolean } = {}) {
   const serviceToken = loadServiceTokenFromFile(process.env);
   if (serviceToken) process.env.OPENCODEX_API_AUTH_TOKEN = serviceToken;
   const requestedPort = parsePortOption();
-  // Runtime metadata can outlive a missing/corrupt pid file. Probe when persisted
-  // owner evidence exists so a second start never creates a duplicate daemon.
-  const owner = await findProxyOwnerBeforeJournalRecovery();
+  // Runtime metadata can outlive a missing/corrupt pid file, and both ownership
+  // files can disappear while the configured listener remains healthy. Probe the
+  // configured port before journal recovery so a second start never restores a
+  // live owner's Codex state or creates a duplicate daemon.
+  const owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });
   const existingLive = owner.live;
   if (existingLive) {
     console.error(`⚠️  Proxy already running (PID ${existingLive.pid ?? owner.pidSnapshot ?? "unknown"}, port ${existingLive.port}). Use 'ocx stop' first.`);

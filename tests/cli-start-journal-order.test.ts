@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -15,10 +16,11 @@ type Fixture = {
   configPath: string;
   journalPath: string;
   pidPath: string;
+  runtimePath: string;
   env: Record<string, string>;
 };
 
-function fixture(): Fixture {
+function fixture(port = 0): Fixture {
   const root = mkdtempSync(join(tmpdir(), "ocx-start-owner-"));
   roots.push(root);
   const codexHome = join(root, "codex");
@@ -29,8 +31,9 @@ function fixture(): Fixture {
   const configPath = join(codexHome, "config.toml");
   const journalPath = join(codexHome, "opencodex-journal.json");
   const pidPath = join(ocxHome, "ocx.pid");
+  const runtimePath = join(ocxHome, "runtime-port.json");
   writeFileSync(join(ocxHome, "config.json"), JSON.stringify({
-    port: 0,
+    port,
     hostname: "127.0.0.1",
     codexAutoStart: false,
     syncResumeHistory: false,
@@ -46,6 +49,7 @@ function fixture(): Fixture {
     configPath,
     journalPath,
     pidPath,
+    runtimePath,
     env: {
       HOME: home,
       USERPROFILE: home,
@@ -55,6 +59,18 @@ function fixture(): Fixture {
       NO_PROXY: "127.0.0.1,localhost",
     },
   };
+}
+
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("unable to reserve a test port");
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  return address.port;
 }
 
 function arrangeRecoverableJournal(fx: Fixture): { original: string; injected: string } {
@@ -104,11 +120,10 @@ async function startOwner(fx: Fixture): Promise<ReturnType<typeof Bun.spawn>> {
     stderr: "pipe",
   });
   children.push(child);
-  const runtimePath = join(fx.ocxHome, "runtime-port.json");
   const runtime = await waitFor(() => {
-    if (!existsSync(runtimePath)) return null;
+    if (!existsSync(fx.runtimePath)) return null;
     try {
-      const value = JSON.parse(readFileSync(runtimePath, "utf8")) as { pid?: number; port?: number };
+      const value = JSON.parse(readFileSync(fx.runtimePath, "utf8")) as { pid?: number; port?: number };
       return value.pid === child.pid && typeof value.port === "number" && value.port > 0 ? value : null;
     } catch {
       return null;
@@ -167,6 +182,32 @@ describe("start and ensure journal ownership (#1230)", () => {
       expect(readFileSync(fx.configPath, "utf8")).toBe(injected);
       expect(existsSync(fx.journalPath)).toBe(true);
       expect(readFileSync(fx.pidPath, "utf8")).toBe(String(owner.pid));
+    } finally {
+      owner.kill("SIGTERM");
+      await owner.exited;
+    }
+  }, 30_000);
+
+  test("the configured listener preserves a live owner's journal when both ownership files are missing", async () => {
+    const fx = fixture(await freePort());
+    const owner = await startOwner(fx);
+    try {
+      rmSync(fx.pidPath, { force: true });
+      rmSync(fx.runtimePath, { force: true });
+      const { injected } = arrangeRecoverableJournal(fx);
+
+      const start = await runCli(fx, ["start"]);
+      expect(start.exitCode).toBe(1);
+      expect(start.stderr).toContain("Proxy already running");
+      expect(readFileSync(fx.configPath, "utf8")).toBe(injected);
+      expect(existsSync(fx.journalPath)).toBe(true);
+
+      const ensure = await runCli(fx, ["ensure"]);
+      expect(ensure.exitCode).toBe(0);
+      expect(ensure.stdout).toContain("Codex autostart is disabled");
+      expect(readFileSync(fx.configPath, "utf8")).toBe(injected);
+      expect(existsSync(fx.journalPath)).toBe(true);
+      expect(owner.exitCode).toBeNull();
     } finally {
       owner.kill("SIGTERM");
       await owner.exited;
