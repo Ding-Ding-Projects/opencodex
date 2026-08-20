@@ -22,6 +22,7 @@ import {
   runProcessTreeCommand,
 } from "../src/update/install-process.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
+import { runBunWithCrashRetry } from "../src/lib/bun-start-supervisor.mjs";
 import { parseConcreteUpdateVersion } from "../src/update/version-resolution.mjs";
 
 const PKG = "@bitkyc08/opencodex";
@@ -434,6 +435,12 @@ if (process.argv[2] === "update" && isNodeModulesInstall() && !isBunGlobalInstal
 
 const bun = resolveBun();
 
+// Node does not load project dotenv files, while Bun does. Record the launcher’s
+// own credential provenance before handing control to Bun so dotenv cannot turn
+// a subscriber login into an accidental API-key route.
+const preBunAnthropicSlots = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+  .filter(name => typeof process.env[name] === "string" && process.env[name] !== "");
+
 // Run the Bun child asynchronously and FORWARD termination signals to it, then wait
 // for its graceful shutdown before this launcher exits. The previous blocking
 // spawnSync() could not run JS signal handlers and did not forward signals, so a
@@ -442,37 +449,18 @@ const bun = resolveBun();
 // port left bound, pid/runtime-port files left behind, Codex config not restored.
 // windowsHide: from a windowless parent (the desktop app), a console-subsystem
 // child would otherwise allocate a visible console window on Windows.
-const child = spawn(bun, [cliPath, ...process.argv.slice(2)], { stdio: "inherit", windowsHide: true });
-
-// Windows has no real POSIX signals (no SIGHUP); forwarding is best-effort there.
-const FORWARDED = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
-const handlers = FORWARDED.map(sig => {
-  const handler = () => {
-    try {
-      child.kill(sig);
-    } catch {
-      /* child already exited */
-    }
-  };
-  process.on(sig, handler);
-  return [sig, handler];
+const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2)], {
+  windowsHide: true,
+  env: { ...process.env, OCX_PRE_BUN_ANTHROPIC_ENV: preBunAnthropicSlots.join(",") },
 });
-const clearHandlers = () => {
-  for (const [sig, handler] of handlers) process.removeListener(sig, handler);
-};
-
-child.on("error", err => {
-  clearHandlers();
-  console.error(`opencodex: failed to launch Bun runtime: ${err.message}`);
+if (result.error) {
+  console.error(`opencodex: failed to launch Bun runtime: ${result.error.message}`);
   process.exit(1);
-});
-
-child.on("exit", (code, signal) => {
-  clearHandlers();
-  // Mirror the child's terminating signal/exit code so this launcher's status matches.
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
-});
+}
+// Mirror the child’s terminating signal/exit code so this launcher has the same
+// status as the supervised Bun process, including parent termination signals.
+if (result.signal) {
+  process.kill(process.pid, result.signal);
+} else {
+  process.exit(result.code ?? 1);
+}

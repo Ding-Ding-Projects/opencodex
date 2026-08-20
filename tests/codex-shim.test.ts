@@ -7,6 +7,16 @@ import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildW
 import { removeTempDir } from "./helpers/temp-dir";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
+
+function waitForLog(path: string, predicate: (value: string) => boolean): string {
+  let value = "";
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    value = readFileSync(path, "utf8");
+    if (predicate(value)) return value;
+    Bun.sleepSync(10);
+  }
+  return value;
+}
 const skipStabilityWait = () => {};
 
 function withInstalledShim(run: (paths: {
@@ -83,6 +93,7 @@ describe("Codex autostart shim", () => {
     expect(script).toContain('set "OCX_REAL_CODEX=C:\\Tools&A\\100%%codex^^\\codex-real.exe"');
     expect(script).toContain('set "OCX_BUN=C:\\Bun&Dir\\100%%bun^^\\bun.exe"');
     expect(script).toContain('set "OCX_CLI=C:\\ocx&Dir\\cli.ts"');
+    expect(script).toContain('start "" /b cmd /d /c');
     expect(script).toContain('"%OCX_BUN%" "%OCX_CLI%" ensure >nul 2>nul');
     expect(script).not.toContain('"C:\\Bun&Dir\\100%bun^\\bun.exe"');
     expect(script).not.toContain('"C:\\Tools&A\\100%codex^\\codex-real.exe" %*');
@@ -274,15 +285,15 @@ describe("Codex autostart shim", () => {
 
     const exec = spawnSync(shimPath, ["exec", "hello"], { encoding: "utf8", env });
     expect(exec.status).toBe(0);
-    expect(readFileSync(logPath, "utf8")).toBe(
-      "codex:doctor\ncodex:-s read-only -a untrusted app-server\nbun:/opt/opencodex/src/cli.ts ensure\ncodex:exec hello\n",
-    );
+    const afterExec = waitForLog(logPath, value => value.includes("bun:/opt/opencodex/src/cli.ts ensure"));
+    expect(afterExec).toContain("codex:exec hello\n");
+    expect(afterExec).toContain("bun:/opt/opencodex/src/cli.ts ensure\n");
 
     const prompt = spawnSync(shimPath, ["hello"], { encoding: "utf8", env });
     expect(prompt.status).toBe(0);
-    expect(readFileSync(logPath, "utf8")).toBe(
-      "codex:doctor\ncodex:-s read-only -a untrusted app-server\nbun:/opt/opencodex/src/cli.ts ensure\ncodex:exec hello\nbun:/opt/opencodex/src/cli.ts ensure\ncodex:hello\n",
-    );
+    const afterPrompt = waitForLog(logPath, value => value.endsWith("bun:/opt/opencodex/src/cli.ts ensure\n"));
+    expect(afterPrompt).toContain("codex:hello\n");
+    expect(afterPrompt).toContain("bun:/opt/opencodex/src/cli.ts ensure\n");
   });
 
   test("Windows shim skips ocx startup only for Codex management commands", () => {
