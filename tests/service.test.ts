@@ -963,7 +963,7 @@ describe("service diagnostics", () => {
       mkdirSync(stateDir, { recursive: true });
       const statePath = join(stateDir, "service-state.json");
 
-      const missing = join(stateDir, "gone", "bun");
+      const missing = ["C:", "Users", "private-name", "secret-token-dir", "bun.exe"].join("\\");
       writeFileSync(statePath, JSON.stringify({
         version: 1,
         codexHome: stateDir,
@@ -973,7 +973,10 @@ describe("service diagnostics", () => {
       }), "utf8");
       const diagnostic = bakedServicePathsDiagnostic();
       expect(diagnostic).toContain("STALE baked paths");
-      expect(diagnostic).toContain(missing);
+      expect(diagnostic).toContain(["C:", "Users", "[USER]", "[REDACTED]", "bun.exe"].join("\\"));
+      expect(diagnostic).toContain("run 'ocx service install' to re-bake");
+      expect(diagnostic).not.toContain("private-name");
+      expect(diagnostic).not.toContain("secret-token-dir");
 
       writeFileSync(statePath, JSON.stringify({
         version: 1,

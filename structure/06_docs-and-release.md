@@ -105,6 +105,25 @@ Invariants:
 - Public docs (root READMEs + `docs-site` installation pages, all locales) state Node 18+ as the only
   prerequisite. Do not reintroduce "install Bun first" / "bun must be on PATH" guidance for npm users.
 
+### Runtime closure and port boundary
+
+| Consumer | Executable path | Retry and diagnostic ownership |
+| --- | --- | --- |
+| Published npm commands | Node 18+ runs `bin/ocx.mjs`; the launcher resolves or lazily installs the bundled Bun runtime, then starts `src/cli/index.ts`. | `bun-start-supervisor.mjs` forwards child stderr exactly as received, retains only a 64 KiB attempt-local tail for classification, and gives only `start`/`ensure` one retry after the exact Bun panic marker on an abnormal exit. The final child status remains authoritative. |
+| Installed service | The generated launchd, systemd, or Task Scheduler artifact invokes the `durableBunPath()` result and the TypeScript CLI directly. | The operating-system service manager owns restart behavior. It does not pass through or stack the npm launcher's panic classifier, stderr tail, retry, or recovery hint. |
+| Installed Codex shim | The generated shell, batch, or PowerShell shim invokes the same durable Bun/CLI pair directly before handing off to native Codex. | The shim keeps its existing best-effort two-attempt `ensure` sequence. It does not pass through or stack the npm launcher's panic classifier or diagnostic behavior. |
+| From-source development | Contributors run the Bun-shebang CLI directly. | The npm launcher contract does not apply. |
+
+The `OPENCODEX_BUN_PATH` override is checked before the bundled runtime for both the npm launcher and
+durable artifact generation. Rejection is deliberately path-redacted and falls back to the bundle;
+acceptance proves only that the resolved path is a regular file above the placeholder-size floor,
+not that it is an authentic or compatible Bun executable.
+
+This closure is packaging and TypeScript-launch infrastructure. It has no Go implementation
+counterpart on `dev2-go`: the Go-native runtime does not consume the npm Node launcher, bundled-Bun
+resolver, generated Bun service command, or Codex Bun shim. Forward-port the structure record so the
+branch documents the boundary, but do not manufacture a Go runtime change for it.
+
 ## Release workflow
 
 Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`, `prepublishOnly` runs

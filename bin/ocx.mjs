@@ -448,7 +448,11 @@ const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2
   retryCommand: process.argv[2],
 });
 if (result.error) {
-  console.error(`opencodex: failed to launch Bun runtime: ${result.error.message}`);
+  // A native spawn error can embed the executable path in `message`.
+  // Keep launcher diagnostics actionable without disclosing an override or
+  // package-install path that may contain a user or machine identity.
+  const errorCode = typeof result.error.code === "string" ? result.error.code : "spawn error";
+  console.error(`opencodex: failed to launch Bun runtime (${errorCode}).`);
   process.exit(1);
 }
 // Mirror the child’s terminating signal/exit code so this launcher has the same

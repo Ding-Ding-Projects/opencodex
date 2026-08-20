@@ -76,11 +76,17 @@ describe("ocx.mjs npm launcher (source invariants)", () => {
     expect(source).not.toContain('${override} is missing, unreadable');
   });
 
+  test("spawn failures expose only a safe error code, never the executable-bearing message", () => {
+    expect(source).toContain('typeof result.error.code === "string"');
+    expect(source).toContain("failed to launch Bun runtime (${errorCode})");
+    expect(source).not.toContain("result.error.message");
+  });
+
   test("shares the Node-safe Bun binary validator across both runtime paths", () => {
     expect(source).toContain('import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";');
     expect(runtimeSource).toContain('import { isRealBunBinary } from "./bun-binary-validator.mjs";');
     expect(runtimeSource).toContain("export { isRealBunBinary };");
     expect(validatorSource).toContain("export const REAL_BUN_MIN_BYTES = 1_000_000;");
-    expect(validatorSource).toMatch(/export function isRealBunBinary\(path\) \{[\s\S]*?try \{[\s\S]*?statSync\(path\)[\s\S]*?catch \{[\s\S]*?return false;/);
+    expect(validatorSource).toMatch(/export function isRealBunBinary\(path, stat = statSync\) \{[\s\S]*?try \{[\s\S]*?stat\(path\)[\s\S]*?catch \{[\s\S]*?return false;/);
   });
 });
