@@ -133,6 +133,58 @@ describe("Node-safe Bun start supervisor", () => {
     expect(result.stderrTail).toContain(BUN_CRASH_MARKER);
   });
 
+  test("keeps a streamed crash marker classified after later stderr evicts it from the tail", async () => {
+    const marker = fixturePath("evicted-crash-marker");
+    try {
+      const { output, result } = await runFixture(`
+        if (!fs.existsSync(${JSON.stringify(marker)})) {
+          fs.writeFileSync(${JSON.stringify(marker)}, "1");
+          process.stderr.write(${JSON.stringify(BUN_CRASH_MARKER)});
+          process.stderr.write("x".repeat(${BUN_CRASH_STDERR_MAX_BYTES + 4096}));
+          process.exit(139);
+        }
+        process.stderr.write("proxy attempt two" + String.fromCharCode(10));
+      `);
+      expect(result.code).toBe(0);
+      expect(result.retries).toBe(1);
+      expect(output.join("")).toContain("retrying once");
+    } finally {
+      cleanup(marker);
+    }
+  });
+
+  test("pauses child stderr on sink backpressure and resumes only after drain", async () => {
+    const drainSource = new EventEmitter();
+    const stderr = new EventEmitter() as EventEmitter & { pause(): void; resume(): void };
+    let pauseCount = 0;
+    let resumeCount = 0;
+    stderr.pause = () => { pauseCount += 1; };
+    stderr.resume = () => { resumeCount += 1; };
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: typeof stderr;
+      kill(signal?: NodeJS.Signals): boolean;
+    };
+    child.stderr = stderr;
+    child.kill = () => true;
+
+    const resultPromise = runBunWithCrashRetry(node, ["start"], {
+      spawnImpl: (() => child) as unknown as typeof spawn,
+      retryCommand: "start",
+      writeStderr: () => false,
+      stderrDrainSource: drainSource,
+    });
+    stderr.emit("data", Buffer.from("noisy native stderr"));
+    expect(pauseCount).toBe(1);
+    expect(resumeCount).toBe(0);
+
+    drainSource.emit("drain");
+    expect(resumeCount).toBe(1);
+    child.emit("close", 0, null);
+    const result = await resultPromise;
+    expect(result.code).toBe(0);
+    expect(result.retries).toBe(0);
+  });
+
   test("never retries parent termination and forwards the signal to the child on every platform", async () => {
     const signalSource = new EventEmitter();
     const output: string[] = [];

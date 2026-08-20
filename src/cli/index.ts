@@ -15,6 +15,7 @@ import {
   removePidIfValueIs,
   removeRuntimePort,
   removeRuntimePortIfPidIs,
+  removeRuntimePortIfValueIs,
   saveConfig,
   writePid,
   writeRuntimePort,
@@ -151,22 +152,27 @@ async function chooseListenPort(requestedPort?: number): Promise<number> {
 /**
  * Establish ownership before recovering a journal. A healthy proxy must keep its
  * Codex state and journal untouched; only a probe that found no owner may recover
- * a stale session. The PID snapshot is compared again before cleanup so a
- * concurrent starter cannot have its freshly-written PID file removed by the
- * losing process.
+ * a stale session. Both ownership records are compared again before cleanup so
+ * a concurrent starter cannot have its freshly-written state removed or its
+ * journal reconciled by the losing process.
  */
 async function findProxyOwnerBeforeJournalRecovery(
   options: { probeConfiguredPort?: boolean } = {},
 ): Promise<{ live: Awaited<ReturnType<typeof findLiveProxy>>; pidSnapshot: number | null }> {
   const pidSnapshot = readPidFileValue();
-  const hasRuntimeOwner = readRuntimePort() !== null;
-  const shouldProbe = pidSnapshot !== null || hasRuntimeOwner || options.probeConfiguredPort === true;
+  const runtimeSnapshot = readRuntimePort();
+  const shouldProbe = pidSnapshot !== null || runtimeSnapshot !== null || options.probeConfiguredPort === true;
   const live = shouldProbe ? await findLiveProxy() : null;
   if (live) return { live, pidSnapshot };
 
-  // The probe established that the snapshotted owner is stale. Compare before
-  // deleting so a concurrent start that rewrote the PID file keeps its state.
-  removePidIfValueIs(pidSnapshot);
+  // The probe established that only the snapshotted owner is stale. Each purge
+  // compares the complete record it saw before probing; any changed or newly
+  // published ownership record makes journal recovery unsafe for this process.
+  const pidPurged = removePidIfValueIs(pidSnapshot);
+  const runtimePurged = removeRuntimePortIfValueIs(runtimeSnapshot);
+  if (!pidPurged || !runtimePurged || readPidFileValue() !== null || readRuntimePort() !== null) {
+    return { live: null, pidSnapshot };
+  }
   if (!currentExternalCodexModelProvider()) await reconcileJournalAsync();
   return { live: null, pidSnapshot };
 }
@@ -1144,6 +1150,11 @@ switch (command) {
     process.exitCode = await handleScheduleCommand(args.slice(1));
     break;
   }
+  case "school-mode": {
+    const { handleSchoolModeCommand } = await import("./school-mode");
+    process.exitCode = await handleSchoolModeCommand(args.slice(1));
+    break;
+  }
   case "pdf": {
     const { handlePdfCommand } = await import("./pdf");
     process.exitCode = await handlePdfCommand(args.slice(1));
@@ -1172,11 +1183,6 @@ switch (command) {
   case "grok": {
     const { handleGrokCommand } = await import("./integrations");
     process.exitCode = await handleGrokCommand(args.slice(1));
-    break;
-  }
-  case "school-mode": {
-    const { handleSchoolModeCommand } = await import("./school-mode");
-    process.exitCode = await handleSchoolModeCommand(args.slice(1));
     break;
   }
   case "changelog": {

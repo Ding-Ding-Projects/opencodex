@@ -156,9 +156,13 @@ a user npm prefix) when you can.
 
 The journal warning means opencodex recovered Codex state left by a definitively dead process; it is
 not itself the native-crash cause. Before recovery, `start` and `ensure` now identity-check whether a
-healthy proxy already owns routing. The external Node launcher also retries those two commands once,
-and only once, when Bun exits abnormally with its official `oh no: Bun has crashed` marker. Ordinary
-CLI errors, warnings without the marker, spawn failures, and termination signals are not retried.
+healthy proxy already owns routing, compare both persisted owner records before removing stale state,
+and skip journal recovery if a concurrent owner publishes new state. The external Node launcher also
+retries those two commands once, and only once, when Bun exits abnormally with its official
+`oh no: Bun has crashed` marker. The marker is latched independently of the bounded diagnostic tail,
+and live stderr forwarding honors writable backpressure. Ordinary CLI errors, the journal warning by
+itself, warnings without the marker, spawn failures, and termination signals are not retried. This is
+a bounded recovery measure, not a claim that Bun itself was fixed.
 
 If the second attempt also produces the Bun marker, opencodex preserves that failure and suggests
 `OPENCODEX_BUN_PATH`. Use only an absolute path to a Bun binary you deliberately downloaded and
