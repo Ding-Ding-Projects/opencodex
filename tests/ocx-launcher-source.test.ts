@@ -58,7 +58,10 @@ describe("ocx.mjs npm launcher (source invariants)", () => {
     expect(runtimeSource).toContain('import { isRealBunBinary } from "./bun-binary-validator.mjs";');
     expect(runtimeSource).toContain("export { isRealBunBinary };");
     expect(validatorSource).toContain("export const REAL_BUN_MIN_BYTES = 1_000_000;");
-    expect(validatorSource).toMatch(/export function isRealBunBinary\(path\) \{[\s\S]*?try \{[\s\S]*?statSync\(path\)[\s\S]*?catch \{[\s\S]*?return false;/);
+    expect(validatorSource).toContain('handle = openSync(path, "r");');
+    expect(validatorSource).toContain("const stat = fstatSync(handle);");
+    expect(validatorSource).toContain("return stat.isFile() && stat.size >= REAL_BUN_MIN_BYTES;");
+    expect(validatorSource).toMatch(/finally \{[\s\S]*?closeSync\(handle\)/);
   });
 });
 

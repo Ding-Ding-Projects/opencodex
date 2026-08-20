@@ -36,6 +36,26 @@ describe("isRealBunBinary (size gate vs placeholder stub)", () => {
     writeFileSync(empty, "");
     expect(isRealBunBinary(empty)).toBe(false);
   });
+
+  it("rejects a directory instead of treating metadata size as binary size", () => {
+    const directory = join(tmp, "bun-directory");
+    mkdirSync(directory);
+    expect(isRealBunBinary(directory)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "rejects an unreadable binary-sized regular file",
+    () => {
+      const unreadable = join(tmp, "unreadable-bun");
+      writeFileSync(unreadable, Buffer.alloc(1_000_000), { mode: 0o000 });
+      chmodSync(unreadable, 0o000);
+      try {
+        expect(isRealBunBinary(unreadable)).toBe(false);
+      } finally {
+        chmodSync(unreadable, 0o600);
+      }
+    },
+  );
 });
 
 describe("bundledBunPath / durableBunPath", () => {
