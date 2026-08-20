@@ -109,9 +109,10 @@ Invariants:
   required package-local Go artifact on a supported packaged target.
 - The TypeScript bridge invokes `src/cli/index.ts` through the Node-safe
   `bun-start-supervisor.mjs`. Only `start` and `ensure` receive one retry after an abnormal exit
-  containing Bun's exact crash marker; stderr is forwarded byte-for-byte and bounded to a 64 KiB
-  attempt-local diagnostic tail. All other commands and failure classes preserve the original
-  single-attempt exit semantics.
+  containing Bun's exact crash marker; stderr is forwarded byte-for-byte with writable
+  backpressure, its diagnostic tail is bounded to 64 KiB per attempt, and a separate marker latch
+  prevents later diagnostic noise from erasing a real classification. All other commands and failure
+  classes preserve the original single-attempt exit semantics.
 - Public docs (root READMEs + `docs-site` installation pages, all locales) state Node 18+ as the only
   runtime prerequisite and identify all six supported Go targets.
 

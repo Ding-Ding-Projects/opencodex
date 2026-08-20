@@ -23,13 +23,16 @@ opencodex handles this failure at two separate process boundaries:
 
 1. **Owner check before journal recovery.** `start` and `ensure` first identity-probe the existing
    proxy. If a healthy proxy owns routing, its injected Codex files, PID state, and journal are left
-   untouched. Only a definitively dead owner can trigger recovery. PID removal is compare-guarded so
-   a concurrent new starter cannot have its fresh state deleted.
+   untouched. Only a definitively dead owner can trigger recovery. PID and runtime-owner removals
+   compare the complete records observed before the liveness probe. A changed or newly published
+   owner record prevents this process from reconciling the journal.
 2. **One external retry for a real Bun panic.** The Node launcher retains at most 64 KiB of the Bun
-   child's stderr while forwarding every byte live. It retries only `start` and `ensure`, only after
-   an abnormal exit whose stderr contains Bun's official `oh no: Bun has crashed` marker, and only
-   once. The second attempt receives a fresh stderr tail, so output from the first crash cannot turn
-   an ordinary second failure into another crash.
+   child's stderr while forwarding every byte live with writable backpressure. A separate
+   attempt-local streaming latch remembers Bun's exact `oh no: Bun has crashed` marker even if later
+   diagnostic noise evicts it from that tail. It retries only `start` and `ensure`, only after an
+   abnormal exit carrying that marker, and only once. The second attempt receives a fresh latch and
+   stderr tail, so output from the first crash cannot turn an ordinary second failure into another
+   crash.
 
 An ordinary nonzero CLI exit, a spawn failure, a warning without the Bun marker, exit code `139`
 without the marker, or a user termination signal is never retried. If both eligible attempts produce
@@ -86,8 +89,10 @@ unreadable, and incomplete placeholder binaries, but a size check is not a publi
 - The warning is printed only after at least one journaled file was restored.
 - A persistent native crash remains visible: stderr is not replayed or swallowed, the second exit
   status is propagated, and there is no unbounded retry loop.
+- The stale-session warning alone never classifies a Bun crash, and this supervisor does not repair
+  Bun itself; it provides one bounded retry around a separately identified native failure.
 - Do not delete `config.toml` or `opencodex-journal.json` merely to silence the warning. Those files
   are the evidence used to distinguish opencodex-owned injection from user-owned configuration.
 
-The bundled runtime version is pinned in `package.json` and `bun.lock`. Runtime upgrades remain the
-long-term fix for native Bun defects; the startup supervisor is a bounded availability safeguard.
+The bundled runtime version is pinned in `package.json` and `bun.lock`. The startup supervisor is a
+bounded availability measure, not a claim that the underlying Bun defect has been fixed.
