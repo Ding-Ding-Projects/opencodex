@@ -22,6 +22,7 @@ import {
   runProcessTreeCommand,
 } from "../src/update/install-process.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
+import { runBunWithCrashRetry } from "../src/lib/bun-start-supervisor.mjs";
 import { parseConcreteUpdateVersion } from "../src/update/version-resolution.mjs";
 
 const PKG = "@bitkyc08/opencodex";
@@ -442,37 +443,18 @@ const bun = resolveBun();
 // port left bound, pid/runtime-port files left behind, Codex config not restored.
 // windowsHide: from a windowless parent (the desktop app), a console-subsystem
 // child would otherwise allocate a visible console window on Windows.
-const child = spawn(bun, [cliPath, ...process.argv.slice(2)], { stdio: "inherit", windowsHide: true });
-
-// Windows has no real POSIX signals (no SIGHUP); forwarding is best-effort there.
-const FORWARDED = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
-const handlers = FORWARDED.map(sig => {
-  const handler = () => {
-    try {
-      child.kill(sig);
-    } catch {
-      /* child already exited */
-    }
-  };
-  process.on(sig, handler);
-  return [sig, handler];
+const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2)], {
+  windowsHide: true,
+  retryCommand: process.argv[2],
 });
-const clearHandlers = () => {
-  for (const [sig, handler] of handlers) process.removeListener(sig, handler);
-};
-
-child.on("error", err => {
-  clearHandlers();
-  console.error(`opencodex: failed to launch Bun runtime: ${err.message}`);
+if (result.error) {
+  console.error(`opencodex: failed to launch Bun runtime: ${result.error.message}`);
   process.exit(1);
-});
-
-child.on("exit", (code, signal) => {
-  clearHandlers();
-  // Mirror the child's terminating signal/exit code so this launcher's status matches.
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
-});
+}
+// Mirror the child’s terminating signal/exit code so this launcher has the same
+// status as the supervised Bun process, including parent termination signals.
+if (result.signal) {
+  process.kill(process.pid, result.signal);
+} else {
+  process.exit(result.code ?? 1);
+}
