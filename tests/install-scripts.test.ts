@@ -25,6 +25,7 @@ async function readText(path: string): Promise<string> {
 }
 
 const MIB = 1024 * 1024;
+const packedBinaryMode = process.platform === "win32" ? 0o644 : 0o755;
 const nativeVersion = "2.7.35";
 
 function digest(bytes: Uint8Array | string, algorithm: "sha1" | "sha256" | "sha512", encoding: "base64" | "hex"): string {
@@ -59,7 +60,7 @@ function packReport(packageRoot: string, unpackedSize: number) {
   const nativeFiles = nativeArtifactNames(nativeVersion).map((name) => ({
     path: `bin/native/${name}`,
     size: Bun.file(join(nativePath, name)).size,
-    mode: 0o755,
+    mode: packedBinaryMode,
   }));
   const manifestName = `ocx_${nativeVersion}_checksums.txt`;
   const filename = `bitkyc08-opencodex-${nativeVersion}.tgz`;
@@ -72,7 +73,7 @@ function packReport(packageRoot: string, unpackedSize: number) {
     size: Buffer.byteLength(archive),
     unpackedSize,
     files: [
-      { path: "bin/ocx.mjs", size: Bun.file(join(packageRoot, "bin", "ocx.mjs")).size, mode: 0o755 },
+      { path: "bin/ocx.mjs", size: Bun.file(join(packageRoot, "bin", "ocx.mjs")).size, mode: packedBinaryMode },
       { path: "bin/native-runtime.mjs", size: Bun.file(join(packageRoot, "bin", "native-runtime.mjs")).size, mode: 0o644 },
       { path: "bin/package-main.mjs", size: Bun.file(join(packageRoot, "bin", "package-main.mjs")).size, mode: 0o644 },
       { path: "gui/dist/index.html", size: Bun.file(join(packageRoot, "gui", "dist", "index.html")).size, mode: 0o644 },
@@ -314,9 +315,9 @@ describe("install scripts", () => {
       expect(() => verifyPackReport(reportPath, nativeVersion, temp)).toThrow("path, size, and integer mode");
 
       const wrongMode = structuredClone(exact);
-      wrongMode[0].files.find((file) => file.path === `bin/native/${names[0]}`)!.mode = 0o644;
+      wrongMode[0].files.find((file) => file.path === `bin/native/${names[0]}`)!.mode = packedBinaryMode === 0o755 ? 0o644 : 0o755;
       writeFileSync(reportPath, JSON.stringify(wrongMode));
-      expect(() => verifyPackReport(reportPath, nativeVersion, temp)).toThrow("mode must be 0755");
+      expect(() => verifyPackReport(reportPath, nativeVersion, temp)).toThrow(`mode must be ${packedBinaryMode.toString(8)}`);
 
       const wrongManifestMode = structuredClone(exact);
       wrongManifestMode[0].files.find((file) => file.path.endsWith("_checksums.txt"))!.mode = 0o755;
@@ -324,7 +325,7 @@ describe("install scripts", () => {
       expect(() => verifyPackReport(reportPath, nativeVersion, temp)).toThrow("manifest mode must be 0644");
 
       const wrongLauncherMode = structuredClone(exact);
-      wrongLauncherMode[0].files.find((file) => file.path === "bin/ocx.mjs")!.mode = 0o644;
+      wrongLauncherMode[0].files.find((file) => file.path === "bin/ocx.mjs")!.mode = packedBinaryMode === 0o755 ? 0o644 : 0o755;
       writeFileSync(reportPath, JSON.stringify(wrongLauncherMode));
       expect(() => verifyPackReport(reportPath, nativeVersion, temp)).toThrow("required file mode mismatch");
 

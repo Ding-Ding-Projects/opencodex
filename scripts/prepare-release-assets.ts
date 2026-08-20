@@ -26,6 +26,10 @@ import { nativeArtifactNames, validateNativeDirectory } from "./prepare-package"
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const BINARY_MODE = 0o755;
 const FILE_MODE = 0o644;
+// npm pack records every file as 0644 on Windows because NTFS does not carry
+// POSIX execute bits. Unix pack reports retain the executable bit for native
+// launchers and binaries.
+const PACKED_BINARY_MODE = process.platform === "win32" ? FILE_MODE : BINARY_MODE;
 const PRIVATE_MODE = 0o600;
 const MAX_REPORT_SIZE = 8 * 1024 * 1024;
 const MAX_BINARY_SIZE = 40 * 1024 * 1024;
@@ -222,7 +226,7 @@ function parsePackReport(packPath: string, version: string): { report: PackResul
     const path = `bin/native/${name}`;
     const file = files.get(path);
     if (!file) fail(`npm pack report is missing native entry: ${path}`);
-    const mode = name.endsWith(".txt") ? FILE_MODE : BINARY_MODE;
+    const mode = name.endsWith(".txt") ? FILE_MODE : PACKED_BINARY_MODE;
     const cap = name.endsWith(".txt") ? MAX_MANIFEST_SIZE : MAX_BINARY_SIZE;
     if (file.size <= 0 || file.size > cap) fail(`native pack entry size is outside bounds: ${path} (${file.size})`);
     if (file.mode !== mode) fail(`native pack entry mode mismatch: ${path} (${file.mode})`);
@@ -302,7 +306,7 @@ function parseMetadataLine(line: string): { type: string; size: number; member: 
 
 async function validateArchiveInventory(archive: string, entries: NativeEntry[], deadline: number): Promise<void> {
   const listed = new TextDecoder().decode(await runTar(["-tvzf", archive], MAX_LIST_SIZE, "tar metadata", deadline));
-  const metadata = listed.split("\n").filter(Boolean).map(parseMetadataLine);
+  const metadata = listed.split(/\r?\n/).filter(Boolean).map(parseMetadataLine);
   for (const item of metadata) if (!safeMember(item.member)) fail(`unsafe archive member: ${JSON.stringify(item.member)}`);
   for (const entry of entries) {
     const matches = metadata.filter((item) => item.member === entry.member);
@@ -361,7 +365,7 @@ function retainedEntries(version: string): NativeEntry[] {
     name,
     member: `package/bin/native/${name}`,
     size: name.endsWith(".txt") ? MAX_MANIFEST_SIZE : MAX_BINARY_SIZE,
-    mode: name.endsWith(".txt") ? FILE_MODE : BINARY_MODE,
+    mode: name.endsWith(".txt") ? FILE_MODE : PACKED_BINARY_MODE,
     exactSize: false,
   }));
 }

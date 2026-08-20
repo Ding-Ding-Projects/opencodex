@@ -188,7 +188,7 @@ describe("preferredDurableRuntime", () => {
     })).toBe(fallback);
   });
 
-  it("rejects native execute-mode changes during Node discovery", { skip: process.platform === "win32" }, () => {
+  it.skipIf(process.platform === "win32")("rejects native execute-mode changes during Node discovery", () => {
     const fallback = { runtime: "/fallback/bun", cli: "/fallback/src.ts" };
     const changed = fixture("native-mode-race");
     expect(preferredDurableRuntime(changed.root, fallback, {
@@ -199,7 +199,7 @@ describe("preferredDurableRuntime", () => {
     })).toBe(fallback);
   });
 
-  it("scans PATH directly without executing a hostile which helper", { skip: process.platform === "win32" }, () => {
+  it.skipIf(process.platform === "win32")("scans PATH directly without executing a hostile which helper", () => {
     const fallback = { runtime: "/fallback/bun", cli: "/fallback/src.ts" };
     const f = fixture("native-hostile-which");
     const hostile = join(tmp, "hostile-path");

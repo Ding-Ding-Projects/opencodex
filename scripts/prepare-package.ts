@@ -18,6 +18,10 @@ const MAX_PACKED_SIZE = 192 * MIB;
 const MAX_UNPACKED_SIZE = 256 * MIB;
 const BINARY_MODE = 0o755;
 const FILE_MODE = 0o644;
+// npm pack records every file as 0644 on Windows because NTFS does not carry
+// POSIX execute bits. Unix pack reports retain the executable bit for native
+// launchers and binaries.
+const PACKED_BINARY_MODE = process.platform === "win32" ? FILE_MODE : BINARY_MODE;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-preview\.[0-9]+)?$/;
 
 type PackFile = {
@@ -265,7 +269,7 @@ export function verifyPackReport(
   }
 
   const requiredModes = new Map<string, number>([
-    ["bin/ocx.mjs", BINARY_MODE],
+    ["bin/ocx.mjs", PACKED_BINARY_MODE],
     ["bin/native-runtime.mjs", FILE_MODE],
     ["bin/package-main.mjs", FILE_MODE],
     ["gui/dist/index.html", FILE_MODE],
@@ -292,8 +296,8 @@ export function verifyPackReport(
     if (file.size < MIN_BINARY_SIZE || file.size > MAX_BINARY_SIZE) {
       throw new Error(`native binary size is outside 1..40 MiB: ${path} (${file.size})`);
     }
-    if (file.mode !== BINARY_MODE) {
-      throw new Error(`native binary mode must be 0755: ${path} (${file.mode})`);
+    if (file.mode !== PACKED_BINARY_MODE) {
+      throw new Error(`native binary mode must be ${PACKED_BINARY_MODE.toString(8)}: ${path} (${file.mode})`);
     }
   }
   const manifest = report.files.find((entry) => entry.path === `bin/native/${manifestName}`)!;

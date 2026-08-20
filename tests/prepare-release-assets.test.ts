@@ -24,6 +24,7 @@ const helper = join(repo, "scripts", "prepare-release-assets.ts");
 const version = (await import("../package.json")).default.version;
 const archiveName = `bitkyc08-opencodex-${version}.tgz`;
 const manifestName = `ocx_${version}_checksums.txt`;
+const packedBinaryMode = process.platform === "win32" ? 0o644 : 0o755;
 const temporaryRoots: string[] = [];
 
 type Fixture = {
@@ -59,7 +60,7 @@ function packFiles(nativeDir: string) {
   return [...nativeArtifactNames(version), manifestName].map((name) => ({
     path: `bin/native/${name}`,
     size: lstatSync(join(nativeDir, name)).size,
-    mode: name.endsWith(".txt") ? 0o644 : 0o755,
+    mode: name.endsWith(".txt") ? 0o644 : packedBinaryMode,
   }));
 }
 

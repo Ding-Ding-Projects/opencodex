@@ -822,6 +822,7 @@ describe("Codex shim runtime convergence", () => {
       const statePath = writeRuntimeState(home, "linux", [{ wrapperPath: wrapper, backupPath: backup }]);
       const stateBytes = readFileSync(statePath);
       const backupBytes = readFileSync(backup);
+      const originalWrapperMode = statSync(wrapper).mode & 0o777;
 
       const result = refreshCodexShimRuntime({
         platform: "linux",
@@ -831,7 +832,7 @@ describe("Codex shim runtime convergence", () => {
       expect(result).toMatchObject({ refreshed: true, count: 1 });
       expect(readFileSync(wrapper, "utf8")).toContain("/current/bun");
       expect(readFileSync(wrapper, "utf8")).toContain("/current/src/cli/index.ts");
-      expect(statSync(wrapper).mode & 0o777).toBe(0o751);
+      expect(statSync(wrapper).mode & 0o777).toBe(originalWrapperMode);
       expect(readFileSync(statePath)).toEqual(stateBytes);
       expect(readFileSync(backup)).toEqual(backupBytes);
     } finally {

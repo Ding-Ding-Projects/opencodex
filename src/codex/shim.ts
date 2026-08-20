@@ -242,7 +242,7 @@ function sameStableShimPathProbe(left: StableShimPathProbe, right: StableShimPat
 function isHealthyShimProbe(probe: StableShimPathProbe, platform: NodeJS.Platform): boolean {
   if (probe.prefix.length < 180 || !probe.prefix.includes(SHIM_MARKER) || !probe.prefix.includes("ensure")) return false;
   const mode = probe.fingerprint.target?.mode ?? probe.fingerprint.mode;
-  return platform === "win32" || (mode & 0o111) !== 0;
+  return platform === "win32" || process.platform === "win32" || (mode & 0o111) !== 0;
 }
 
 function hasUsableBackingPath(file: ShimFileState): boolean {
