@@ -74,6 +74,28 @@ describe("codex-journal", () => {
     expect(existsSync(journalPath)).toBe(false);
   });
 
+  test("reconcileJournalAsync restores config with the awaited atomic path", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const original = "# original config\nmodel_provider = \"openai\"\n";
+    writeFileSync(join(testDir, "config.toml"), "# modified\nmodel_provider = \"opencodex\"\n", "utf8");
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(original).toString("base64"),
+      originalProfile: null,
+      pid: 999999,
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournalAsync } = require("./src/codex/journal");
+      (async () => console.log(JSON.stringify({ restored: await reconcileJournalAsync() })))();
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(true);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+  });
+
   test("reconcileJournal handles corrupt JSON gracefully", () => {
     const journalPath = join(testDir, "opencodex-journal.json");
     writeFileSync(journalPath, "NOT VALID JSON{{{", "utf8");
