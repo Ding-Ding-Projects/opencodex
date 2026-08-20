@@ -47,7 +47,11 @@ hops. Update handoffs and dashboard restarts also pin their captured live port.
 Startup uses a cross-process lock and stable OpenCodex identity-health checks, not just PID-file or
 TCP reachability. A concurrent starter cannot create a duplicate fallback daemon. On start it syncs
 each provider's models into Codex's catalog. On shutdown it restores native Codex unless it was
-launched as a managed service (`OCX_SERVICE=1`).
+launched as a managed service (`OCX_SERVICE=1`). A healthy owner is identity-checked before stale
+journal recovery, so a dead launcher PID cannot make a live proxy lose its injected Codex state.
+The external Node launcher retries `start` once only for an abnormal exit carrying Bun's official
+crash marker; ordinary command failures are never retried. See [Bun Startup Crashes on
+Windows](/troubleshooting/bun-startup-crashes/).
 
 ```bash
 ocx start
@@ -99,7 +103,9 @@ background, and sync the live port back into Codex.
 ### `ocx ensure`
 
 Idempotently ensure a background proxy is running, then sync its live model catalog. If
-`codexAutoStart` is `false`, it prints that autostart is disabled and does nothing.
+`codexAutoStart` is `false`, it prints that autostart is disabled and does nothing. The external
+launcher gives `ensure` the same one-attempt, panic-qualified Bun retry as `start`; it does not retry
+an ordinary nonzero result.
 
 ### `ocx status [--json]`
 

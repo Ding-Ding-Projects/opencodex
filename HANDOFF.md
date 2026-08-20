@@ -1,5 +1,29 @@
 # Handoff
 
+## Bun crash-resilient startup — 2026-08-20, integration branch `codex/fix-bun-proxy-startup`
+
+This work is implemented and locally verified but is not yet claimed as merged, pushed, or released.
+It addresses the Windows sequence where a stale-session recovery warning is followed by Bun's native
+`0xFFFFFFFFFFFFFFFF` segmentation-fault report.
+
+| Area | Current integration state |
+| --- | --- |
+| Owner ordering | `start` and `ensure` identity-probe a persisted owner before journal recovery. A healthy owner keeps its injected Codex files, journal, and PID. Dead-state removal compares the PID snapshot before unlinking. |
+| Journal restoration | Startup uses the async hardened atomic-write path. A retry recognizes exact original bytes already committed before a partial restore and finishes the remaining profile restoration. The synchronous exit-safe restore remains available. |
+| Native-crash boundary | The Node npm launcher retains a 64 KiB stderr tail and retries only `start` / `ensure`, once, after an abnormal exit containing Bun's official crash marker. Per-attempt tails prevent stale crash output from poisoning the retry. Ordinary failures and parent signals are never retried. |
+| Codex shims | Unix, CMD, and PowerShell shims run at most two synchronous `ensure` attempts and then always launch the real Codex command. |
+| Runtime escape hatch | Direct and durable runtime selection now honor a validated, normalized `OPENCODEX_BUN_PATH`; invalid overrides warn without printing the rejected path and fall back to the bundled runtime. |
+| Missing launcher | `src/cli/codex.ts` restores the already-documented `ocx codex` command with healthy-owner adoption, exact-child readiness, live-port sync, trusted runtime selection, transparent argv/stdio, signal forwarding, and exit mirroring. |
+
+Local combined evidence at `ca66bd939`: **112 passed, 3 platform skips, 0 failed, 563 assertions**;
+root TypeScript passed and `git diff --check` passed. The first combined run lacked the worktree's
+dependency tree and was invalid; after `bun install --frozen-lockfile`, the identical command produced
+the green result above. Full-suite, docs-build, privacy, packaging, exact-commit CI, integration-line,
+release, and cleanup evidence remain pending and must not be inferred from this checkpoint.
+
+The focused crash fixture prints the reporter's exact warning, panic, and Bun-crash lines, then calls
+`process.exit(139)`. It never triggers a real segfault, abort, or core dump.
+
 ## Session close — 2026-08-16, tip `316ff9a5b`
 
 ### What this project is right now

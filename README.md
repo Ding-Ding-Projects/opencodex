@@ -149,6 +149,25 @@ a user npm prefix) when you can.
 
 </details>
 
+<details>
+<summary><b>Windows shows “Previous session … restored from journal”, then Bun crashes?</b></summary>
+
+<br/>
+
+The journal warning means opencodex recovered Codex state left by a definitively dead process; it is
+not itself the native-crash cause. Before recovery, `start` and `ensure` now identity-check whether a
+healthy proxy already owns routing. The external Node launcher also retries those two commands once,
+and only once, when Bun exits abnormally with its official `oh no: Bun has crashed` marker. Ordinary
+CLI errors, warnings without the marker, spawn failures, and termination signals are not retried.
+
+If the second attempt also produces the Bun marker, opencodex preserves that failure and suggests
+`OPENCODEX_BUN_PATH`. Use only an absolute path to a Bun binary you deliberately downloaded and
+trust; reinstall a service or Codex shim after setting it so the durable artifact captures the same
+runtime. Full diagnosis, safety notes, and recovery commands are in [Bun Startup Crashes on
+Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
+
+</details>
+
 ## Add a provider
 
 The fastest way to add a provider is through the web dashboard:
