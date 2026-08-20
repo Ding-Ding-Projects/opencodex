@@ -78,10 +78,19 @@ describe.skipIf(process.platform === "win32")("ocx.mjs legacy shim convergence",
     const backup = join(root, "codex.opencodex-real");
     mkdirSync(runtimeBin, { recursive: true });
     mkdirSync(join(packageBin, "native"), { recursive: true });
+    mkdirSync(join(packageRoot, "src", "lib"), { recursive: true });
     mkdirSync(join(packageRoot, "src", "update"), { recursive: true });
     mkdirSync(home, { recursive: true });
     copyFileSync(join(import.meta.dir, "..", "bin", "ocx.mjs"), join(packageBin, "ocx.mjs"));
     copyFileSync(join(import.meta.dir, "..", "bin", "native-runtime.mjs"), join(packageBin, "native-runtime.mjs"));
+    copyFileSync(
+      join(import.meta.dir, "..", "src", "lib", "bun-binary-validator.mjs"),
+      join(packageRoot, "src", "lib", "bun-binary-validator.mjs"),
+    );
+    copyFileSync(
+      join(import.meta.dir, "..", "src", "lib", "bun-start-supervisor.mjs"),
+      join(packageRoot, "src", "lib", "bun-start-supervisor.mjs"),
+    );
     copyFileSync(join(import.meta.dir, "..", "src", "update", "tray-update-plan.mjs"), join(packageRoot, "src", "update", "tray-update-plan.mjs"));
     writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ type: "module", version: "2.7.41" }));
     const script = `#!/bin/sh\nprintf 'guard=%s %s\\n' "$OCX_SHIM_RUNTIME_REFRESH_GUARD" "$*" >> "$OCX_TEST_BUN_LOG"\ncase "$*" in *refresh-runtime*) exit "$OCX_TEST_REFRESH_EXIT";; esac\nexit 0\n`;

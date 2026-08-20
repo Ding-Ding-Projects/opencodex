@@ -29,9 +29,18 @@ function packagedLauncherFixture() {
   const packageRoot = join(root, "node_modules", "@bitkyc08", "opencodex");
   const bin = join(packageRoot, "bin");
   mkdirSync(join(bin, "native"), { recursive: true });
+  mkdirSync(join(packageRoot, "src", "lib"), { recursive: true });
   mkdirSync(join(packageRoot, "src", "update"), { recursive: true });
   copyFileSync(join(import.meta.dir, "..", "bin", "ocx.mjs"), join(bin, "ocx.mjs"));
   copyFileSync(join(import.meta.dir, "..", "bin", "native-runtime.mjs"), join(bin, "native-runtime.mjs"));
+  copyFileSync(
+    join(import.meta.dir, "..", "src", "lib", "bun-binary-validator.mjs"),
+    join(packageRoot, "src", "lib", "bun-binary-validator.mjs"),
+  );
+  copyFileSync(
+    join(import.meta.dir, "..", "src", "lib", "bun-start-supervisor.mjs"),
+    join(packageRoot, "src", "lib", "bun-start-supervisor.mjs"),
+  );
   copyFileSync(join(import.meta.dir, "..", "src", "update", "tray-update-plan.mjs"), join(packageRoot, "src", "update", "tray-update-plan.mjs"));
   writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ type: "module", version: "2.7.41" }));
   const os = process.platform === "darwin" ? "darwin" : "linux";

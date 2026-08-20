@@ -68,17 +68,18 @@ describe("bundledBunPath / durableBunPath", () => {
     const inheritedOverride = process.env.OPENCODEX_BUN_PATH;
     mkdirSync(launcherCwd, { recursive: true });
     writeFileSync(real, Buffer.alloc(1_000_000));
+    const canonicalReal = realpathSync(real);
 
     try {
       process.chdir(launcherCwd);
       process.env.OPENCODEX_BUN_PATH = "  relative-bun.exe  ";
-      expect(overrideBunPath()).toBe(real);
+      expect(overrideBunPath()).toBe(canonicalReal);
       expect(durableBunRuntime()).toEqual({
-        path: real,
+        path: canonicalReal,
         source: "override",
         overrideEnv: "OPENCODEX_BUN_PATH",
       });
-      expect(durableBunPath()).toBe(real);
+      expect(durableBunPath()).toBe(canonicalReal);
     } finally {
       process.chdir(previousCwd);
       if (inheritedOverride === undefined) delete process.env.OPENCODEX_BUN_PATH;
