@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isRealBunBinary, bundledBunPath, durableBunPath, durableBunRuntime, overrideBunPath } from "../src/lib/bun-runtime";
@@ -25,6 +25,16 @@ describe("isRealBunBinary (size gate vs placeholder stub)", () => {
     const real = join(tmp, "bun-real.exe");
     writeFileSync(real, Buffer.alloc(1_000_000));
     expect(isRealBunBinary(real)).toBe(true);
+  });
+
+  it("rejects a directory even when its name looks like a binary", () => {
+    const directory = join(tmp, "bun-directory.exe");
+    mkdirSync(directory);
+    const directoryStats = statSync(directory);
+    expect(isRealBunBinary(directory, () => ({
+      isFile: () => directoryStats.isFile(),
+      size: 1_000_000,
+    }))).toBe(false);
   });
 
   it("rejects a non-existent path", () => {

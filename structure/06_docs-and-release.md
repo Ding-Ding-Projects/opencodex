@@ -86,10 +86,12 @@ npm dependency (esbuild-style: a tiny main package plus platform-specific `@oven
 
 Invariants:
 
-- `bin/ocx.mjs` first validates `OPENCODEX_BUN_PATH` when explicitly set, otherwise resolves the
-  bundled binary via `require.resolve("bun/package.json")` and the same shared size/readability gate
-  (`>= 1 MB`) that rejects the ~450-byte placeholder stub left by `--ignore-scripts`/pnpm. Rejected
-  overrides warn without exposing the supplied path and fall back to the bundled runtime.
+- `bin/ocx.mjs` first applies the shared non-identity regular-file/size gate to an explicitly set
+  `OPENCODEX_BUN_PATH`, otherwise resolves the bundled binary via `require.resolve("bun/package.json")`
+  and the same gate (`>= 1 MB`) that rejects the ~450-byte placeholder stub left by
+  `--ignore-scripts`/pnpm. The override remains user-supplied and unvalidated beyond this gate: the
+  launcher does not identify, signature-check, or execute it during validation. Rejected overrides
+  warn without exposing the supplied path and fall back to the bundled runtime.
 - The launcher lazy-runs Bun's `install.js` when required, then invokes `src/cli/index.ts` through the
   Node-safe `bun-start-supervisor.mjs`. Only `start` and `ensure` receive one retry after an abnormal
   exit containing Bun's exact crash marker; stderr is forwarded byte-for-byte and bounded to a
