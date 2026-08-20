@@ -76,9 +76,8 @@ function refreshReport(fixture: Fixture): void {
   }]));
 }
 
-function createArchive(fixture: Fixture, members?: string[], substitutions: string[] = []): void {
+function createArchive(fixture: Fixture, members?: string[]): void {
   const args = ["-czf", fixture.archive];
-  for (const substitution of substitutions) args.push("-s", substitution);
   args.push("-C", fixture.packageRoot, ...(members ?? ["package"]));
   command("tar", args);
   refreshReport(fixture);
@@ -136,6 +135,41 @@ function receipt(value: Fixture): { archive: string; sha256: string; nativeDir: 
 
 function verify(identity: ReturnType<typeof receipt>) {
   return run("verify", "--archive", identity.archive, "--sha256", identity.sha256, "--native-dir", identity.nativeDir);
+}
+
+function rewriteArchiveMemberPath(value: Fixture, name: string, replacement: string): void {
+  const tar = Buffer.from(gunzipSync(readFileSync(value.archive)));
+  const wanted = `package/bin/native/${name}`;
+  let offset = 0;
+  let found = false;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const nul = (bytes: Uint8Array) => {
+      const end = bytes.indexOf(0);
+      return Buffer.from(bytes.subarray(0, end < 0 ? bytes.length : end)).toString();
+    };
+    const member = [nul(header.subarray(345, 500)), nul(header.subarray(0, 100))].filter(Boolean).join("/");
+    const size = Number.parseInt(nul(header.subarray(124, 136)).trim() || "0", 8);
+    if (member === wanted) {
+      const encoded = Buffer.from(replacement, "utf8");
+      if (encoded.length > 100) throw new Error(`replacement tar member is too long: ${replacement}`);
+      header.fill(0, 0, 100);
+      encoded.copy(header, 0);
+      header.fill(0, 345, 500);
+      header.fill(0x20, 148, 156);
+      const checksum = [...header].reduce((total, byte) => total + byte, 0);
+      header.write(checksum.toString(8).padStart(6, "0"), 148, "ascii");
+      header[154] = 0;
+      header[155] = 0x20;
+      found = true;
+      break;
+    }
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  if (!found) throw new Error(`tar fixture member not found: ${wanted}`);
+  writeFileSync(value.archive, gzipSync(tar));
+  refreshReport(value);
 }
 
 function rewriteArchiveMemberAsLink(value: Fixture, name: string, kind: "symlink" | "hardlink"): void {
@@ -240,13 +274,9 @@ describe("prepare-release-assets", () => {
   });
 
   test("rejects traversal, absolute, duplicate, and extra native members", () => {
-    const substitutions = [
-      `,^package/bin/native/${nativeArtifactNames(version)[0]}$,../escaped,`,
-      `,^package/bin/native/${nativeArtifactNames(version)[0]}$,/tmp/ocx-release-escaped,`,
-    ];
-    for (const substitution of substitutions) {
+    for (const replacement of ["../escaped", "/tmp/ocx-release-escaped"]) {
       const value = fixture();
-      createArchive(value, undefined, [substitution]);
+      rewriteArchiveMemberPath(value, nativeArtifactNames(version)[0], replacement);
       const result = prepare(value);
       expect(result.status).not.toBe(0);
       expect(existsSync(join(value.root, "escaped"))).toBe(false);
