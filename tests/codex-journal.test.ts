@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -94,6 +95,38 @@ describe("codex-journal", () => {
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).restored).toBe(true);
     expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+  });
+
+  test("reconcileJournalAsync finishes a retry after config was already restored", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const originalConfig = "# original config\nmodel_provider = \"openai\"\n";
+    const injectedConfig = "# injected config\nmodel_provider = \"opencodex\"\n";
+    const originalProfile = "model_provider = \"openai\"\n";
+    const injectedProfile = "model_provider = \"opencodex\"\n";
+    // Model the state after config's atomic restore committed but profile's
+    // restore did not: config is original, profile is still injected.
+    writeFileSync(join(testDir, "config.toml"), originalConfig, "utf8");
+    writeFileSync(join(testDir, "opencodex.config.toml"), injectedProfile, "utf8");
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(originalConfig).toString("base64"),
+      originalProfile: Buffer.from(originalProfile).toString("base64"),
+      injectedConfigHash: hash(injectedConfig),
+      injectedProfileHash: hash(injectedProfile),
+      pid: 999999,
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournalAsync } = require("./src/codex/journal");
+      (async () => console.log(JSON.stringify({ restored: await reconcileJournalAsync() })))();
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(true);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(originalConfig);
+    expect(readFileSync(join(testDir, "opencodex.config.toml"), "utf8")).toBe(originalProfile);
     expect(existsSync(journalPath)).toBe(false);
   });
 
