@@ -4,10 +4,11 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `bin/ocx.mjs` | Published npm `bin` entry (small Node launcher). On supported targets it validates the exact package-local Go artifact before any compatibility work, performs the guarded one-time legacy-shim refresh when needed, then forwards arguments, signals, and exit status to Go. Unsupported targets may enter the Bun bridge. |
+| `bin/ocx.mjs` | Published npm `bin` entry (small Node launcher). On supported targets it validates the exact package-local Go artifact before any compatibility work, performs the guarded one-time legacy-shim refresh when needed, then forwards arguments, signals, and exit status to Go. Unsupported targets may enter the Bun bridge, where a validated `OPENCODEX_BUN_PATH` override or bundled runtime is supervised externally and `start`/`ensure` receive one panic-qualified retry. |
 | `bin/native-runtime.mjs` | Maps darwin/linux/windows × amd64/arm64 to the exact packaged Go artifact, rejects unsafe or mismatched package state, and spawns the selected binary with signal and exit propagation. |
 | `go/cmd/ocx` | Installed CLI and proxy runtime for the six supported npm targets. The same package-local runtime is persisted into service, tray, and shim launch paths. |
-| `src/lib/bun-runtime.ts` | Compatibility-only bundled-Bun resolution for old updater and bridge paths. The dependency stays installed for now but is dormant during ordinary supported-target commands. |
+| `src/lib/bun-runtime.ts` | Compatibility-only bundled-Bun resolution for old updater and bridge paths. The shared Node-safe validator rejects missing, unreadable, and placeholder-sized binaries; compatibility artifacts prefer a valid `OPENCODEX_BUN_PATH`. The dependency stays installed for now but is dormant during ordinary supported-target commands. |
+| `src/lib/bun-start-supervisor.mjs` | Compatibility-only Node child supervisor for the TypeScript bridge. Forwards stderr live while retaining a 64 KiB attempt-local tail, retries only `start`/`ensure` after an abnormal exit carrying Bun's exact crash marker, and caps the retry at one. Spawn failures, ordinary nonzero exits, parent signals, warning-only output, and marker-free signal-style codes never retry. |
 | `src/cli/index.ts` | `ocx` / `opencodex` CLI: init, start, stop, restore/eject, sync, status, login/logout, gui, service, update. After help/version early exits, ordinary commands run the bounded best-effort Codex-shim auto-restore policy before dispatch. Keeps the `#!/usr/bin/env bun` shebang for from-source dev (`bun run src/cli/index.ts`). |
 | `src/server/index.ts` | Bun server entrypoint: `startServer`, `/v1/responses` HTTP + WebSocket routing, exact `POST /v1/images/generations` and `POST /v1/images/edits` routing, `/v1/models`, `/v1/*` JSON 404 guard, GUI fallback, and facade re-exports for split server modules. |
 | `src/server/images.ts` | Standalone Images data plane: default OpenAI or explicit custom-provider selection, Codex account affinity, bounded opaque request relay, single-attempt upstream fetch, pool health recording, and safe response/cancellation relay. |
@@ -47,10 +48,25 @@ continues to use a locally installed Bun CLI and the TypeScript entrypoints.
 
 ## Lifecycle
 
-`ocx start` refuses a duplicate PID, starts the proxy, writes `~/.opencodex/ocx.pid`, syncs Codex
-config/catalog, then serves until shutdown. Normal shutdown restores native Codex. Service mode sets
-`OCX_SERVICE=1`, so managed restarts do not repeatedly restore/reinject; explicit service stop and
-uninstall still restore.
+`ocx start` and `ocx ensure` identity-probe the configured live proxy before reconciling an old
+journal. The probe includes the configured listener even when PID/runtime ownership files are
+missing. A healthy owner preserves the injected Codex state and journal; only a definitively dead
+owner is recovered, and stale PID deletion compares the preflight snapshot so a concurrent starter's
+new PID cannot be removed. Startup recovery uses the asynchronous hardened atomic-write path and is
+retry-safe when one journaled file was already restored before a later write failed.
+
+After that preflight, `ocx start` refuses a duplicate PID, starts the proxy, writes
+`~/.opencodex/ocx.pid`, syncs Codex config/catalog, then serves until shutdown. Normal shutdown
+restores native Codex. Service mode sets `OCX_SERVICE=1`, so managed restarts do not repeatedly
+restore/reinject; explicit service stop and uninstall still restore.
+
+The supported packaged Go runtime does not invoke Bun for its proxy process. On an unsupported target
+or explicit TypeScript bridge, the Node launcher cannot catch a native Bun fault inside the Bun
+process, so it supervises that child externally. Only `start` and `ensure` receive one retry after an
+abnormal exit whose attempt-local stderr contains Bun's exact `oh no: Bun has crashed` marker. Every
+stderr byte is still forwarded, the second result remains authoritative, and a second qualified crash
+prints the `OPENCODEX_BUN_PATH` recovery hint before propagating the real exit. Parent termination and
+ordinary CLI failures are never retried.
 
 An installed Codex shim is checked on ordinary CLI startup with a regular-file/1 MiB state bound plus
 bounded metadata and prefix reads. A complete replacement must produce identical fingerprints and

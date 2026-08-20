@@ -103,6 +103,15 @@ Invariants:
   removal is deferred.
 - Source development still requires the local `bun` CLI for install, tests, builds, and TypeScript
   entrypoints. This requirement must not be presented as an npm-user prerequisite.
+- The unsupported-target TypeScript bridge validates an explicitly configured
+  `OPENCODEX_BUN_PATH` with the shared readability/size gate. Rejected overrides warn without
+  exposing the supplied path and fall back to the bundled runtime. This override never replaces the
+  required package-local Go artifact on a supported packaged target.
+- The TypeScript bridge invokes `src/cli/index.ts` through the Node-safe
+  `bun-start-supervisor.mjs`. Only `start` and `ensure` receive one retry after an abnormal exit
+  containing Bun's exact crash marker; stderr is forwarded byte-for-byte and bounded to a 64 KiB
+  attempt-local diagnostic tail. All other commands and failure classes preserve the original
+  single-attempt exit semantics.
 - Public docs (root READMEs + `docs-site` installation pages, all locales) state Node 18+ as the only
   runtime prerequisite and identify all six supported Go targets.
 
