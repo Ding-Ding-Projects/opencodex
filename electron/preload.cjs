@@ -71,6 +71,12 @@ contextBridge.exposeInMainWorld("opencodexDesktop", {
      * proxy is adopted rather than raced with.
      */
     start: () => ipcRenderer.invoke("proxy:start"),
+    /**
+     * Backend-only contract for the separate renderer lane: restore only
+     * OpenCodex-owned native Codex routing/catalog state. The renderer supplies
+     * no path, command, argv, or error-detail preference.
+     */
+    restoreNative: () => ipcRenderer.invoke("proxy:restore-native"),
   },
   /**
    * The toy-lock recovery route: "delete this app's local application-data

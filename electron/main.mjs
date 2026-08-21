@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleSquirrelEvent, planSquirrelEvent } from "./squirrel.mjs";
 import { readBuildStamp } from "./build-stamp.mjs";
-import { describeConflict, planProxyAdoption } from "./proxy-adoption.mjs";
+import { classifyDesktopHealth, desktopLauncherPath, launcherExists, normalizeDesktopProbeHostname, planDesktopStartup, readDesktopPortState, runFixedNativeRestore } from "./startup-recovery.mjs";
 import { installCliOnPath, recordDesktopCliPathStatus } from "./cli-path.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -33,7 +33,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  */
 const ROOT = join(HERE, "..");
 
-const DEFAULT_PORT = Number(process.env.OPENCODEX_PORT || 10100);
+const PORT_STATE = readDesktopPortState();
+const DEFAULT_PORT = PORT_STATE.hardPin ?? PORT_STATE.configuredPort ?? 10100;
 const HOST = "127.0.0.1";
 /** How long to wait for the spawned proxy to answer /healthz before giving up. */
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -89,8 +90,6 @@ let proxy = null;
 let proxyPort = DEFAULT_PORT;
 /** True once the user has chosen Quit, so window-close stops meaning "hide to tray". */
 let quitting = false;
-/** A build conflict found during a `--hidden` start, asked about when a window first opens. */
-let deferredConflict = null;
 
 function appVersion() {
   try {
@@ -113,19 +112,18 @@ function iconPath() {
 
 /* ------------------------------------------------------------------ proxy -- */
 
-/**
- * Ask /healthz who is listening. Returns the payload, or null when nothing
- * answers. The caller compares `pid` so an unrelated service squatting on the
- * port is never mistaken for our child.
- */
-async function probeHealth(port) {
+/** Ask /healthz who is listening. A non-OpenCodex body is retained for ownership decisions. */
+async function probeHealth(port, hostname = HOST) {
+  const validPort = Number.isSafeInteger(port) && port >= 1 && port <= 65_535;
+  if (!validPort) return null;
+  const safeHostname = normalizeDesktopProbeHostname(hostname);
+  if (!safeHostname) return null;
   try {
-    const res = await fetch(`http://${HOST}:${port}/healthz`, {
+    const res = await fetch(`http://${safeHostname}:${port}/healthz`, {
       signal: AbortSignal.timeout(2000),
     });
     if (!res.ok) return null;
-    const body = await res.json();
-    return body?.service === "opencodex" ? body : null;
+    return await res.json();
   } catch {
     return null;
   }
@@ -138,54 +136,19 @@ function ourStamp() {
   return stampCache;
 }
 
-/**
- * Wait for the replaced proxy to actually let go of the port.
- *
- * Polling `/healthz` rather than sleeping a fixed interval: a graceful shutdown
- * drains in-flight turns first, so how long it takes depends on what it was
- * doing. Giving up after the deadline is deliberate — `spawnProxy` will fail
- * loudly on a bound port, which is a better outcome than waiting forever with a
- * blank window.
- */
-async function waitForPortFree(port, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!(await probeHealth(port))) return true;
-    await new Promise(resolve => setTimeout(resolve, HEALTH_POLL_MS));
-  }
-  return false;
-}
-
-/**
- * Ask what to do about another build holding the port.
- *
- * A blocking dialog, and one of the few that earns it: it is a genuine decision
- * with no safe default. The copy names both builds, because "which one am I
- * looking at" is precisely what the user could not previously find out.
- */
-async function promptProxyConflict(plan, port) {
-  const { response } = await dialog.showMessageBox({
-    type: "warning",
-    title: "Another opencodex is running",
-    message: `Another opencodex is already using port ${port}.`,
-    detail: describeConflict(ourStamp(), plan.theirs, port),
-    buttons: ["Replace it with this build", "Open the running one", "Quit"],
-    defaultId: 0,
-    cancelId: 2,
-    normalizeAccessKeys: true,
-  });
-  return response === 0 ? "replace" : response === 1 ? "adopt" : "cancel";
-}
-
-function spawnProxy(port) {
+function spawnProxy(pinnedPort) {
   const entry = join(ROOT, "bin", "ocx.mjs");
-  if (!existsSync(entry)) {
+  if (!launcherExists(entry)) {
     throw new Error(
       `The proxy launcher is missing from this build (expected ${entry}). `
       + "Reinstall opencodex, or report this if a fresh install does the same.",
     );
   }
-  const child = spawn(process.execPath, [entry, "start", "--port", String(port)], {
+  const argv = [entry, "start"];
+  if (Number.isSafeInteger(pinnedPort) && pinnedPort >= 1 && pinnedPort <= 65_535) {
+    argv.push("--port", String(pinnedPort));
+  }
+  const child = spawn(process.execPath, argv, {
     cwd: ROOT,
     // ELECTRON_RUN_AS_NODE makes the packaged Electron binary behave as plain Node,
     // so `bin/ocx.mjs` runs on it exactly as it does on a system Node install and
@@ -211,58 +174,73 @@ function spawnProxy(port) {
 }
 
 /**
- * Bring a proxy up on `port` and return once it is answering.
+ * Bring a proxy up and return once the identity-matching endpoint is answering.
  *
  * If a healthy opencodex of *the same build* is already listening — the user
  * started one from the CLI, or this app is relaunching against the proxy it left
  * running — we attach to it rather than spawning a competitor, and leave it
  * running on quit because we did not start it.
  *
- * A *different* build holding the port is not adopted silently. That is what
- * made an update look like it had done nothing: the new app attached to the old
- * install's proxy and rendered the old install's `gui/dist`, with a version
- * string that read the same either way. The decision belongs to the user, so it
- * gets a real dialog — replacing another install's proxy can drop work it is
- * mid-way through, and continuing with it means not seeing the update.
+ * A *different* build holding a persisted candidate is never adopted and never
+ * stopped. The new app restores its own native state, asks the proxy's normal
+ * automatic start policy for an unpinned endpoint, and discovers that endpoint
+ * from its identity-checked health response.
  *
- * `askConflict` is injected so the startup path stays reachable without a dialog
- * (and so `--hidden` autostart can answer for itself rather than blocking on a
- * window nobody is looking at).
+ * A healthy listener that is not this exact build remains untouched. When no
+ * same-build owner exists, restore native Codex state first and launch without a
+ * port pin unless the caller supplied a valid explicit pin.
  */
-async function ensureProxy(port, { askConflict = promptProxyConflict } = {}) {
-  const existing = await probeHealth(port);
-  const plan = planProxyAdoption(existing, ourStamp());
-
+async function ensureProxy() {
+  const state = readDesktopPortState();
+  const healthByPort = new Map();
+  for (const port of state.candidates) {
+    const hostname = state.runtime?.port === port
+      ? normalizeDesktopProbeHostname(state.runtime.hostname)
+      : state.configuredPort === port ? state.configuredHostname : HOST;
+    if (!hostname) continue;
+    const health = await probeHealth(port, hostname);
+    if (health) healthByPort.set(port, health);
+  }
+  const plan = planDesktopStartup({
+    candidates: state.candidates,
+    hardPin: state.hardPin,
+    healthByPort,
+    stamp: ourStamp(),
+  });
   if (plan.action === "adopt") {
-    console.log(`[desktop] attaching to the opencodex already on :${port} (pid ${plan.pid})`);
-    return { port, adopted: true };
+    proxyPort = plan.port;
+    console.log(`[desktop] attaching to the same-build opencodex on :${plan.port} (pid ${plan.pid ?? "unknown"})`);
+    return { port: plan.port, adopted: true };
   }
+  if (plan.action === "blocked") throw new Error(plan.reason);
 
-  if (plan.action === "conflict") {
-    const choice = await askConflict(plan, port);
-    if (choice === "adopt") {
-      console.log(`[desktop] user kept the other build on :${port} (pid ${plan.pid})`);
-      return { port, adopted: true, foreign: true };
-    }
-    if (choice === "cancel") throw new Error(`Port ${port} is held by another opencodex build.`);
-    // "replace": stop the other proxy and take the port. Its own shutdown path
-    // restores the native Codex config, so SIGTERM rather than a hard kill.
-    if (plan.pid) {
-      console.log(`[desktop] replacing the opencodex on :${port} (pid ${plan.pid})`);
-      try { process.kill(plan.pid, "SIGTERM"); } catch { /* already gone, or not ours to signal */ }
-      await waitForPortFree(port);
-    }
-  }
+  const restore = await runFixedNativeRestore({
+    execPath: process.execPath,
+    launcherPath: desktopLauncherPath(ROOT),
+    cwd: ROOT,
+  });
+  if (!restore.ok) throw new Error(restore.error);
 
-  proxy = spawnProxy(port);
+  proxy = spawnProxy(plan.pinnedPort);
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (!proxy) throw new Error("The proxy exited before it finished starting.");
-    const health = await probeHealth(port);
-    if (health) return { port, adopted: false };
+    const next = readDesktopPortState();
+    for (const port of next.candidates) {
+      const hostname = next.runtime?.port === port
+        ? normalizeDesktopProbeHostname(next.runtime.hostname)
+        : next.configuredPort === port ? next.configuredHostname : HOST;
+      if (!hostname) continue;
+      const health = await probeHealth(port, hostname);
+      const healthPlan = classifyDesktopHealth(health, ourStamp());
+      if (healthPlan.action === "adopt") {
+        proxyPort = port;
+        return { port, adopted: false };
+      }
+    }
     await new Promise(resolve => setTimeout(resolve, HEALTH_POLL_MS));
   }
-  throw new Error(`The proxy did not answer /healthz on :${port} within ${STARTUP_TIMEOUT_MS / 1000}s.`);
+  throw new Error(`The proxy did not answer an identity-matching /healthz within ${STARTUP_TIMEOUT_MS / 1000}s.`);
 }
 
 function stopProxy() {
@@ -388,21 +366,35 @@ function registerWindowIpc() {
    * dashboard a green light while the port was still closed.
    */
   ipcMain.handle("proxy:status", async () => {
-    const health = await probeHealth(proxyPort);
-    return { running: !!health, port: proxyPort, pid: health?.pid ?? null, managed: proxy !== null };
+    const state = readDesktopPortState();
+    const hostname = state.runtime?.port === proxyPort
+      ? normalizeDesktopProbeHostname(state.runtime.hostname)
+      : state.configuredPort === proxyPort ? state.configuredHostname : HOST;
+    const health = await probeHealth(proxyPort, hostname);
+    const plan = classifyDesktopHealth(health, ourStamp());
+    return { running: plan.action === "adopt", port: proxyPort, pid: plan.action === "adopt" ? health?.pid ?? null : null, managed: proxy !== null };
   });
 
   ipcMain.handle("proxy:start", async () => {
-    const already = await probeHealth(proxyPort);
-    if (already) return { ok: true, port: proxyPort, adopted: true };
     try {
-      const result = await ensureProxy(proxyPort);
+      const result = await ensureProxy();
       return { ok: true, port: result.port, adopted: result.adopted };
     } catch (error) {
       // The renderer shows this verbatim, so it has to be a sentence a user can
       // act on rather than a stack frame.
       return { ok: false, error: String(error?.message ?? error) };
     }
+  });
+
+  ipcMain.handle("proxy:restore-native", async () => {
+    const result = await runFixedNativeRestore({
+      execPath: process.execPath,
+      launcherPath: desktopLauncherPath(ROOT),
+      cwd: ROOT,
+    });
+    return result.ok
+      ? { ok: true, message: result.message }
+      : { ok: false, error: result.error };
   });
 
   ipcMain.handle("downloads:open-popup", (_event, payload) => {
@@ -563,37 +555,6 @@ function openDownloadPopup(kind, id) {
 
 function showWindow() {
   if (!mainWindow) {
-    // A conflict deferred by `--hidden` is asked here, where there is finally
-    // somebody to answer it. Cleared first so a declined prompt is not re-asked
-    // on every tray click.
-    if (deferredConflict) {
-      const plan = deferredConflict;
-      deferredConflict = null;
-      void promptProxyConflict(plan, proxyPort).then(async choice => {
-        if (choice !== "replace") return;
-        // No pid means /healthz did not report one, so there is nothing to
-        // signal and nothing to wait for — going ahead would burn the fifteen
-        // second port-free timeout and then fail to bind, which reads to the
-        // user as "Replace did nothing, slowly". `ensureProxy` guards the same
-        // way on its own path.
-        if (!plan.pid) {
-          dialog.showErrorBox(
-            "opencodex could not replace the running build",
-            `The opencodex on port ${proxyPort} did not report a process id, so it cannot be asked to stop.`
-            + " Quit it yourself and relaunch this app.",
-          );
-          return;
-        }
-        try { process.kill(plan.pid, "SIGTERM"); } catch { /* already gone */ }
-        await waitForPortFree(proxyPort);
-        try {
-          proxy = spawnProxy(proxyPort);
-          mainWindow?.webContents.reloadIgnoringCache();
-        } catch (error) {
-          dialog.showErrorBox("opencodex could not take over the port", String(error?.message ?? error));
-        }
-      });
-    }
     return createWindow(proxyPort);
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -694,11 +655,8 @@ app.whenReady().then(async () => {
   // *remembers* that it did, so the question is asked the first time a window is
   // actually opened rather than dropped. Silently adopting and never mentioning
   // it is the original bug; deferring the question is not.
-  const hidden = process.argv.includes("--hidden");
   try {
-    const started = await ensureProxy(DEFAULT_PORT, hidden
-      ? { askConflict: async plan => { deferredConflict = plan; return "adopt"; } }
-      : {});
+    const started = await ensureProxy();
     proxyPort = started.port;
   } catch (error) {
     dialog.showErrorBox("opencodex could not start", String(error?.message ?? error));
