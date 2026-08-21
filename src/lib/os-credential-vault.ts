@@ -51,6 +51,7 @@ import { resolveTrustedWindowsPowerShellExe } from "./windows-elevation";
 const ENTROPY = "opencodex-schedule-ha-token-v1";
 
 const VAULT_TIMEOUT_MS = 10_000;
+const VAULT_OUTPUT_MAX_BYTES = 64 * 1024;
 const TOKEN_REF_RE = /^[A-Za-z0-9_-]{1,80}$/;
 /** A generous ceiling for a pasted long-lived access token; not a real secret length disclosure. */
 const TOKEN_MAX_LENGTH = 8192;
@@ -160,6 +161,9 @@ function runVaultScript(script: string, stdinPayload: string): Promise<string> {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      try { child.stdin?.destroy(); } catch { /* already closed */ }
+      try { child.stdout?.destroy(); } catch { /* already closed */ }
+      try { child.stderr?.destroy(); } catch { /* already closed */ }
       try { child.kill(); } catch { /* already gone */ }
       reject(new CredentialVaultError("timeout", "The Windows credential vault did not respond in time."));
     }, VAULT_TIMEOUT_MS);
@@ -171,10 +175,26 @@ function runVaultScript(script: string, stdinPayload: string): Promise<string> {
       fn();
     };
 
+    const rejectOutputOverflow = (which: "stdout" | "stderr"): void => {
+      settle(() => {
+        try { child.stdin?.destroy(); } catch { /* already closed */ }
+        try { child.stdout?.destroy(); } catch { /* already closed */ }
+        try { child.stderr?.destroy(); } catch { /* already closed */ }
+        try { child.kill(); } catch { /* already gone */ }
+        reject(new CredentialVaultError("powershell-failed", `The Windows credential vault returned too much ${which} output.`));
+      });
+    };
+
     child.stdout?.setEncoding?.("utf8");
     child.stderr?.setEncoding?.("utf8");
-    child.stdout?.on("data", (chunk: string | Buffer) => { stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8"); });
-    child.stderr?.on("data", (chunk: string | Buffer) => { stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8"); });
+    child.stdout?.on("data", (chunk: string | Buffer) => {
+      stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      if (Buffer.byteLength(stdout, "utf8") > VAULT_OUTPUT_MAX_BYTES) rejectOutputOverflow("stdout");
+    });
+    child.stderr?.on("data", (chunk: string | Buffer) => {
+      stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      if (Buffer.byteLength(stderr, "utf8") > VAULT_OUTPUT_MAX_BYTES) rejectOutputOverflow("stderr");
+    });
 
     child.once("error", (error: Error) => {
       settle(() => reject(new CredentialVaultError("powershell-failed", error.message)));

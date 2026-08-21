@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deleteProviderVaultReference, isProviderVaultReference, providerVaultExportRefusal, providerVaultReferenceId, resolveProviderCredential } from "../src/lib/provider-credentials";
+import { deleteProviderVaultReference, isProviderVaultReference, providerVaultExportRefusal, providerVaultReferenceId, resolveProviderCredential, setProviderVaultDeleteForTests } from "../src/lib/provider-credentials";
 import { setCredentialVaultSyncSeamForTests } from "../src/lib/os-credential-vault";
 import { addProviderApiKey, listProviderApiKeys, migrateProviderApiKeysToVault, removeProviderApiKey, setActiveProviderApiKey, setProviderApiKeySaveForTests } from "../src/providers/api-keys";
 import type { OcxConfig } from "../src/types";
@@ -12,6 +12,7 @@ const originalHome = process.env.OPENCODEX_HOME;
 let testHome: string | undefined;
 afterEach(() => {
   setCredentialVaultSyncSeamForTests(null);
+  setProviderVaultDeleteForTests(null);
   setProviderApiKeySaveForTests(null);
   if (originalHome === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = originalHome;
   if (testHome) removeTempDir(testHome);
@@ -119,7 +120,7 @@ test("key add/remove persistence failures never lose the vault entry or mutate l
   const rejected = addProviderApiKey(config, "demo", "preserve-secret");
   expect("error" in rejected).toBe(true);
   expect(config.providers.demo!.apiKey).toBeUndefined();
-  expect(Object.keys(JSON.parse(readFileSync(join(testHome, "schedule-secrets.json"), "utf8")))).toHaveLength(1);
+  expect(JSON.parse(readFileSync(join(testHome, "schedule-secrets.json"), "utf8"))).toEqual({});
   setProviderApiKeySaveForTests(() => undefined);
   const stored = addProviderApiKey(config, "demo", "preserve-secret");
   expect("id" in stored).toBe(true);
@@ -128,4 +129,48 @@ test("key add/remove persistence failures never lose the vault entry or mutate l
   expect("id" in stored && removeProviderApiKey(config, "demo", stored.id)).toBe(false);
   expect(config.providers.demo!.apiKey).toBe(ref);
   expect(resolveProviderCredential(ref)).toBe("preserve-secret");
+});
+
+test("new-vault cleanup failure is explicit and leaves the unresolved reference recoverable", () => {
+  testHome = mkdtempSync(join(tmpdir(), "ocx-vault-cleanup-failure-"));
+  process.env.OPENCODEX_HOME = testHome;
+  setCredentialVaultSyncSeamForTests({
+    platform: "win32",
+    runner: (script, payload) => script.includes("ProtectedData]::Protect")
+      ? Buffer.from(`cipher:${(JSON.parse(payload) as { plaintextB64: string }).plaintextB64}`).toString("base64")
+      : (() => {
+        const encoded = Buffer.from((JSON.parse(payload) as { ciphertextB64: string }).ciphertextB64, "base64").toString("utf8");
+        return encoded.startsWith("cipher:") ? encoded.slice("cipher:".length) : "";
+      })(),
+  });
+  setProviderApiKeySaveForTests(() => { throw new Error("save failed"); });
+  setProviderVaultDeleteForTests(() => { throw new Error("delete failed"); });
+  const config = { providerApiKeyVault: "windows", providers: { demo: { adapter: "openai-chat", baseUrl: "https://example.test/v1", authMode: "key" } } } as unknown as OcxConfig;
+  const result = addProviderApiKey(config, "demo", "unresolved-secret");
+  expect("error" in result && result.unresolved).toBe(true);
+  expect(config.providers.demo!.apiKey).toBeUndefined();
+  expect(Object.keys(JSON.parse(readFileSync(join(testHome, "schedule-secrets.json"), "utf8")))).toHaveLength(1);
+});
+
+test("remove does not complete when vault deletion fails and restores the config reference", () => {
+  testHome = mkdtempSync(join(tmpdir(), "ocx-vault-remove-failure-"));
+  process.env.OPENCODEX_HOME = testHome;
+  setCredentialVaultSyncSeamForTests({
+    platform: "win32",
+    runner: (script, payload) => script.includes("ProtectedData]::Protect")
+      ? Buffer.from(`cipher:${(JSON.parse(payload) as { plaintextB64: string }).plaintextB64}`).toString("base64")
+      : (() => {
+        const encoded = Buffer.from((JSON.parse(payload) as { ciphertextB64: string }).ciphertextB64, "base64").toString("utf8");
+        return encoded.startsWith("cipher:") ? encoded.slice("cipher:".length) : "";
+      })(),
+  });
+  setProviderApiKeySaveForTests(() => undefined);
+  const config = { providerApiKeyVault: "windows", providers: { demo: { adapter: "openai-chat", baseUrl: "https://example.test/v1", authMode: "key" } } } as unknown as OcxConfig;
+  const stored = addProviderApiKey(config, "demo", "remove-secret");
+  expect("id" in stored).toBe(true);
+  const ref = config.providers.demo!.apiKey!;
+  setProviderVaultDeleteForTests(() => { throw new Error("delete failed"); });
+  expect("id" in stored && removeProviderApiKey(config, "demo", stored.id)).toBe(false);
+  expect(config.providers.demo!.apiKey).toBe(ref);
+  expect(resolveProviderCredential(ref)).toBe("remove-secret");
 });

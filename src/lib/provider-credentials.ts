@@ -3,6 +3,11 @@ import { deleteVaultSecret, hasVaultSecret, readVaultSecretSync, storeVaultSecre
 
 export const PROVIDER_VAULT_REF_PREFIX = "vault:";
 const REF_RE = /^vault:([A-Za-z0-9_-]{1,80})$/;
+let deleteVaultSecretImpl: typeof deleteVaultSecret = deleteVaultSecret;
+
+export function setProviderVaultDeleteForTests(next: typeof deleteVaultSecret | null): void {
+  deleteVaultSecretImpl = next ?? deleteVaultSecret;
+}
 
 export function isProviderVaultReference(value: unknown): boolean {
   return typeof value === "string" && REF_RE.test(value);
@@ -36,7 +41,7 @@ export function createProviderVaultReference(secret: string): string {
 
 export function deleteProviderVaultReference(value: string): void {
   const ref = providerVaultReferenceId(value);
-  if (ref) deleteVaultSecret(ref);
+  if (ref) deleteVaultSecretImpl(ref);
 }
 
 export function providerVaultReferenceExists(value: string): boolean {

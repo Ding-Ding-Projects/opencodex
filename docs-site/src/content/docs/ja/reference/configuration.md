@@ -27,6 +27,9 @@ namespaced selected id を bare id に変えます。
 | `port` | `number` | `10100` | プロキシがリッスンするポート。 |
 | `hostname?` | `string` | `"127.0.0.1"` | バインドアドレス。LAN に公開するには `"0.0.0.0"` に設定します（`OPENCODEX_API_AUTH_TOKEN` が必要、下記 [リモートアクセス](#リモートアクセス) 参照）。 |
 | `proxy?` | `string` | — | 外向きの HTTP(S) プロキシ URL または `${ENV_VAR}` 参照。該当環境変数が空のとき `HTTP_PROXY` / `HTTPS_PROXY` に適用し、loopback は `NO_PROXY` に維持します。 |
+| `noProxy?` | `string \| string[]` | — | host・address・host-port の限定的な bypass リストです。設定値の URL・credential・制御文字・wildcard は拒否し、継承した標準 `NO_PROXY` の `*` とドット接尾辞は保持します。`allowPrivateNetwork: true` なしで private provider を許可することはありません。 |
+| `systemProxy?` | `"off" \| "static"` | `"off"` | Windows の静的 WinINet proxy を明示的に読み取る機能です。PAC、WPAD、`AutoDetect`、scheme 別で曖昧な `ProxyServer` は拒否し、明示的な `proxy` を優先します。解決できない `${ENV_VAR}` は起動を停止します。 |
+| `providerApiKeyVault?` | `"off" \| "windows"` | `"off"` | provider API key をユーザー DPAPI vault に保存する opt-in です。config には opaque reference だけが残り、vault ciphertext は export されないため完全バックアップは明示的に拒否されます。 |
 | `providers` | `Record<string, OcxProviderConfig>` | — | プロバイダー名 → 設定 map。 |
 | `openaiProviderTierVersion?` | `2` | 移行設定 | 単一の省略可能 OpenAI projection 完了マーカー。 |
 | `defaultProvider` | `string` | `"openai"` | ルーティングでより良い match が見つからなかったときに使うプロバイダー。 |

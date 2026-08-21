@@ -73,6 +73,11 @@ function validateAndSave(config: ReturnType<typeof loadConfig>): void {
   saveConfig(config);
 }
 
+function restoreConfigSnapshot(target: ReturnType<typeof loadConfig>, snapshot: ReturnType<typeof loadConfig>): void {
+  for (const key of Object.keys(target)) delete (target as unknown as Record<string, unknown>)[key];
+  Object.assign(target, structuredClone(snapshot));
+}
+
 // ---------------------------------------------------------------------------
 // provider list
 // ---------------------------------------------------------------------------
@@ -156,6 +161,7 @@ async function handleAdd(args: string[]): Promise<void> {
   rejectUnknownArgs(restArgs, ADD_USAGE);
 
   const config = loadConfig();
+  const configBeforeAdd = structuredClone(config);
 
   const namespaceCollision = codexAccountNamespaceProviderCollisionError(config.codexAccountNamespaces, name);
   if (namespaceCollision) {
@@ -222,12 +228,14 @@ async function handleAdd(args: string[]): Promise<void> {
     delete provConfig.apiKey;
     const stored = addProviderApiKey(config, name, apiKey);
     if ("error" in stored) {
-      delete config.providers[name];
+      restoreConfigSnapshot(config, configBeforeAdd);
       throw new Error(stored.error);
     }
-    validateAndSave(config);
+    try { validateAndSave(config); }
+    catch (error) { restoreConfigSnapshot(config, configBeforeAdd); throw error; }
   } else {
-    validateAndSave(config);
+    try { validateAndSave(config); }
+    catch (error) { restoreConfigSnapshot(config, configBeforeAdd); throw error; }
   }
 
   if (wantsJson) {

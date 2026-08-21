@@ -244,6 +244,13 @@ export class OpenAiTierBackupSecretResidualError extends Error {
   }
 }
 
+export class OpenAiTierBackupVaultRefusalError extends Error {
+  constructor() {
+    super("OpenAI tier backup refused: providerApiKeyVault is enabled but plaintext provider API keys remain");
+    this.name = "OpenAiTierBackupVaultRefusalError";
+  }
+}
+
 export class ConfiguredProxyReferenceError extends Error {
   constructor() {
     super("config.proxy is an explicit environment reference but the referenced proxy is unavailable");
@@ -264,6 +271,18 @@ export interface OpenAiTierBackupIO {
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.byteLength === right.byteLength && left.every((value, index) => value === right[index]);
+}
+
+function hasPlaintextProviderApiKeys(bytes: Uint8Array): boolean {
+  try {
+    const parsed = JSON.parse(Buffer.from(bytes).toString("utf8")) as { providerApiKeyVault?: unknown; providers?: Record<string, { apiKey?: unknown; apiKeyPool?: Array<{ key?: unknown }> }> };
+    if (parsed.providerApiKeyVault !== "windows" || !parsed.providers || typeof parsed.providers !== "object") return false;
+    return Object.values(parsed.providers).some(provider =>
+      (typeof provider.apiKey === "string" && !/^vault:[A-Za-z0-9_-]{1,80}$/.test(provider.apiKey))
+      || (provider.apiKeyPool ?? []).some(entry => typeof entry.key === "string" && !/^vault:[A-Za-z0-9_-]{1,80}$/.test(entry.key)));
+  } catch {
+    return false;
+  }
 }
 
 function isAlreadyExistsError(error: unknown): boolean {
@@ -311,6 +330,7 @@ export function backupConfigBeforeOpenAiTierMigration(
   const source = configPath;
   if (!io.exists(source)) return "absent";
   const original = io.read(source);
+  if (hasPlaintextProviderApiKeys(original)) throw new OpenAiTierBackupVaultRefusalError();
   // v2 snapshot path. The historical `.pre-openai-tiers-v1.bak` is read only by restore
   // docs/fixtures and is never reused or overwritten as the v2 snapshot.
   const backup = `${source}.pre-openai-tiers-v2.bak`;

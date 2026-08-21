@@ -96,7 +96,7 @@ export function listProviderApiKeys(config: OcxConfig, name: string): { activeId
 }
 
 /** Add (or upsert) a key and make it ACTIVE. Persists config. */
-export function addProviderApiKey(config: OcxConfig, name: string, key: string, label?: string): { id: string } | { error: string } {
+export function addProviderApiKey(config: OcxConfig, name: string, key: string, label?: string): { id: string } | { error: string; unresolved?: boolean } {
   const provider = config.providers[name];
   if (!provider || !isKeyAuthProvider(provider)) return { error: "provider does not use API-key auth" };
   if (typeof key !== "string" || !key.trim()) return { error: "key is required" };
@@ -105,12 +105,18 @@ export function addProviderApiKey(config: OcxConfig, name: string, key: string, 
   const snapshot = structuredClone(config);
   const pool = ensurePool(provider);
   let stored = trimmed;
+  let newlyCreatedRef: string | undefined;
   if (config.providerApiKeyVault === "windows") {
     try {
       const existing = pool.find(entry => resolveProviderCredential(resolveEnvValue(entry.key)) === trimmed || entry.key === trimmed);
+      const candidateRef = providerVaultReferenceForSecret(trimmed);
+      const refExisted = providerVaultReferenceExists(candidateRef);
       stored = existing?.key && isProviderVaultReference(existing.key)
         ? existing.key
         : createProviderVaultReference(trimmed);
+      if ((!existing?.key || !isProviderVaultReference(existing.key)) && !refExisted) {
+        newlyCreatedRef = stored;
+      }
     }
     catch (error) { return { error: error instanceof Error ? `OS credential vault unavailable: ${error.message}` : "OS credential vault unavailable" }; }
   }
@@ -127,6 +133,15 @@ export function addProviderApiKey(config: OcxConfig, name: string, key: string, 
   try { saveProviderConfig(config); }
   catch (error) {
     restoreConfig(config, snapshot);
+    if (newlyCreatedRef && !vaultReferenceStillUsed(config, newlyCreatedRef)) {
+      try { deleteProviderVaultReference(newlyCreatedRef); }
+      catch {
+        return {
+          error: "could not persist provider API key and could not remove the newly-created vault reference",
+          unresolved: true,
+        };
+      }
+    }
     return { error: error instanceof Error ? `could not persist provider API key: ${error.message}` : "could not persist provider API key" };
   }
   return { id };
@@ -175,7 +190,14 @@ export function removeProviderApiKey(config: OcxConfig, name: string, id: string
   try { saveProviderConfig(config); }
   catch { restoreConfig(config, snapshot); return false; }
   if (isProviderVaultReference(entry.key) && !vaultReferenceStillUsed(config, entry.key)) {
-    deleteProviderVaultReference(entry.key);
+    try {
+      deleteProviderVaultReference(entry.key);
+    } catch {
+      restoreConfig(config, snapshot);
+      try { saveProviderConfig(config); }
+      catch { /* leave the live snapshot and report non-completion */ }
+      return false;
+    }
   }
   return true;
 }

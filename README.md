@@ -479,6 +479,24 @@ Here's a typical multi-provider setup:
 }
 ```
 
+### Network and provider-key security
+
+The optional `noProxy` field accepts bounded host, address, and host-port entries. Configured
+entries reject URLs, credentials, controls, and wildcards; inherited `NO_PROXY` values retain
+standard matching such as `*` and leading-dot suffixes. Loopback is always kept direct, and a
+`noProxy` match never authorizes a private provider destination without
+`allowPrivateNetwork: true`.
+
+`systemProxy: "static"` is an opt-in Windows-only read of the static WinINet proxy. PAC, WPAD,
+`AutoDetect`, and keyed per-scheme proxy values are refused. An explicit `proxy` value wins, while
+an unresolved `${ENV_VAR}` reference fails closed instead of falling through to system discovery.
+
+`providerApiKeyVault: "windows"` stores provider API-key pool material as opaque DPAPI-backed
+references. The vault is account-scoped and its ciphertext is not included in exports; full-state
+export is refused in vault mode rather than producing a backup that cannot be restored. Vault
+migration and pool changes roll back on persistence failure, and an unavailable vault never causes
+plaintext fallback.
+
 Provider entries can also annotate routed catalog metadata and output defaults. Use `contextWindow`
 for a provider-wide Codex-visible context cap, `modelContextWindows` for model-specific caps, and
 `modelInputModalities` for model-specific catalog input hints such as `["text"]` or

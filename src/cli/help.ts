@@ -500,6 +500,8 @@ Usage:
   ocx export <path> --yes     Full state backup — config, accounts, auth (secrets included)
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export
+                              Network fields include bounded noProxy and opt-in static systemProxy;
+                              providerApiKeyVault refuses full-state export because vault ciphertext is omitted
   ocx codex [args...]         Start if needed and launch Codex through the proxy
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile
