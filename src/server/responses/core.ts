@@ -802,7 +802,8 @@ async function applyFinalRouteRequestNormalization(args: {
   applyOpenAiVirtualModel(parsed, route, logCtx);
 
   // Fast mode override for OpenAI-routed models.
-  if (config.fastMode !== undefined && route.provider.adapter === "openai-responses") {
+  const xaiApiKeyPriority = route.providerName === "xai" && route.provider.authMode === "key";
+  if (config.fastMode !== undefined && (route.provider.adapter === "openai-responses" || xaiApiKeyPriority)) {
     const tier = config.fastMode ? "priority" : undefined;
     if (parsed._rawBody && typeof parsed._rawBody === "object") {
       if (tier) (parsed._rawBody as Record<string, unknown>).service_tier = tier;

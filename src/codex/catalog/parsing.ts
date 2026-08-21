@@ -112,6 +112,8 @@ export interface CatalogModel {
   /** Whether Codex may send Responses text.verbosity for this routed model. */
   supportsVerbosity?: boolean;
   supportsReasoningSummaries?: boolean;
+  supportsServiceTier?: boolean;
+  fastTierDescription?: string;
 }
 
 export type RawEntry = Record<string, unknown>;

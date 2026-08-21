@@ -139,6 +139,17 @@ export function applyCatalogModelMetadata(entry: RawEntry, model?: CatalogModel)
   if (typeof model.supportsReasoningSummaries === "boolean") {
     entry.supports_reasoning_summaries = model.supportsReasoningSummaries;
   }
+  if (model.supportsServiceTier === true) {
+    entry.service_tiers = [{
+      id: "priority",
+      name: "Fast",
+      description: model.fastTierDescription ?? "1.5x speed, increased usage",
+    }];
+    entry.additional_speed_tiers = ["fast"];
+  } else {
+    delete entry.service_tiers;
+    delete entry.additional_speed_tiers;
+  }
 }
 
 export function applyReasoningLevels(

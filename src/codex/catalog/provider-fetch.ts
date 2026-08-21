@@ -141,9 +141,15 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
   const defaultReasoningEffort = modelRecordValue(prov.modelDefaultReasoningEfforts, model.id) ?? model.defaultReasoningEffort;
   const suppressSyntheticMax = modelRecordValue(prov.modelSuppressSyntheticMax, model.id) === true;
   const supportsReasoningSummaries = configuredReasoningSummarySupport(prov, model.id);
+  const supportsServiceTier = name === "xai" && prov.authMode === "key";
   const hinted = {
     ...(() => {
-      const { suppressSyntheticMax: _staleSuppressSyntheticMax, ...cleanModel } = model;
+      const {
+        suppressSyntheticMax: _staleSuppressSyntheticMax,
+        supportsServiceTier: _staleSupportsServiceTier,
+        fastTierDescription: _staleFastTierDescription,
+        ...cleanModel
+      } = model;
       return cleanModel;
     })(),
     ...(configuredCap !== undefined
@@ -165,6 +171,7 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
     ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
     ...(suppressSyntheticMax ? { suppressSyntheticMax: true } : {}),
     ...(typeof supportsReasoningSummaries === "boolean" ? { supportsReasoningSummaries } : {}),
+    ...(supportsServiceTier ? { supportsServiceTier: true, fastTierDescription: "Priority processing, 2x token price" } : {}),
     ...(prov.adapter === "kiro" ? { supportsVerbosity: false } : {}),
     // Default-on for openai-chat providers (explicit false opts out); other adapters
     // advertise only on explicit opt-in.
@@ -712,6 +719,7 @@ export async function gatherRoutedModels(
   const customModels = (config.customModels ?? []).map(cm => {
     const rawProvider = config.providers[cm.provider];
     const supportsReasoningSummaries = configuredReasoningSummarySupport(rawProvider, cm.modelId);
+    const supportsServiceTier = cm.provider === "xai" && rawProvider?.authMode === "key";
     const suppressSyntheticMax = rawProvider
       ? modelRecordValue(rawProvider.modelSuppressSyntheticMax, cm.modelId) === true
       : false;
@@ -723,6 +731,7 @@ export async function gatherRoutedModels(
       ...(cm.contextWindow ? { contextWindow: cm.contextWindow } : {}),
       ...(cm.inputModalities ? { inputModalities: cm.inputModalities } : {}),
       ...(typeof supportsReasoningSummaries === "boolean" ? { supportsReasoningSummaries } : {}),
+      ...(supportsServiceTier ? { supportsServiceTier: true, fastTierDescription: "Priority processing, 2x token price" } : {}),
       ...(suppressSyntheticMax ? { suppressSyntheticMax: true } : {}),
     };
     // Vision-sidecar coverage ONLY: if the custom model is in the enriched provider's
