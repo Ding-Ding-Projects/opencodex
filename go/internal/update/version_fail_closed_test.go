@@ -25,3 +25,10 @@ func TestJobManagerRejectsForgedMalformedCheckBeforeWritingJob(t *testing.T) {
 		t.Fatalf("update job was written before validation: %v", readErr)
 	}
 }
+
+func TestNormalizeConcreteVersionRemovesRegistryVPrefixBeforeInstall(t *testing.T) {
+	got, err := NormalizeConcreteVersion("v2.8.0-preview.3")
+	if err != nil || got != "2.8.0-preview.3" {
+		t.Fatalf("normalized=%q err=%v", got, err)
+	}
+}

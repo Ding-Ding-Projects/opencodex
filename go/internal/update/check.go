@@ -82,6 +82,13 @@ func (c Checker) Check(ctx context.Context, requested Channel) CheckResult {
 		return result
 	}
 	result.LatestVersion = strings.TrimSpace(latest)
+	normalized, normalizeErr := NormalizeConcreteVersion(result.LatestVersion)
+	if normalizeErr != nil {
+		result.LatestVersion = ""
+		result.Reason = "latest_unavailable"
+		return result
+	}
+	result.LatestVersion = normalized
 	newer, transitionErr := ValidateNativeTransition(c.CurrentVersion, result.LatestVersion, channel)
 	if transitionErr != nil {
 		result.LatestVersion = ""
@@ -184,7 +191,18 @@ func ValidateNativeTransition(current, latest string, channel Channel) (bool, er
 
 func parseConcreteVersion(value string) (string, bool) {
 	value = strings.TrimSpace(strings.TrimPrefix(value, "v"))
-	if stable, ok := parseStable(value); ok { return fmt.Sprintf("%d.%d.%d", stable[0], stable[1], stable[2]), true }
-	if preview, ok := parsePreview(value); ok { return fmt.Sprintf("%d.%d.%d-preview.%d", preview[0], preview[1], preview[2], preview[3]), true }
+	if stable, ok := parseStable(value); ok {
+		return fmt.Sprintf("%d.%d.%d", stable[0], stable[1], stable[2]), true
+	}
+	if preview, ok := parsePreview(value); ok {
+		return fmt.Sprintf("%d.%d.%d-preview.%d", preview[0], preview[1], preview[2], preview[3]), true
+	}
 	return "", false
+}
+
+func NormalizeConcreteVersion(value string) (string, error) {
+	if normalized, ok := parseConcreteVersion(value); ok {
+		return normalized, nil
+	}
+	return "", fmt.Errorf("release version %q is not concrete", strings.TrimSpace(value))
 }

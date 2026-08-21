@@ -299,9 +299,11 @@ func (m *JobManager) begin(check CheckResult, restart bool) (Job, error) {
 	if !check.CanUpdate {
 		return Job{}, &JobError{Message: fmt.Sprintf("update unavailable: %s", check.Reason), Status: http.StatusConflict, Code: "update_unavailable"}
 	}
-	if _, err := ValidateNativeTransition(check.CurrentVersion, check.LatestVersion, check.Channel); err != nil {
+	normalized, err := NormalizeConcreteVersion(check.LatestVersion)
+	if err != nil {
 		return Job{}, &JobError{Message: fmt.Sprintf("update unavailable: %v", err), Status: http.StatusConflict, Code: "update_unavailable"}
 	}
+	check.LatestVersion = normalized
 	if m.Store == nil {
 		return Job{}, errors.New("update job store is required")
 	}
