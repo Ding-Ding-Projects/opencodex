@@ -239,12 +239,26 @@ describe("Anthropic vision planning and management config", () => {
         config,
       );
       expect(put.status).toBe(200);
-      expect((await put.json()).vision).toEqual({
+      const putBody = await put.json() as Record<string, any>;
+      expect(putBody.webSearch.enabled).toBe(true);
+      expect(putBody.vision).toEqual({
         model: "claude-sonnet-5",
         backend: "anthropic",
         maxDescriptionsPerTurn: 4,
       });
       expect(config.webSearchSidecar).toEqual({ model: "claude-search", backend: "anthropic", reasoning: "high" });
+
+      const disabledConfig: OcxConfig = { ...config, webSearchSidecar: { enabled: false } };
+      const disabledPut = await handleManagementAPI(
+        new Request("http://localhost/api/sidecar-settings", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ webSearch: { model: "disabled-search" } }),
+        }),
+        new URL("http://localhost/api/sidecar-settings"),
+        disabledConfig,
+      );
+      expect((await disabledPut.json() as Record<string, any>).webSearch).toMatchObject({ enabled: false, model: "disabled-search" });
 
       const get = await handleManagementAPI(
         new Request("http://localhost/api/sidecar-settings"),
@@ -252,7 +266,7 @@ describe("Anthropic vision planning and management config", () => {
         config,
       );
       const getBody = await get!.json() as Record<string, any>;
-      expect(getBody.webSearch).toEqual({ model: "claude-search", backend: "anthropic" });
+      expect(getBody.webSearch).toEqual({ enabled: true, model: "claude-search", backend: "anthropic" });
       expect(getBody.vision).toEqual({
         model: "claude-sonnet-5",
         backend: "anthropic",
@@ -273,7 +287,7 @@ describe("Anthropic vision planning and management config", () => {
       );
       expect(clear.status).toBe(200);
       const clearBody = await clear.json() as Record<string, any>;
-      expect(clearBody.webSearch).toEqual({ model: "gpt-5.6-luna" });
+      expect(clearBody.webSearch).toEqual({ enabled: true, model: "gpt-5.6-luna" });
       expect(clearBody.vision).toEqual({ model: "gpt-5.6-luna", maxDescriptionsPerTurn: 4 });
       expect(config.webSearchSidecar).toEqual({ reasoning: "high" });
       expect(config.visionSidecar).toEqual({ maxDescriptionsPerTurn: 4 });
