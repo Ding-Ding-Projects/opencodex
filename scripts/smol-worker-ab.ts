@@ -128,4 +128,6 @@ const report = {
 writeFileSync(join(outDir, "report.json"), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(gate));
 console.log("report: " + join(outDir, "report.json"));
-
+// The report is retained for diagnosis, but a failed/incomplete A/B gate must
+// still be machine-visible to callers. Synthetic scope does not make failure green.
+if (!gate.completionSuccess || !gate.elapsedWithin25Pct || !gate.peakRssReduced) process.exitCode = 1;

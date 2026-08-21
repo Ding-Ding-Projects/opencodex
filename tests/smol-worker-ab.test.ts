@@ -19,4 +19,9 @@ describe("smol worker A/B harness", () => {
     expect(source).toContain("fresh child process per run");
     expect(source).toContain("Worker({ smol: true })");
   });
+
+  test("failed or incomplete gates return nonzero while retaining report output", () => {
+    expect(source).toContain("writeFileSync(join(outDir, \"report.json\")");
+    expect(source).toContain("if (!gate.completionSuccess || !gate.elapsedWithin25Pct || !gate.peakRssReduced) process.exitCode = 1;");
+  });
 });
