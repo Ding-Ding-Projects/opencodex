@@ -709,6 +709,27 @@ describe("usage log", () => {
     expect(persisted).not.toHaveProperty("failureStage");
   });
 
+  test("drops negative and non-finite cache counters before persistence", () => {
+    appendUsageEntry({
+      requestId: "ocx-cache-invalid",
+      timestamp: 13,
+      provider: "openai",
+      model: "gpt",
+      status: 200,
+      durationMs: 1,
+      usageStatus: "reported",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 2,
+        cachedInputTokens: -1,
+        cacheReadInputTokens: Number.NaN,
+        cacheCreationInputTokens: Number.POSITIVE_INFINITY,
+      },
+    });
+    const [persisted] = readUsageEntries();
+    expect(persisted?.usage).toEqual({ inputTokens: 10, outputTokens: 2 });
+  });
+
   test("readRecentUsageEntries returns only the newest N rows", () => {
     for (let i = 0; i < 12; i++) {
       appendUsageEntry({

@@ -169,15 +169,16 @@ export function usageStatusForFinalLog(usage: OcxUsage | undefined): UsageStatus
 }
 
 function normalizeUsageValue(usage: OcxUsage | undefined): OcxUsage | undefined {
-  if (!usage) return undefined;
+  if (!usage || !isNonNegativeFiniteNumber(usage.inputTokens) || !isNonNegativeFiniteNumber(usage.outputTokens)) return undefined;
+  const optionalCounter = (value: unknown): number | undefined => isNonNegativeFiniteNumber(value) ? value : undefined;
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
-    ...(typeof usage.totalTokens === "number" ? { totalTokens: usage.totalTokens } : {}),
-    ...(typeof usage.cachedInputTokens === "number" ? { cachedInputTokens: usage.cachedInputTokens } : {}),
-    ...(typeof usage.cacheReadInputTokens === "number" ? { cacheReadInputTokens: usage.cacheReadInputTokens } : {}),
-    ...(typeof usage.cacheCreationInputTokens === "number" ? { cacheCreationInputTokens: usage.cacheCreationInputTokens } : {}),
-    ...(typeof usage.reasoningOutputTokens === "number" ? { reasoningOutputTokens: usage.reasoningOutputTokens } : {}),
+    ...(optionalCounter(usage.totalTokens) !== undefined ? { totalTokens: optionalCounter(usage.totalTokens) } : {}),
+    ...(optionalCounter(usage.cachedInputTokens) !== undefined ? { cachedInputTokens: optionalCounter(usage.cachedInputTokens) } : {}),
+    ...(optionalCounter(usage.cacheReadInputTokens) !== undefined ? { cacheReadInputTokens: optionalCounter(usage.cacheReadInputTokens) } : {}),
+    ...(optionalCounter(usage.cacheCreationInputTokens) !== undefined ? { cacheCreationInputTokens: optionalCounter(usage.cacheCreationInputTokens) } : {}),
+    ...(optionalCounter(usage.reasoningOutputTokens) !== undefined ? { reasoningOutputTokens: optionalCounter(usage.reasoningOutputTokens) } : {}),
     ...(usage.estimated ? { estimated: true } : {}),
   };
 }
@@ -345,6 +346,7 @@ function capMetadataString(s: string): string {
 
 function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
   const attempts = normalizedAttempts(entry.attempts);
+  const usage = normalizeUsageValue(entry.usage);
   return {
     requestId: entry.requestId,
     timestamp: entry.timestamp,
@@ -407,7 +409,7 @@ function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
       ? { failureStage: entry.failureStage as FailureStage }
       : {}),
     usageStatus: entry.usageStatus,
-    ...(entry.usage ? { usage: normalizeUsageValue(entry.usage) } : {}),
+    ...(usage ? { usage } : {}),
     ...(typeof entry.totalTokens === "number" ? { totalTokens: entry.totalTokens } : {}),
     ...(attempts.length > 0 ? { attempts } : {}),
     ...(entry.errorCode ? { errorCode: entry.errorCode } : {}),
