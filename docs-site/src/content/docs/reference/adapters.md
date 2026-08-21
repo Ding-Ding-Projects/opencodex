@@ -97,6 +97,9 @@ streams the response back **untranslated**.
 
 - Builds Kiro `conversationState`, maps Codex tools and tool results, and sends image blocks supported
   by the Kiro wire.
+- Treats client `parallel_tool_calls: true` as permission rather than a wire requirement. Kiro stays
+  serialized: the routed catalog advertises no parallel capability, the parsed hint remains available
+  to internal policy, and the adapter emits no parallel-control field upstream.
 - Decodes `application/vnd.amazon.eventstream`, reconstructs text/thinking/tool events, detects
   truncated tool JSON, and estimates usage because the upstream does not return token counts.
 - Uses the configured `baseUrl` verbatim when it is custom. A canonical
@@ -172,6 +175,10 @@ advertised effort control on those models as proof of upstream-native reasoning 
   and `desktopExecutor` integrations have separate opt-ins; `nativeLocalExec: "on"` enables the
   broader built-in executor and bypasses Codex approval/sandbox semantics, and legacy
   `unsafeAllowNativeLocalExec: true` remains equivalent only when `nativeLocalExec` is unset.
+- Treats a clean Connect `END_STREAM` as the `Run` terminal after earlier frame handlers drain.
+  Open client tools fail closed, drained client-tool finalizers complete without waiting for their
+  grace timer, and an admitted `done`/`error` cannot be replayed or relabelled by later HTTP-body
+  EOF, abort, or reset teardown.
 
 ## `azure-openai` (alias: `azure`)
 

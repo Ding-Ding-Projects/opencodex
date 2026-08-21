@@ -144,6 +144,22 @@ MCP, screen recording, and computer-use stay on their separate explicit executor
 - 다른 대안 대신 이 방식을 선택한 이유: opencodex has no trustworthy per-request sandbox attestation in request text or headers, so any prompt-carried marker is spoofable by data-plane callers.
 - 장점, 단점 및 영향: this closes prompt-to-native-exec escalation while preserving an explicit operator escape hatch; existing configs that relied on `codex-sandbox` must switch to `nativeLocalExec: "on"` for trusted local experiments.
 
+## Cursor Connect terminal ownership
+
+The Cursor Connect `END_STREAM` envelope is the protocol terminal for a `Run` turn. The transport
+serializes earlier frame handlers before admitting that terminal, then finalizes exactly once: an
+open client tool becomes a fail-closed truncation error, a drained client-tool finalizer is completed
+without waiting for its grace timer, and a text turn receives its normal `done`. Once a terminal has
+been queued, later HTTP-body EOF, abort, or reset events cannot replay or relabel the accepted output.
+
+[Decision Log]
+- 목적과 의도: settle a clean Cursor protocol end promptly while preserving incomplete-tool safety and terminal idempotence.
+- 기존 구현 및 제약 조건: the Connect end frame was logged but HTTP-body EOF owned settlement; frame handlers could still be draining, and an already-accepted output could be followed by a second terminal or stall timeout.
+- 검토한 주요 대안: shorten the global stall deadline; trust every later abort as success; settle before prior frame handlers drain; or replay after a transport close.
+- 선택한 방식: queue terminal admission behind the serialized frame chain, latch the first outbound `done`/`error`, finalize open or drained client-tool state through the existing fail-closed helpers, and mark clean protocol cleanup as expected.
+- 다른 대안 대신 이 방식을 선택한 이유: a protocol terminal is stronger evidence than a held-open body, while frame ordering and the terminal latch prevent lost tool safety and duplicate output.
+- 장점, 단점 및 영향: clean Cursor turns no longer wait for the outer stall watchdog; incomplete tool calls remain errors, client-tool finalizers do not linger, and later transport teardown is not replayed.
+
 ## WebSocket
 
 The WebSocket endpoint exists at `/v1/responses`, but discovery is opt-in:
@@ -166,6 +182,21 @@ The endpoint handles `response.create`, ignores `response.processed`, supports w
 `ws-bridge.ts` preserves upstream `failed` and `incomplete` status values in the final WebSocket
 frame rather than always emitting `response.completed`. If the response status is `failed`, a
 `response.failed` frame is sent; otherwise `response.completed` carries through the original status.
+
+## Kiro client parallel-tool hint
+
+Kiro's wire remains serialized when an OpenAI Responses client sends
+`parallel_tool_calls: true`. That request field is permissive: it allows parallel calls but does not
+require the routed transport to expose a matching flag. The Kiro catalog therefore continues to
+advertise `supports_parallel_tool_calls: false`, the parsed client hint remains available to internal
+policy, and the adapter emits no parallel-control field in the CodeWhisperer payload.
+
+[Decision Log]
+- purpose: keep Codex tool turns usable with Kiro without claiming or inventing parallel execution on the CodeWhisperer wire.
+- constraint: Kiro has no verified parallel-control request field and serializes tool execution, while clients may send the permission hint.
+- choice: accept the parsed hint as permission and leave the Kiro wire unchanged.
+- reason: rejecting permission as a transport requirement blocks valid turns; rewriting shared request state hides caller intent and can affect later policy or diagnostics.
+- impact: Kiro remains honest about serialized execution while ordinary tool turns continue when the client permits parallel calls.
 
 ## Heartbeat and stall deadline
 
