@@ -2,10 +2,10 @@
 
 ## Service, remote-login, and ACL ports — 2026-08-21
 
-- [x] Make bare `ocx service` install only when both Windows backends are proven absent; route an existing installation through repair/restart without re-registering it (`b37d17fc5`, service tests 52 pass in the focused run; one unrelated diagnostics test timed out under host contention).
-- [x] Add `ocx service restart` as a repair alias and document the tri-state fail-closed behavior (`b37d17fc5`, docs build 236 pages).
+- [x] Source contract: make bare `ocx service` install only when both Windows backends are proven absent; route an existing installation through repair/restart without re-registering it (`b37d17fc5`, focused planning/probe/repair tests pass). Follow-up `2f44fad02` now refuses unverified scheduler stop, deletion, and persisted-token boundaries. Live Windows Task Scheduler stop/restart evidence remains pending.
+- [x] Source/docs contract: add `ocx service restart` as a repair alias and document the tri-state fail-closed behavior (`b37d17fc5`, docs build 236 pages). Live Windows service lifecycle evidence remains pending.
 - [x] Document the safe SSH-forwarded remote-provider recipe that preserves the local Codex login and keeps provider OAuth ownership on the host where login runs (`4f08de6a9`).
-- [x] Add opt-in `OPENCODEX_ACL_VERIFY_EXISTING=1` strict read-before-write verification bound to the effective Windows token SID; ambiguity falls back to mutation (`b37d17fc5`, `tests/windows-secret-acl.test.ts`: 34 pass / 0 fail).
+- [x] Add opt-in `OPENCODEX_ACL_VERIFY_EXISTING=1` strict read-before-write verification bound to the effective Windows token SID; ambiguity falls back to mutation (`b37d17fc5`, `a6784722f`, `tests/windows-secret-acl.test.ts`: 34 pass / 0 fail). Directory `(OI)(CI)(F)` is covered. Live ACL/service-account evidence remains pending.
 - [ ] Recover verified zero-byte coordinators after the write-substrate foundations land from the active architecture lane; this lane does not duplicate that owned substrate.
 - [ ] Add the optional package/AUMID-bound full Desktop restart path; the ordinary `--restart-codex` app-server-only path remains unchanged until the identity-bounded integration is independently verified.
 - [ ] Port release SSH credential-boundary validation after the active release-workflow lane frees `scripts/release.ts` and its tests.

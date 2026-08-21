@@ -6,9 +6,9 @@ Local commits on `codex/port-service-platform` (not dewed or merged):
 
 | Commit | Scope | Evidence |
 | --- | --- | --- |
-| `e479283c9` | Idempotent bare service install-or-repair selection, `repair`/`restart` alias, tri-state Windows probe, and CLI/docs coverage | Focused service tests passed for the new planning/probe/repair cases; root typecheck passed; docs build completed 236 pages |
+| `e479283c9` + `2f44fad02` | Idempotent bare service install-or-repair selection, `repair`/`restart` alias, tri-state Windows probe, protected persisted-token fallback, verified scheduler stop/uninstall, and CLI/docs coverage | Focused source tests pass; root typecheck passed; docs build completed 236 pages. Live Windows Task Scheduler stop/restart/uninstall evidence is still pending. |
 | `4f08de6a9` | SSH-forwarded remote-provider documentation that preserves the local Codex login and names OAuth callback ownership | Included in the successful docs build |
-| `2b4731a1a` + `b37d17fc5` | Strict opt-in ACL read verification plus effective Windows token SID resolution; unknown or ambiguous output falls back to hardening | `tests/windows-secret-acl.test.ts`: 34 passed / 0 failed; root typecheck and privacy scan passed |
+| `2b4731a1a` + `b37d17fc5` + `a6784722f` | Strict opt-in ACL read verification plus effective Windows token SID resolution; file `(F)` and directory `(OI)(CI)(F)` owner shapes are accepted while ambiguity falls back to hardening | `tests/windows-secret-acl.test.ts`: 34 passed / 0 failed; root typecheck and privacy scan passed. Live ACL/service-account evidence is still pending. |
 
 The full root `prepush` run was started after the first ACL commit but stopped after concurrent host contention produced ACL-hardening failures in unrelated end-to-end fixtures; it was not a valid exact-tree verdict after the later SID-test adjustment. The decisive focused ACL suite and typecheck were rerun green afterward. A fresh full prepush should be run after integration on a quiet tree.
 
