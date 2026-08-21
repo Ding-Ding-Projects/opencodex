@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import { en } from "../src/i18n/en";
 import { M3_EN } from "../src/i18n/m3";
 import { interpolate, type TFn } from "../src/i18n/shared";
-import { normalizeInjectionSelection } from "../src/pages/dashboard-core-poll";
+import {
+  fetchDashboardCore,
+  normalizeInjectionSelection,
+  type DashboardEpochRefs,
+} from "../src/pages/dashboard-core-poll";
 import {
   defaultUpdateChannel,
   modelMetaLabel,
@@ -85,6 +89,47 @@ test("injection writes consume the server's model-clear normalization", () => {
     injectionModel: "",
     injectionEffort: "",
   });
+});
+
+test("a healthy proxy stays online when an optional management resource is unavailable", async () => {
+  const originalFetch = globalThis.fetch;
+  const epochs: DashboardEpochRefs = {
+    settingsRequestEpochRef: { current: 0 },
+    settingsMutationEpochRef: { current: 0 },
+    settingsMutationInFlightRef: { current: false },
+    shadowCallRequestEpochRef: { current: 0 },
+    shadowCallMutationEpochRef: { current: 0 },
+    shadowCallMutationInFlightRef: { current: false },
+  };
+  try {
+    for (const failure of ["503", "malformed", "rejected"] as const) {
+      globalThis.fetch = async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/healthz") return Response.json({ status: "ok", version: "0.0.0-test", uptime: 1 });
+        if (path === "/api/providers") {
+          if (failure === "503") return new Response("temporarily unavailable", { status: 503 });
+          if (failure === "malformed") return Response.json({ providers: "not-an-array" });
+          throw new Error("provider request rejected");
+        }
+        if (path === "/api/settings") return Response.json({ codexAutoStart: true, port: 10100, hostname: "127.0.0.1" });
+        if (path === "/api/sidecar-settings") {
+          return Response.json({ webSearch: { model: "search" }, vision: { model: "vision" } });
+        }
+        if (path === "/api/shadow-call-settings") return Response.json({ enabled: false, model: "gpt-5.5" });
+        if (path === "/api/v2") return Response.json({ multiAgentMode: "default" });
+        if (path === "/api/injection-model") return Response.json({ model: null, effort: null, efforts: [], available: [] });
+        if (path === "/api/effort-caps") return Response.json({ effortCap: null, subagentEffortCap: null });
+        throw new Error(`unexpected dashboard request: ${path}`);
+      };
+
+      const data = await fetchDashboardCore("http://127.0.0.1:10100", new AbortController().signal, epochs);
+      expect(data.health).toEqual({ status: "ok", version: "0.0.0-test", uptime: 1 });
+      expect(data.error).toBe(false);
+      expect(data.providers).toBeUndefined();
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 /**
