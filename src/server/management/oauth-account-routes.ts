@@ -212,8 +212,32 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const rows = await fetchProviderAccountQuotas(provider, forceRefresh, config.providers[provider]?.baseUrl);
     const byId = new Map(rows.map(row => [row.accountId, row]));
     const projected = projectAccounts();
+    const quotaAccounts = projected.accounts.map(account => {
+      const row = byId.get(account.id);
+      return {
+        account,
+        row,
+        known: !!row?.quota && !row.unavailable,
+      };
+    });
+    const nextResetAt = quotaAccounts
+      .flatMap(({ row }) => [row?.quota?.fiveHourResetAt, row?.quota?.weeklyResetAt, row?.quota?.monthlyResetAt, ...(row?.quota?.customWindows ?? []).map(window => window.resetAt)])
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > Date.now())
+      .sort((a, b) => a - b)[0];
+    const quotaSummary = {
+      total: projected.accounts.length,
+      activeAccountId: projected.activeAccountId,
+      ready: quotaAccounts.filter(({ account, row }) => account.health.status === "healthy" && row?.unavailable !== true).length,
+      coolingDown: quotaAccounts.filter(({ account }) => account.health.status === "cooldown").length,
+      reauthRequired: quotaAccounts.filter(({ account }) => account.health.status === "reauth_required").length,
+      unavailable: quotaAccounts.filter(({ row }) => row?.unavailable === true).length,
+      unknownQuota: quotaAccounts.filter(({ known }) => !known).length,
+      knownQuota: quotaAccounts.filter(({ known }) => known).length,
+      ...(nextResetAt === undefined ? {} : { nextResetAt }),
+    };
     return jsonResponse({
       activeAccountId: projected.activeAccountId,
+      quotaSummary,
       accounts: projected.accounts.map(account => {
         const row = byId.get(account.id);
         if (!row) return account;
