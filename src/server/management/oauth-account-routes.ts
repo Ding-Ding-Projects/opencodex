@@ -21,6 +21,7 @@ import {
   listOAuthProviders,
   startLoginFlow,
   submitManualLoginCode,
+  OAUTH_LOGIN_FAILURE_COPY,
 } from "../../oauth";
 import { removeCredential } from "../../oauth/store";
 import { providerDestinationResolvedError } from "../../lib/destination-policy";
@@ -69,6 +70,7 @@ import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, C
 import type { ManagementContext } from "./context";
 import { codexAccountNamespaceProviderCollisionError } from "../../codex/account-namespace-match";
 import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled } from "../../lib/debug-sandbox";
+import { buildAccountQuotaSummary } from "../../oauth/account-quota-summary";
 
 export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config, deps, refreshCodexCatalogBestEffort, syncClaudeAgentDefsBestEffort } = ctx;
@@ -123,7 +125,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       }
       return jsonResponse({ url: authUrl, instructions, deviceCode, attemptId });
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 409);
+      return jsonResponse({ error: OAUTH_LOGIN_FAILURE_COPY, code: "oauth_login_failed" }, 409);
     }
   }
 
@@ -220,21 +222,15 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         known: !!row?.quota && !row.unavailable,
       };
     });
-    const nextResetAt = quotaAccounts
-      .flatMap(({ row }) => [row?.quota?.fiveHourResetAt, row?.quota?.weeklyResetAt, row?.quota?.monthlyResetAt, ...(row?.quota?.customWindows ?? []).map(window => window.resetAt)])
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > Date.now())
-      .sort((a, b) => a - b)[0];
-    const quotaSummary = {
-      total: projected.accounts.length,
-      activeAccountId: projected.activeAccountId,
-      ready: quotaAccounts.filter(({ account, row }) => account.health.status === "healthy" && row?.unavailable !== true).length,
-      coolingDown: quotaAccounts.filter(({ account }) => account.health.status === "cooldown").length,
-      reauthRequired: quotaAccounts.filter(({ account }) => account.health.status === "reauth_required").length,
-      unavailable: quotaAccounts.filter(({ row }) => row?.unavailable === true).length,
-      unknownQuota: quotaAccounts.filter(({ known }) => !known).length,
-      knownQuota: quotaAccounts.filter(({ known }) => known).length,
-      ...(nextResetAt === undefined ? {} : { nextResetAt }),
-    };
+    const quotaSummary = buildAccountQuotaSummary(
+      quotaAccounts.map(({ account, row }) => ({
+        accountId: account.id,
+        health: account.health,
+        quota: row?.quota,
+        unavailable: row?.unavailable,
+      })),
+      projected.activeAccountId,
+    );
     return jsonResponse({
       activeAccountId: projected.activeAccountId,
       quotaSummary,

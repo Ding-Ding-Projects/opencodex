@@ -882,6 +882,7 @@ interface ManualCodeSlot {
   attemptId?: string;
 }
 const loginManual = new Map<string, ManualCodeSlot>();
+export const OAUTH_LOGIN_FAILURE_COPY = "OAuth login failed; retry or cancel this attempt";
 
 function clearManualCodeSlot(provider: string): void {
   loginManual.delete(provider);
@@ -1058,8 +1059,8 @@ export async function startLoginFlow(
       const e = finalError;
       loginAbort.delete(provider);
       clearManualCodeSlot(provider);
-      const msg = e instanceof Error ? e.message : String(e);
-      loginState.set(provider, { done: true, error: msg, attemptId });
+      // Provider bodies and token-shaped details stay internal; public status carries fixed copy.
+      loginState.set(provider, { done: true, error: OAUTH_LOGIN_FAILURE_COPY, attemptId });
       if (!urlResolved) reject(e);
     };
     // Background: runLogin persists the credential + provider entry to disk. The lifecycle hook
@@ -1071,8 +1072,7 @@ export async function startLoginFlow(
       // settle catches lifecycle failures, so this is only a defensive promise-boundary guard.
       loginAbort.delete(provider);
       clearManualCodeSlot(provider);
-      const msg = e instanceof Error ? e.message : String(e);
-      loginState.set(provider, { done: true, error: msg, attemptId });
+      loginState.set(provider, { done: true, error: OAUTH_LOGIN_FAILURE_COPY, attemptId });
       if (!urlResolved) reject(e);
     });
   });

@@ -210,6 +210,30 @@ describe("OAuth manual login code fallback", () => {
     }
   });
 
+  test("cancel A then start B rejects a late A paste without touching B", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("openid-configuration")) {
+        return new Response(JSON.stringify({ authorization_endpoint: "https://auth.x.ai/authorize", token_endpoint: "https://auth.x.ai/oauth/token" }), { status: 200 });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    try {
+      const a = await startLoginFlow("xai", { forceLogin: true });
+      expect(cancelLoginFlow("xai", a.attemptId)).toBe(true);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const b = await startLoginFlow("xai", { forceLogin: true });
+      expect(b.attemptId).not.toBe(a.attemptId);
+      expect(submitManualLoginCode("xai", "late-a-code", a.attemptId)).toEqual({ ok: false, error: "stale login attempt" });
+      expect(getLoginStatus("xai").done).toBe(false);
+      cancelLoginFlow("xai", b.attemptId);
+    } finally {
+      globalThis.fetch = originalFetch;
+      cancelLoginFlow("xai");
+    }
+  });
+
   test("route POST /api/oauth/login/code: 400 unknown provider, 400 oversized, 409 no login", async () => {
     saveConfig({
       port: 0,
