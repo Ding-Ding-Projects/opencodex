@@ -16,6 +16,17 @@ import { planProxyAdoption } from "./proxy-adoption.mjs";
 export const DEFAULT_DESKTOP_PORT = 10100;
 export const NATIVE_RESTORE_TIMEOUT_MS = 20_000;
 
+/**
+ * The desktop shell is a local client. Bind-any values are probed through
+ * loopback; configured LAN/public hostnames are not fetched by startup.
+ */
+export function normalizeDesktopProbeHostname(value) {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!raw || raw === "localhost" || raw === "127.0.0.1" || raw === "[::1]" || raw === "::1"
+    || raw === "0.0.0.0" || raw === "::" || raw === "[::]") return "127.0.0.1";
+  return undefined;
+}
+
 /** Return a TCP port only when the input is an integer in 1..65535. */
 export function parseDesktopPort(value) {
   if (typeof value === "number") {
@@ -73,13 +84,11 @@ export function readDesktopPortState({
   const runtime = validRuntime(readJson(readFile, join(dir, "runtime-port.json")));
   const config = readJson(readFile, join(dir, "config.json"));
   const configuredPort = parseDesktopPort(config?.port);
-  const configuredHostname = typeof config?.hostname === "string" && config.hostname.trim()
-    ? config.hostname.trim()
-    : undefined;
+  const configuredHostname = normalizeDesktopProbeHostname(config?.hostname);
   const fallback = parseDesktopPort(defaultPort) ?? DEFAULT_DESKTOP_PORT;
   const hardPin = parseDesktopPort(env.OPENCODEX_PORT);
   const candidates = [];
-  for (const port of [runtime?.port, configuredPort, fallback]) {
+  for (const port of [hardPin, runtime?.port, configuredPort, fallback]) {
     if (port !== undefined && !candidates.includes(port)) candidates.push(port);
   }
   return {
@@ -128,12 +137,6 @@ export function planDesktopStartup({ candidates, hardPin, healthByPort, stamp })
   return { action: "restore-and-spawn", pinnedPort: hardPin, occupiedPort, needsRestore: true };
 }
 
-function appendOutput(current, chunk) {
-  const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
-  const next = current + text;
-  return next.length > 16_384 ? next.slice(-16_384) : next;
-}
-
 /**
  * Invoke exactly `ocx restore` through the packaged launcher. The caller supplies
  * only executable and launcher paths; no renderer value becomes argv, cwd, or env.
@@ -149,8 +152,6 @@ export function runFixedNativeRestore({
   return new Promise(resolveResult => {
     let settled = false;
     let timer;
-    let stdout = "";
-    let stderr = "";
     const finish = result => {
       if (settled) return;
       settled = true;
@@ -166,22 +167,21 @@ export function runFixedNativeRestore({
       child = spawnFn(execPath, [launcherPath, "restore"], {
         cwd: typeof cwd === "string" && cwd ? cwd : undefined,
         env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "ignore", "ignore"],
         windowsHide: true,
       });
-    } catch (error) {
-      finish({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    } catch {
+      finish({ ok: false, error: "Native Codex restore could not start." });
       return;
     }
-    child.stdout?.on("data", chunk => { stdout = appendOutput(stdout, chunk); });
-    child.stderr?.on("data", chunk => { stderr = appendOutput(stderr, chunk); });
-    child.once("error", error => finish({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    child.once("close", (code, signal) => {
+    child.once("error", () => finish({ ok: false, error: "Native Codex restore could not start." }));
+    child.once("close", code => {
       if (code === 0) {
-        finish({ ok: true, message: stdout.trim() || "Native Codex routing restored." });
+        finish({ ok: true, message: "Native Codex routing restored." });
       } else {
-        const detail = (stderr || stdout).trim();
-        finish({ ok: false, error: `Native Codex restore did not complete (code ${code ?? "null"}, signal ${signal ?? "none"})${detail ? `: ${detail}` : "."}` });
+        finish({ ok: false, error: code === null
+          ? "Native Codex restore stopped before completing."
+          : `Native Codex restore failed with exit code ${code}.` });
       }
     });
     timer = setTimeout(() => {

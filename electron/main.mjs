@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleSquirrelEvent, planSquirrelEvent } from "./squirrel.mjs";
 import { readBuildStamp } from "./build-stamp.mjs";
-import { classifyDesktopHealth, desktopLauncherPath, launcherExists, planDesktopStartup, readDesktopPortState, runFixedNativeRestore } from "./startup-recovery.mjs";
+import { classifyDesktopHealth, desktopLauncherPath, launcherExists, normalizeDesktopProbeHostname, planDesktopStartup, readDesktopPortState, runFixedNativeRestore } from "./startup-recovery.mjs";
 import { installCliOnPath, recordDesktopCliPathStatus } from "./cli-path.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -116,14 +116,10 @@ function iconPath() {
 async function probeHealth(port, hostname = HOST) {
   const validPort = Number.isSafeInteger(port) && port >= 1 && port <= 65_535;
   if (!validPort) return null;
+  const safeHostname = normalizeDesktopProbeHostname(hostname);
+  if (!safeHostname) return null;
   try {
-    const rawHost = typeof hostname === "string" ? hostname.trim() : "";
-    const host = !rawHost || rawHost === "0.0.0.0" || rawHost === "::" || rawHost === "[::]"
-      ? HOST
-      : rawHost.startsWith("[") && rawHost.endsWith("]")
-        ? rawHost
-        : rawHost.includes(":") ? `[${rawHost}]` : rawHost;
-    const res = await fetch(`http://${host}:${port}/healthz`, {
+    const res = await fetch(`http://${safeHostname}:${port}/healthz`, {
       signal: AbortSignal.timeout(2000),
     });
     if (!res.ok) return null;
@@ -198,7 +194,10 @@ async function ensureProxy() {
   const state = readDesktopPortState();
   const healthByPort = new Map();
   for (const port of state.candidates) {
-    const hostname = state.runtime?.port === port ? state.runtime.hostname : state.configuredHostname;
+    const hostname = state.runtime?.port === port
+      ? normalizeDesktopProbeHostname(state.runtime.hostname)
+      : state.configuredPort === port ? state.configuredHostname : HOST;
+    if (!hostname) continue;
     const health = await probeHealth(port, hostname);
     if (health) healthByPort.set(port, health);
   }
@@ -228,7 +227,10 @@ async function ensureProxy() {
     if (!proxy) throw new Error("The proxy exited before it finished starting.");
     const next = readDesktopPortState();
     for (const port of next.candidates) {
-      const hostname = next.runtime?.port === port ? next.runtime.hostname : next.configuredHostname;
+      const hostname = next.runtime?.port === port
+        ? normalizeDesktopProbeHostname(next.runtime.hostname)
+        : next.configuredPort === port ? next.configuredHostname : HOST;
+      if (!hostname) continue;
       const health = await probeHealth(port, hostname);
       const healthPlan = classifyDesktopHealth(health, ourStamp());
       if (healthPlan.action === "adopt") {
@@ -365,7 +367,9 @@ function registerWindowIpc() {
    */
   ipcMain.handle("proxy:status", async () => {
     const state = readDesktopPortState();
-    const hostname = state.runtime?.port === proxyPort ? state.runtime.hostname : state.configuredHostname;
+    const hostname = state.runtime?.port === proxyPort
+      ? normalizeDesktopProbeHostname(state.runtime.hostname)
+      : state.configuredPort === proxyPort ? state.configuredHostname : HOST;
     const health = await probeHealth(proxyPort, hostname);
     const plan = classifyDesktopHealth(health, ourStamp());
     return { running: plan.action === "adopt", port: proxyPort, pid: plan.action === "adopt" ? health?.pid ?? null : null, managed: proxy !== null };

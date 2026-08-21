@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   classifyDesktopHealth,
+  normalizeDesktopProbeHostname,
   parseDesktopPort,
   planDesktopStartup,
   readDesktopPortState,
@@ -39,6 +40,39 @@ describe("desktop startup recovery", () => {
     expect(state.runtime).toEqual({ pid: 4242, port: 4123, hostname: "127.0.0.1" });
   });
 
+  test("puts a valid hard pin first and keeps the soft candidates behind it", () => {
+    const state = readDesktopPortState({
+      env: { OPENCODEX_HOME: "C:\\state", OPENCODEX_PORT: "4555" },
+      home: "C:\\Users\\tester",
+      readFile: path => path.endsWith("runtime-port.json")
+        ? JSON.stringify({ pid: 4242, port: 4123 })
+        : JSON.stringify({ port: 10100 }),
+    });
+    expect(state.hardPin).toBe(4555);
+    expect(state.candidates).toEqual([4555, 4123, 10100]);
+  });
+
+  test("only local and bind-any hostnames are eligible for desktop probes", () => {
+    expect(normalizeDesktopProbeHostname(undefined)).toBe("127.0.0.1");
+    expect(normalizeDesktopProbeHostname("0.0.0.0")).toBe("127.0.0.1");
+    expect(normalizeDesktopProbeHostname("::")).toBe("127.0.0.1");
+    expect(normalizeDesktopProbeHostname("localhost")).toBe("127.0.0.1");
+    expect(normalizeDesktopProbeHostname("192.168.1.50")).toBeUndefined();
+    expect(normalizeDesktopProbeHostname("example.test")).toBeUndefined();
+  });
+
+  test("configured LAN hostnames are not promoted into desktop fetch targets", () => {
+    const state = readDesktopPortState({
+      env: { OPENCODEX_HOME: "C:\\state" },
+      home: "C:\\Users\\tester",
+      readFile: path => path.endsWith("config.json")
+        ? JSON.stringify({ port: 10100, hostname: "192.168.1.50" })
+        : (() => { throw new Error("ENOENT"); })(),
+    });
+    expect(state.configuredPort).toBe(10100);
+    expect(state.configuredHostname).toBeUndefined();
+  });
+
   test("adopts only a healthy same-build owner and never plans a stop", () => {
     const plan = planDesktopStartup({
       candidates: [4123, 10100],
@@ -61,6 +95,21 @@ describe("desktop startup recovery", () => {
     expect(plan).toEqual({ action: "restore-and-spawn", pinnedPort: undefined, occupiedPort: 10100, needsRestore: true });
     expect(JSON.stringify(plan)).not.toContain("kill");
     expect(JSON.stringify(plan)).not.toContain("stop");
+  });
+
+  test("a free hard pin remains pinned after restore, while no pin stays soft", () => {
+    expect(planDesktopStartup({
+      candidates: [4555, 10100],
+      hardPin: 4555,
+      healthByPort: new Map(),
+      stamp: BUILD,
+    })).toEqual({ action: "restore-and-spawn", pinnedPort: 4555, occupiedPort: undefined, needsRestore: true });
+    expect(planDesktopStartup({
+      candidates: [10100],
+      hardPin: undefined,
+      healthByPort: new Map(),
+      stamp: BUILD,
+    })).toEqual({ action: "restore-and-spawn", pinnedPort: undefined, occupiedPort: undefined, needsRestore: true });
   });
 
   test("reports uncertain ownership instead of taking a hard-pinned port", () => {
@@ -103,6 +152,23 @@ describe("desktop startup recovery", () => {
       timeoutMs: 100,
     });
     expect(result.ok).toBe(true);
+  });
+
+  test("maps restore child output and paths to bounded safe diagnostics", async () => {
+    const child = new EventEmitter() as EventEmitter & { kill: () => void };
+    child.kill = () => {};
+    const result = await runFixedNativeRestore({
+      execPath: "electron.exe",
+      launcherPath: "bin/ocx.mjs",
+      spawnFn: () => {
+        queueMicrotask(() => child.emit("close", 7, null));
+        return child;
+      },
+      timeoutMs: 100,
+    });
+    expect(result).toEqual({ ok: false, error: "Native Codex restore failed with exit code 7." });
+    expect(JSON.stringify(result)).not.toContain("C:\\Users");
+    expect(JSON.stringify(result)).not.toContain("stderr");
   });
 
   test("the Electron startup path restores before spawning and never kills a candidate pid", () => {
