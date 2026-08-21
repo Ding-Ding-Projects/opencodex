@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
 import { windowsEnvIndirectBatchValue } from "../src/lib/win-paths";
-import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsServiceScript, buildWindowsTaskXml, deriveWindowsServiceDiagnostic, normalizeServiceSubcommand, parseServiceInstallState, parseWindowsSchedulerRuntimeState, readWindowsSchedulerXmlState, resolveServiceListenPort, runServiceStopGate, serviceLogPath, serviceStartPostcondition, serviceStartableFromTray, serviceStatusSummary, stopManagerWithVerification, waitForServiceProxy, windowsTaskRegistrationHealthy } from "../src/service";
+import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsServiceScript, buildWindowsTaskXml, deriveWindowsServiceDiagnostic, normalizeServiceSubcommand, parseServiceInstallState, parseWindowsSchedulerRuntimeState, planServiceCommand, probeServiceInstallation, readWindowsSchedulerXmlState, repairService, resolveServiceListenPort, runServiceStopGate, serviceLogPath, serviceStartPostcondition, serviceStartableFromTray, serviceStatusSummary, stopManagerWithVerification, waitForServiceProxy, windowsTaskRegistrationHealthy } from "../src/service";
 import { serviceApiTokenFilePath } from "../src/lib/service-secrets";
 import type { OcxConfig } from "../src/types";
 import { removeTempDir } from "./helpers/temp-dir";
@@ -52,6 +52,39 @@ function expectTextToContainPath(text: string, path: string): void {
 }
 
 describe("service listen-port policy", () => {
+  test("bare service planning is idempotent and fails closed on unknown state", () => {
+    expect(normalizeServiceSubcommand("restart")).toBe("repair");
+    let probes = 0;
+    expect(planServiceCommand([], { probeInstallation: () => { probes += 1; return { state: "installed" }; } })).toMatchObject({ ok: true, command: "repair" });
+    expect(probes).toBe(1);
+    expect(planServiceCommand([], { probeInstallation: () => ({ state: "absent" }) })).toMatchObject({ ok: true, command: "install" });
+    expect(planServiceCommand([], { probeInstallation: () => ({ state: "unknown", detail: "query failed" }) })).toMatchObject({ ok: false });
+    expect(planServiceCommand(["--bogus"], { probeInstallation: () => { throw new Error("probe must not run"); } })).toMatchObject({ ok: false, message: "Unknown service option: --bogus" });
+    expect(planServiceCommand(["install"], { probeInstallation: () => { throw new Error("probe must not run"); } })).toMatchObject({ ok: true, command: "install" });
+  });
+
+  test("Windows registration probe distinguishes absent, installed, and unknown", () => {
+    expect(probeServiceInstallation({ platform: "win32", probeWindowsTask: () => ({ status: "present" }), nativeStatus: () => "unknown" }).state).toBe("installed");
+    expect(probeServiceInstallation({ platform: "win32", probeWindowsTask: () => ({ status: "absent" }), nativeStatus: () => "nonexistent" }).state).toBe("absent");
+    expect(probeServiceInstallation({ platform: "win32", probeWindowsTask: () => ({ status: "unknown", detail: "query failed" }), nativeStatus: () => "nonexistent" })).toMatchObject({ state: "unknown", detail: "Task Scheduler: query failed" });
+    expect(probeServiceInstallation({ platform: "win32", probeWindowsTask: () => ({ status: "absent" }), nativeStatus: () => "unknown" })).toMatchObject({ state: "unknown", detail: "WinSW status could not be determined" });
+  });
+
+  test("repair refreshes an installed backend without registration", async () => {
+    const calls: string[] = [];
+    await repairService({
+      platform: "win32",
+      diagnose: () => ({ supported: true, installed: true, enabled: true, running: true, viable: true, startable: true, stale: false, conflict: false, backend: "scheduler", summary: "installed" }),
+      assertEnv: () => calls.push("env"),
+      assertAuth: () => calls.push("auth"),
+      stopScheduler: () => calls.push("stop"),
+      writeSchedulerAssets: () => calls.push("assets"),
+      startScheduler: () => calls.push("start"),
+      writeSchedulerState: () => calls.push("state"),
+    });
+    expect(calls).toEqual(["env", "auth", "stop", "assets", "start", "state"]);
+  });
+
   test("resolveServiceListenPort uses only an explicit/update pin, never config.port", () => {
     process.env.OPENCODEX_HOME = TEST_DIR;
     mkdirSync(TEST_DIR, { recursive: true });
@@ -194,8 +227,8 @@ describe("systemd service unit", () => {
     const service = await readText("src/service.ts");
     const serviceCommand = service.slice(service.indexOf("export async function serviceCommand"));
     // Args flow through parseServiceArgs (which applies the install default) into the switch.
-    expect(serviceCommand).toContain("const parsed = parseServiceArgs(");
-    expect(serviceCommand).toContain("const command = parsed.sub;");
+    expect(serviceCommand).toContain("const plan = planServiceCommand(filteredArgs);");
+    expect(serviceCommand).toContain("const { parsed, command } = plan;");
     expect(serviceCommand).toContain("switch (command)");
   });
 

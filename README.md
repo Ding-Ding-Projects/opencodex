@@ -368,10 +368,15 @@ ocx export data <dataset>      # export a redacted dashboard dataset
 ocx export <new-file> --yes    # protected full-state backup containing plaintext secrets
 ocx claude [args...]           # launch Claude Code wired to the proxy (model discovery on)
 ocx claude desktop             # save and apply the Claude Desktop four-family profile
-ocx service [install|start|stop|status|uninstall]   # install/update/start background service
+ocx service [install|repair|restart|start|stop|status|uninstall|remove]   # install-if-absent/repair-if-installed background service
 ocx update [--tag preview]     # update opencodex; preview installs stay on @preview
 ocx memory-sync <status|install|uninstall|profile> # inspect or synchronize canonical agent memory
 ```
+
+`ocx service` is idempotent: it installs only when both service backends are proven absent, and
+otherwise refreshes/restarts the installed backend without re-registering it. `ocx service restart`
+is an alias of `repair`; an unknown Windows registration state fails closed and is reported by
+`ocx service status`.
 
 ### Claude Desktop profile
 
