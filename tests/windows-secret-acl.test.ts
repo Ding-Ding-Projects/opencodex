@@ -27,6 +27,7 @@ import {
   type IcaclsResult,
 } from "../src/lib/windows-secret-acl";
 import { removeTempDir } from "./helpers/temp-dir";
+import { resolveCurrentWindowsPrincipal } from "../src/lib/windows-user-principal";
 
 let testDir = "";
 
@@ -461,7 +462,7 @@ describe("icacls failure paths (injected seams)", () => {
 
   test("opt-in read verification skips the propagating mutation only after a strict proof", () => {
     const filePath = secretFile("already-hardened.json");
-    const principal = `${process.env.USERDOMAIN ?? "DOMAIN"}\\${process.env.USERNAME ?? "tester"}`;
+    const principal = resolveCurrentWindowsPrincipal(5_000);
     const calls: string[][] = [];
     const previous = process.env.OPENCODEX_ACL_VERIFY_EXISTING;
     process.env.OPENCODEX_ACL_VERIFY_EXISTING = "1";

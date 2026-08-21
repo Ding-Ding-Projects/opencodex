@@ -33,6 +33,11 @@
 
 import { existsSync } from "node:fs";
 import { env, platform } from "node:process";
+import {
+  resolveCurrentWindowsPrincipal,
+  resolveCurrentWindowsPrincipalAsync,
+  setSyntheticWindowsPrincipalForTests,
+} from "./windows-user-principal";
 
 const hardenedDirectories = new Set<string>();
 const hardenedPaths = new Set<string>();
@@ -197,6 +202,13 @@ export function setAsyncIcaclsRunnerForTests(runner: AsyncIcaclsRunner | null): 
 /** Test seam: force the platform gate (e.g. "win32") so CI on POSIX reaches the runner. */
 export function setPlatformForTests(value: string | null): void {
   platformOverride = value;
+  // Only install/clear the synthetic principal on a genuinely non-Windows host.
+  // On Windows, clearing the resolver cache before every ACL test needlessly
+  // re-spawns PowerShell and makes unrelated full-suite callers race identity
+  // lookup; the real platform already supplies the effective token.
+  if (platform !== "win32") {
+    setSyntheticWindowsPrincipalForTests(value === "win32" ? "*S-1-5-21-1-2-3-1001" : null);
+  }
 }
 
 /** Test seam: injectable clock for deadline tests (no real sleeps). */
@@ -229,13 +241,14 @@ function icaclsError(step: string, result: IcaclsResult): NodeJS.ErrnoException 
  * Falls back to USERDOMAIN\USERNAME if USERNAME alone is ambiguous.
  * The value is used directly in icacls arguments, so it must be present.
  */
-function currentWindowsUser(): string | undefined {
-  const username = env["USERNAME"];
-  const domain = env["USERDOMAIN"];
-  if (!username) return undefined;
-  // USERDOMAIN is the machine/domain name; USERNAME is the account name.
-  // icacls accepts "DOMAIN\User" or just "User" for local accounts.
-  return domain ? `${domain}\\${username}` : username;
+function currentWindowsUser(remainingMs: number): string | undefined {
+  try { return resolveCurrentWindowsPrincipal(Math.max(1, remainingMs)); }
+  catch { return undefined; }
+}
+
+async function currentWindowsUserAsync(remainingMs: number): Promise<string | undefined> {
+  try { return await resolveCurrentWindowsPrincipalAsync(Math.max(1, remainingMs)); }
+  catch { return undefined; }
 }
 
 /**
@@ -255,7 +268,7 @@ function grantAce(user: string, directory: boolean): string {
 }
 
 function runIcacls(targetPath: string, directory: boolean, deadline: number): void {
-  const user = currentWindowsUser();
+  const user = currentWindowsUser(deadline - nowFn());
   if (!user) {
     throw new Error("Cannot determine current Windows user for ACL hardening");
   }
@@ -309,7 +322,7 @@ function tryVerifyExistingAcl(targetPath: string, deadline: number): ExistingAcl
   try {
     const result = icaclsRunner([targetPath], remaining);
     if (!result.success) return { compliant: false, reason: "read-only icacls verification failed" };
-    return verifyExistingAclOutput(result.stdout, currentWindowsUser() ?? "");
+    return verifyExistingAclOutput(result.stdout, currentWindowsUser(remaining) ?? "");
   } catch {
     return { compliant: false, reason: "read-only icacls verification was ambiguous" };
   }
@@ -317,7 +330,7 @@ function tryVerifyExistingAcl(targetPath: string, deadline: number): ExistingAcl
 
 /** Async counterpart of runIcacls — same step order and timeout/error classification (#612). */
 async function runIcaclsAsync(targetPath: string, directory: boolean, deadline: number): Promise<void> {
-  const user = currentWindowsUser();
+  const user = await currentWindowsUserAsync(deadline - nowFn());
   if (!user) {
     throw new Error("Cannot determine current Windows user for ACL hardening");
   }
@@ -495,7 +508,7 @@ async function hardenEntryAsync(
       try {
         const result = await asyncIcaclsRunner([targetPath], remaining);
         if (result.success) {
-          const existing = verifyExistingAclOutput(result.stdout, currentWindowsUser() ?? "");
+          const existing = verifyExistingAclOutput(result.stdout, await currentWindowsUserAsync(remaining) ?? "");
           if (existing.compliant) {
             cache.add(targetPath);
             return { ok: true, diagnostics: existing.reason };
