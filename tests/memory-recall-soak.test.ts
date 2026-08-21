@@ -96,7 +96,10 @@ describe("#820 memory recall soak probe helpers", () => {
     const output = await outputPromise;
     const error = await errorPromise;
     if (!output) throw new Error(`quick recall child produced no summary: ${error.slice(0, 500)}`);
+    expect(exit).toBe(0);
     expect(output).toContain('"type":"SUMMARY"');
-    expect(output).toMatch(/"outcome":"(PASS|FAIL)"/);
+    expect(output).toContain('"outcome":"PASS"');
+    expect(output).toContain('"protocol":{"outcome":"PASS"');
+    expect(output).toContain('"memoryLeases":{"outcome":"PASS"');
   }, { timeout: 35_000 });
 });

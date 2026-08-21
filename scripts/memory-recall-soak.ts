@@ -841,11 +841,14 @@ try {
     controlBase,
   );
   const emergency = quickProfile ? null : await runWave("emergency-96", "emergency-96", 96, 1, proxyBase, controlBase);
-  const sameSession = await sameSessionOverlapCell(proxyBase);
+  const sameSession = quickProfile
+    ? { status: "not-run" as const, statuses: [], detail: "quick smoke leaves the production overlap cell to the full profile" }
+    : await sameSessionOverlapCell(proxyBase);
   const faultOutcomes = await runFaultWave(proxyBase, controlBase);
   const final = await waitForIdle(controlBase);
 
-  const failedBaselineSessions = sustained.reduce((sum, wave) => sum + wave.failedSessions, 0) + burst.failedSessions + (emergency?.failedSessions ?? 0) + (sameSession.status === "passed" ? 0 : 1);
+  const sameSessionAcceptable = quickProfile ? true : sameSession.status === "passed";
+  const failedBaselineSessions = sustained.reduce((sum, wave) => sum + wave.failedSessions, 0) + burst.failedSessions + (emergency?.failedSessions ?? 0) + (sameSessionAcceptable ? 0 : 1);
   const protocolOutcome = failedBaselineSessions === 0 && sustained.concat([burst, ...(emergency ? [emergency] : [])]).every(wave => wave.toolCallCount === wave.toolResultCount) ? "PASS" : "FAIL";
   const memoryOutcome = idleInvariant(final) ? "PASS" : "FAIL";
   const idleRss = sustained.map(wave => wave.idle.rss);

@@ -46,12 +46,15 @@ export { resolveAdapter } from "./adapter-resolve";
 import { formatErrorResponse, type ResponsesTerminalStatus } from "../bridge";
 import {
   drainAndShutdown,
+  admitSessionTurn,
   getActiveTurnCount,
   isDraining,
   registerTurn,
   setServerRef,
   trackStreamLifetime,
   unregisterTurn,
+  releaseSessionTurn,
+  trackSessionTurn,
 } from "./lifecycle";
 export {
   drainAndShutdown,
@@ -62,6 +65,9 @@ export {
   registerTurn,
   trackStreamLifetime,
   unregisterTurn,
+  admitSessionTurn,
+  releaseSessionTurn,
+  trackSessionTurn,
 } from "./lifecycle";
 import { ensureAppLogFile } from "../lib/app-log-file";
 import { hydrateDebugLogFromDisk } from "../lib/debug-log-buffer";
@@ -510,6 +516,7 @@ export function startServer(port?: number) {
       }
 
       let tenantAdmission: TenantAdmission | undefined;
+      let sessionKey: string | undefined;
       if (url.pathname.startsWith("/v1/")) {
         const tenantResult = tenantBoundary.admit(req);
         if (tenantResult.kind === "unauthorized" || tenantResult.kind === "forbidden") {
@@ -520,6 +527,10 @@ export function startServer(port?: number) {
         const authorization = tenantBoundary.authorize(req, requestedModel, requestedModel?.includes("/") ? requestedModel.slice(0, requestedModel.indexOf("/")) : undefined);
         if (authorization.kind === "unauthorized" || authorization.kind === "forbidden") {
           return withCors(formatErrorResponse(authorization.status, "tenant_authorization", authorization.message), req, config);
+        }
+        sessionKey = await tenantBoundary.sessionKeyFromRequest(req);
+        if (sessionKey && !admitSessionTurn(sessionKey)) {
+          return withCors(formatErrorResponse(409, "session_turn_active", "another turn is active for this session; queued turns are disabled"), req, config);
         }
         if (tenantAdmission) {
           try { tenantRequestLedger.record({ tenantId: tenantAdmission.tenantId, requestId: req.headers.get("x-request-id")?.slice(0, 200) || randomUUID(), path: url.pathname, ...(requestedModel ? { model: requestedModel } : {}), status: "admitted", recordedAt: new Date().toISOString() }); }
@@ -641,7 +652,7 @@ export function startServer(port?: number) {
           response.status,
           response.status === 499 ? { closeReason: "client_cancel" } : undefined,
         );
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (
@@ -663,7 +674,7 @@ export function startServer(port?: number) {
         const endpoint = url.pathname.endsWith("/edits") ? "edits" as const : "generations" as const;
         const response = await handleImages(req, config, endpoint, logCtx);
         addFinalRequestLog(requestId, start, logCtx, response.status, response.status === 499 ? { closeReason: "client_cancel" } : undefined);
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (req.method === "GET" && url.pathname.startsWith("/v1/opencodex/artifacts/")) {
@@ -717,7 +728,7 @@ export function startServer(port?: number) {
           response.status,
           response.status === 499 ? { closeReason: "client_cancel" } : undefined,
         );
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (url.pathname === "/v1/responses" && req.method === "POST") {
@@ -755,7 +766,7 @@ export function startServer(port?: number) {
             finalizeNativePassthroughLog(499, { closeReason: "client_cancel" });
           },
         });
-        return withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, config);
+        return withCors(trackSessionTurn(responseWithDeferredRequestLog(response, requestId, start, logCtx), sessionKey), req, config);
       }
 
       // Anthropic Messages inbound (Claude Code). count_tokens FIRST (longer path).
@@ -771,7 +782,7 @@ export function startServer(port?: number) {
           return withCors(anthropicErrorResponse(403, "cross-origin data-plane request blocked", "permission_error"), req, config);
         }
         const response = await handleClaudeCountTokens(req, config);
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (url.pathname === "/v1/messages" && req.method === "POST") {
@@ -792,7 +803,7 @@ export function startServer(port?: number) {
         // pre-translation stream + native passthrough callbacks) — do not re-wrap the
         // translated Anthropic stream here.
         const response = await handleClaudeMessages(req, config, logCtx, { requestId, start });
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
 
@@ -826,7 +837,7 @@ export function startServer(port?: number) {
           { requestId, start },
           copilotAdmission.active ? { profile: GITHUB_COPILOT_DESKTOP_PURPOSE } : {},
         );
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       // ChatGPT / Codex App voice (GPT‑Live / Frameless Bidi) + OpenAI Realtime call-create.
