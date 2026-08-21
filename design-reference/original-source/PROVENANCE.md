@@ -51,3 +51,12 @@ No existing parity guard was editable within this lane: the repository's
 focused parity-related tests live outside the allowed paths. The exact
 historical-tree and per-file hash checks above are therefore the focused
 verification record for this preservation change.
+
+## Privacy-scan boundary
+
+The privacy scanner may omit a copied historical file only when its path appears
+in this manifest and its current bytes match both recorded hashes and the
+historical `design/` tree. `MANIFEST.json` and this provenance file are never
+part of that omission. The scanner also rejects unlisted, missing, malformed,
+oversized, traversing, duplicate, symlinked, or modified entries, so adding a
+new file or changing an old one cannot silently enlarge the exception.
