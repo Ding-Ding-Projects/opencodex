@@ -11,13 +11,41 @@ import {
   scheduleVersionRefreshIfStale,
   refreshVersionCache,
   VERSION_REFRESH_INTERVAL_MS,
+  VERSION_REFRESH_RETRY_INTERVAL_MS,
   writeVersionCache,
+  type Channel,
   type VersionCache,
 } from "../src/update/notify";
 import { removeTempDir } from "./helpers/temp-dir";
 
 const prevHome = process.env.OPENCODEX_HOME;
 let dir: string;
+
+class FakeRefreshChild {
+  readonly pid = 4321;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  readonly killed: NodeJS.Signals[] = [];
+  private readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  once(event: "close" | "error", listener: (...args: unknown[]) => void): void {
+    const current = this.listeners.get(event) ?? [];
+    current.push(listener);
+    this.listeners.set(event, current);
+  }
+
+  unref(): void {}
+
+  kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    this.killed.push(signal);
+    return true;
+  }
+
+  close(): void {
+    this.exitCode = 0;
+    for (const listener of this.listeners.get("close") ?? []) listener();
+  }
+}
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ocx-version-"));
@@ -37,12 +65,13 @@ describe("bounded background version refresh scheduling", () => {
     let timerCount = 0;
     let refreshCount = 0;
     const timer = { unref: () => undefined };
-    const now = Date.parse("2026-08-21T12:00:00.000Z");
+    let now = Date.parse("2026-08-21T12:00:00.000Z");
     const cache: VersionCache = {
       latest_version: "2.7.0",
       last_checked_at: new Date(now).toISOString(),
       tag: "latest",
     };
+    let refreshedCache = cache;
 
     scheduleVersionRefreshIfStale("latest", cache, {
       now: () => now,
@@ -52,7 +81,12 @@ describe("bounded background version refresh scheduling", () => {
         timerCallback = callback;
         return timer;
       },
-      refreshFn: async () => { refreshCount += 1; },
+      refreshFn: async () => {
+        refreshCount += 1;
+        now += 1;
+        refreshedCache = { ...cache, last_checked_at: new Date(now).toISOString() };
+      },
+      readCacheFn: () => refreshedCache,
     });
     scheduleVersionRefreshIfStale("latest", cache, {
       now: () => now,
@@ -133,6 +167,97 @@ describe("bounded background version refresh scheduling", () => {
     await Bun.sleep(15);
     expect(aborted).toBe(true);
     expect(scheduled).toBe(2);
+  });
+
+  test("timeout stops only the owned refresh child and retries on the bounded retry delay", async () => {
+    const child = new FakeRefreshChild();
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const timer = { unref: () => undefined };
+    let stopCalls = 0;
+    scheduleVersionRefreshIfStale("latest", null, {
+      setTimeoutFn: (callback, delay) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+      refreshTimeoutMs: 5,
+      spawnRefreshChildFn: () => child,
+      stopRefreshChildFn: async owned => {
+        stopCalls += 1;
+        expect(owned).toBe(child);
+        owned.kill("SIGTERM");
+        owned.close();
+        return true;
+      },
+    });
+    expect(timers[0]?.delay).toBe(0);
+    timers.shift()?.callback();
+    await Bun.sleep(15);
+    expect(stopCalls).toBe(1);
+    expect(child.killed).toEqual(["SIGTERM"]);
+    expect(timers[0]?.delay).toBe(VERSION_REFRESH_RETRY_INTERVAL_MS);
+  });
+
+  test("active cancellation stops the owned child and a late close cannot rearm the cancelled generation", async () => {
+    const child = new FakeRefreshChild();
+    let timerCallback: (() => void) | undefined;
+    let releaseStop!: () => void;
+    const stopFinished = new Promise<boolean>(resolve => {
+      releaseStop = () => resolve(true);
+    });
+    let scheduled = 0;
+    const timer = { unref: () => undefined };
+    scheduleVersionRefreshIfStale("latest", null, {
+      setTimeoutFn: callback => {
+        scheduled += 1;
+        timerCallback = callback;
+        return timer;
+      },
+      spawnRefreshChildFn: () => child,
+      stopRefreshChildFn: async owned => {
+        expect(owned).toBe(child);
+        owned.kill("SIGTERM");
+        await stopFinished;
+        return true;
+      },
+    });
+    timerCallback?.();
+    await Promise.resolve();
+    const cancellation = cancelVersionRefreshSchedule();
+    expect(child.killed).toEqual(["SIGTERM"]);
+    child.close();
+    releaseStop();
+    await cancellation;
+    await Promise.resolve();
+    expect(scheduled).toBe(1);
+  });
+
+  test("switching channels cancels the old deadline without overlapping timers", () => {
+    let cleared = 0;
+    const timers: Array<{ channel?: Channel; callback: () => void; delay: number }> = [];
+    const timer = { unref: () => undefined };
+    scheduleVersionRefreshIfStale("latest", {
+      latest_version: "2.7.0",
+      last_checked_at: new Date(0).toISOString(),
+      tag: "latest",
+    }, {
+      now: () => 1_000,
+      setTimeoutFn: (callback, delay) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+      clearTimeoutFn: () => { cleared += 1; },
+    });
+    scheduleVersionRefreshIfStale("preview", null, {
+      now: () => 1_000,
+      setTimeoutFn: (callback, delay) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+      clearTimeoutFn: () => { cleared += 1; },
+    });
+    expect(cleared).toBe(1);
+    expect(timers).toHaveLength(2);
+    expect(timers[1]?.delay).toBe(0);
   });
 
   test("failed metadata refresh does not advance the successful timestamp", async () => {
