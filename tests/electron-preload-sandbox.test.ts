@@ -58,4 +58,12 @@ describe("desktop preload", () => {
       expect(main).toContain(`ipcMain.handle("${channel}"`);
     }
   });
+
+  test("exposes native restore as one fixed no-argument bridge call", () => {
+    const preload = readFileSync(join(ELECTRON_DIR, "preload.cjs"), "utf8");
+    const main = readFileSync(join(ELECTRON_DIR, "main.mjs"), "utf8");
+    expect(preload).toContain('restoreNative: () => ipcRenderer.invoke("proxy:restore-native")');
+    expect(main).toMatch(/ipcMain\.handle\("proxy:restore-native",\s*async \(\)/);
+    expect(preload).toMatch(/restoreNative\s*:\s*\(\)\s*=>/);
+  });
 });
