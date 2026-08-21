@@ -55,6 +55,8 @@ import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerS
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
 import { applySystemEnvToggle } from "../system-env";
+import { parseSubagentRoles, routedOnV2Warnings, unionRoleModelsIntoRoster } from "../../codex/agent-roles";
+import { CODEX_REASONING_LEVELS } from "../../reasoning-effort";
 
 import { isPlainRecord, parseDebugLogQuery, tokPerSecondResult, unavailableCostReason, costResult, requestLogDto, stripRegistryOnlyStaticHeaders, fetchAllModels, fetchGrokCandidateModels, buildClaudeDesktopState } from "./shared";
 import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, CostResult, MetricSource } from "./shared";
@@ -345,6 +347,58 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     await syncClaudeAgentDefsBestEffort();
     await autoApplyDesktopBestEffort();
     return jsonResponse({ ok: true, applied: chosen });
+  }
+
+  // Named specialists are validated as one complete catalog. Removal accepts a revision so a
+  // stale CLI cannot overwrite a newer GUI edit with an old client-side snapshot.
+  if (url.pathname === "/api/subagent-roles" && req.method === "GET") {
+    const models = await fetchAllModels(config);
+    const disabled = new Set(config.disabledModels ?? []);
+    const { listCatalogNativeSlugs } = await import("../../codex/catalog");
+    const native = listCatalogNativeSlugs().filter(model => !disabled.has(model)).map(model => ({ provider: "openai", model, namespaced: model }));
+    const routed = uniqueCatalogModelsForPublicList(models)
+      .filter(model => !disabled.has(catalogModelSlug(model)))
+      .map(model => ({ provider: model.provider, model: model.id, namespaced: catalogModelSlug(model) }));
+    return jsonResponse({
+      roles: config.subagentRoles ?? [],
+      revision: config.subagentRolesRevision ?? 0,
+      efforts: CODEX_REASONING_LEVELS.map(level => level.effort),
+      available: [...native, ...routed],
+    });
+  }
+  if (url.pathname === "/api/subagent-roles" && req.method === "PUT") {
+    let body: { roles?: unknown; remove?: unknown; revision?: unknown };
+    try { body = await req.json(); } catch { return jsonResponse({ error: "invalid JSON body" }, 400); }
+    const currentRevision = config.subagentRolesRevision ?? 0;
+    if (typeof body.remove === "string") {
+      if (body.revision !== undefined && (typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision !== currentRevision)) {
+        return jsonResponse({ error: "stale subagent role revision", revision: currentRevision }, 409);
+      }
+      const next = (config.subagentRoles ?? []).filter(role => role.id !== body.remove);
+      if (next.length === (config.subagentRoles ?? []).length) return jsonResponse({ error: `unknown role id ${body.remove}` }, 404);
+      config.subagentRoles = next;
+      config.subagentRolesRevision = currentRevision + 1;
+    } else {
+      if (!("roles" in body)) return jsonResponse({ error: "body.roles is required" }, 400);
+      const parsed = parseSubagentRoles(body.roles);
+      if (!parsed.ok) return jsonResponse({ error: parsed.error, index: parsed.index }, 400);
+      const union = unionRoleModelsIntoRoster(config.subagentModels, parsed.roles);
+      config.subagentRoles = parsed.roles;
+      config.subagentModels = union.models;
+      config.subagentRolesRevision = currentRevision + 1;
+      const warnings = [...routedOnV2Warnings(parsed.roles, config)];
+      if (union.droppedRoleIds.length > 0) warnings.push(`Featured roster truncated to 5 models; dropped role id(s): ${union.droppedRoleIds.join(", ")}`);
+      saveConfigPreservingClaudeCode(config);
+      await refreshCodexCatalogBestEffort();
+      await syncClaudeAgentDefsBestEffort();
+      await autoApplyDesktopBestEffort();
+      return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, warnings });
+    }
+    saveConfigPreservingClaudeCode(config);
+    await refreshCodexCatalogBestEffort();
+    await syncClaudeAgentDefsBestEffort();
+    await autoApplyDesktopBestEffort();
+    return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, removed: body.remove });
   }
 
   // Priority-ordered subagent model fallback chain for quota-aware spawn routing.

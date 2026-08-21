@@ -822,6 +822,7 @@ async function applyFinalRouteRequestNormalization(args: {
       subagentModels: childRow?.models ?? config.subagentModels,
       subagentModelFallback: config.subagentModelFallback,
       injectionPrompt: config.injectionPrompt,
+      subagentRoles: config.subagentRoles,
       depth: nested && !nested.clamp
         ? {
           depth: nested.depth,

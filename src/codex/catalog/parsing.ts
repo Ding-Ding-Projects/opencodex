@@ -28,6 +28,7 @@ import {
 import type { NormalizedComboConfig } from "../../combos/types";
 import { providerDestinationResolvedError } from "../../lib/destination-policy";
 import { redactSecretString } from "../../lib/redact";
+import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import upstreamModelsSnapshot from "../data/upstream-models.json";
 
 
@@ -102,6 +103,7 @@ export interface CatalogModel {
   defaultReasoningEffort?: string;
   contextWindow?: number;
   maxInputTokens?: number;
+  autoCompactTokenLimit?: number;
   contextCap?: number;
   contextCapped?: boolean;
   inputModalities?: string[];
@@ -247,7 +249,10 @@ export function applyNativeOpenAiContextOverride(entry: RawEntry): void {
   if (!override) return;
   if (typeof override.contextWindow === "number") {
     entry.context_window = override.contextWindow;
-    entry.auto_compact_token_limit = Math.floor(override.contextWindow * 0.9);
+    entry.auto_compact_token_limit = clampAutoCompactTokenLimit(
+      override.contextWindow,
+      typeof entry.max_input_tokens === "number" ? entry.max_input_tokens : undefined,
+    );
   }
   if (typeof override.maxContextWindow === "number") {
     entry.max_context_window = override.maxContextWindow;

@@ -27,7 +27,7 @@ import {
 import { isInjectionDebugEnabled } from "../../lib/debug-settings";
 import { injectionDebugLog } from "../../lib/injection-debug-log";
 import { modelInList, namespacedToolName } from "../../types";
-import type { AdapterEvent, OcxConfig, OcxParsedRequest, OcxProviderConfig, OcxProviderContinuationState, OcxUsage } from "../../types";
+import type { AdapterEvent, OcxConfig, OcxParsedRequest, OcxProviderConfig, OcxProviderContinuationState, OcxSubagentRole, OcxUsage } from "../../types";
 import {
   forceRefreshOAuthAccessSnapshot,
   getOAuthCredentialApiBaseUrl,
@@ -62,6 +62,7 @@ import { listOpenAiForwardSidecarCandidates, resolveFirstUsableOpenAiSidecar, ty
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
 import { slugsEquivalent } from "../../providers/slug-codec";
 import { subagentFallbackGuidanceText } from "../../codex/subagent-model-fallback";
+import { compactRolesCatalog, enabledSubagentRoles } from "../../codex/agent-roles";
 import { applyOpenAiVirtualModel, resolveOpenAiCompactModel } from "../../providers/openai-virtual-models";
 import { isUsageDebugEnabled } from "../../usage/debug";
 import { readJsonRequestBody, DecompressedBodyTooLargeError, UnsupportedContentEncodingError } from "../request-decompress";
@@ -163,6 +164,7 @@ export interface MultiAgentGuidanceOptions {
   subagentModels?: string[];
   subagentModelFallback?: string[];
   injectionPrompt?: string;
+  subagentRoles?: OcxSubagentRole[];
   /**
    * Nested sub-agents (src/server/nested-subagents.ts). Absent — which is how every call site
    * looked before the feature and how every call still looks with it disabled — leaves the
@@ -213,6 +215,7 @@ export async function multiAgentGuidanceText(
     subagentModels,
     subagentModelFallback,
     injectionPrompt,
+    subagentRoles,
     depth,
   } = options;
   const surface = collabSurface(parsed);
@@ -242,6 +245,11 @@ export async function multiAgentGuidanceText(
         .join(", ")}`);
     }
     const fallbackGuidance = subagentFallbackGuidanceText({ subagentModelFallback } as OcxConfig);
+    const visibleRoles = enabledSubagentRoles(subagentRoles).filter(role => {
+      const match = effective.candidates.find(candidate => slugsEquivalent(candidate.model, role.model) || candidate.model === role.model);
+      return !!match && (!role.effort || match.efforts.includes(role.effort));
+    });
+    const rolesText = compactRolesCatalog(visibleRoles, V2_GUIDANCE_CHAR_BUDGET);
     // The depth sentence is a reason to speak even when nothing else resolves: an agent that
     // knows its remaining budget plans against the ceiling instead of discovering it as an error.
     const depthGuidance = depth
@@ -249,11 +257,11 @@ export async function multiAgentGuidanceText(
         + ` you may spawn ${depth.remainingChildren} more sub-agent(s)`
         + ` (${depth.remainingSessionSpawns} left in this session's total budget).`
       : "";
-    if (!injectionModel && roster === "" && fallbackGuidance === "" && depthGuidance === "") return null;
+    if (!injectionModel && roster === "" && fallbackGuidance === "" && rolesText === "" && depthGuidance === "") return null;
     if (injectionPrompt) {
-      return `<multi_agent_mode>${applyInjectionPlaceholders(injectionPrompt, injectionModel, injectionEffort, roster, fallbackGuidance, depth)}</multi_agent_mode>`;
+      return `<multi_agent_mode>${applyInjectionPlaceholders(injectionPrompt, injectionModel, injectionEffort, roster, fallbackGuidance, rolesText, depth)}</multi_agent_mode>`;
     }
-    if (!preferred && roster === "" && fallbackGuidance === "" && depthGuidance === "") return null;
+    if (!preferred && roster === "" && fallbackGuidance === "" && rolesText === "" && depthGuidance === "") return null;
     let text = "When the active spawn_agent tool supports optional \"model\" or \"reasoning_effort\" overrides, "
       + "use only models listed for this collaboration surface. "
       + "When setting either override, set fork_turns to \"none\" "
@@ -265,13 +273,20 @@ export async function multiAgentGuidanceText(
         + " — use it unless the user names another.";
     }
     text += fallbackGuidance;
+    if (rolesText) text += ` When spawning, use a named specialist: ${rolesText}.`;
     // Depth/budget sits BEFORE the roster so the budget-trim below cannot eat it: the roster is
     // a convenience, the ceiling is the thing the model must not be surprised by.
     text += depthGuidance;
     text += roster;
     if (text.length > V2_GUIDANCE_CHAR_BUDGET) {
-      // Roster is the only unbounded part — drop it before breaking the budget.
+      // Role descriptions are user-authored and bounded, but still trim the optional roster first.
       text = text.slice(0, text.length - roster.length);
+      if (text.length > V2_GUIDANCE_CHAR_BUDGET) {
+        const rolesBudget = Math.max(0, V2_GUIDANCE_CHAR_BUDGET - (text.length - rolesText.length - 1));
+        const shortened = compactRolesCatalog(visibleRoles, rolesBudget);
+        text = text.slice(0, text.length - rolesText.length - (rolesText ? 1 : 0))
+          + (shortened ? ` When spawning, use a named specialist: ${shortened}.` : "");
+      }
     }
     return `<multi_agent_mode>${text}</multi_agent_mode>`;
   }
@@ -299,6 +314,7 @@ export function applyInjectionPlaceholders(
   effort?: string,
   roster?: string,
   fallback?: string,
+  roles?: string,
   depth?: { depth: number; maxDepth: number; remainingChildren: number; remainingSessionSpawns: number },
 ): string {
   return prompt
@@ -306,6 +322,7 @@ export function applyInjectionPlaceholders(
     .replaceAll("{{effort}}", effort ?? "")
     .replaceAll("{{roster}}", roster ?? "")
     .replaceAll("{{fallback}}", fallback ?? "")
+    .replaceAll("{{roles}}", roles ?? "")
     .replaceAll("{{depth}}", depth ? String(depth.depth) : "")
     .replaceAll("{{maxdepth}}", depth ? String(depth.maxDepth) : "")
     .replaceAll("{{remaining}}", depth ? String(depth.remainingChildren) : "");
