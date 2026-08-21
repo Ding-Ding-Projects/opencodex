@@ -6,6 +6,9 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(service): make bare `ocx service` install only when both Windows backends are proven absent, otherwise refresh/restart the installed backend without re-registering; add `repair`/`restart` help and documentation
+- fix(windows): add opt-in strict `OPENCODEX_ACL_VERIFY_EXISTING=1` read-before-write ACL verification bound to the effective token SID, with fail-closed fallback on ambiguity
+- docs(remote): document SSH-forwarded remote-provider setup that preserves the local Codex login and keeps provider OAuth callbacks on the host where login runs
 - fix(startup): retain Bun's exact crash marker independently of the bounded stderr tail, honor stderr backpressure, and compare both PID and runtime-owner snapshots before stale journal recovery; the journal warning alone still never classifies a crash
 - fix(auth): pin forwarded Codex OAuth credentials to the canonical ChatGPT host and refuse to forward them to any other configured `authMode: "forward"` provider; refuse cross-origin redirects on every credential-bearing sidecar fetch (ported from upstream lidge-jun/opencodex#1471)
 - fix(oauth): guard `expires_in` and the computed token expiry against `NaN`, `Infinity`/overflow, and negative values across the Anthropic, ChatGPT, Kimi, and Codex-account-store OAuth refresh paths, so a malformed token response cannot stamp a credential as valid forever or already-expired (ported from upstream lidge-jun/opencodex, three-commit chain ending 355b69e5b)
