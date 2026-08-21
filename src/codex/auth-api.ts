@@ -83,6 +83,12 @@ import {
   type OAuthHealthLabel,
 } from "../oauth/health";
 import {
+  markManualResetCreditOperationAmbiguous,
+  openManualResetCreditOperation,
+  settleManualResetCreditOperation,
+} from "./reset-credit-operation-ledger";
+import { isCodexResetCreditOperationId } from "./reset-credit-recovery";
+import {
   CODEX_ACCOUNT_ID_RE,
   hasLegacyMainCodexPoolAccount,
   isSelectableCodexPoolAccount,
@@ -1070,14 +1076,27 @@ export async function handleCodexAuthAPI(
   }
 
   if (url.pathname === "/api/codex-auth/reset-credits/consume" && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as { accountId?: string };
+    const body = (await req.json().catch(() => ({}))) as { accountId?: string; operationId?: string };
     if (!body.accountId) return jsonResponse({ error: "accountId required" }, 400);
+    if (!isCodexResetCreditOperationId(body.operationId)) return jsonResponse({ error: "operationId must be a lowercase UUIDv4" }, 400);
+    const operationId = body.operationId;
 
     try {
       const auth = await resolveResetCreditAuth(getRuntimeConfig(config), body.accountId);
       if (!auth.ok) return auth.response;
 
-      const idempotencyKey = crypto.randomUUID();
+      const identity = {
+        accountId: body.accountId,
+        chatgptAccountId: auth.chatgptAccountId,
+        operationId,
+      };
+      const opened = openManualResetCreditOperation(identity);
+      if (opened.kind === "terminal") return jsonResponse({ code: opened.code, operationId: opened.operationId });
+      if (opened.kind !== "execute") {
+        const status = opened.kind === "identity-mismatch" ? 409 : opened.kind === "capacity" ? 429 : 503;
+        return jsonResponse({ error: `reset-credit operation ${opened.kind}`, code: `operation_${opened.kind}` }, status);
+      }
+      const idempotencyKey = opened.operationId;
       const resp = await fetch(
         "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
         {
@@ -1093,9 +1112,15 @@ export async function handleCodexAuthAPI(
       );
       if (!resp.ok) {
         await resp.body?.cancel().catch(() => {});
-        return jsonResponse({ error: `Upstream error ${resp.status}` }, resp.status);
+        markManualResetCreditOperationAmbiguous(identity);
+        return jsonResponse({ error: `Upstream error ${resp.status}; operation outcome is ambiguous`, code: "ambiguous", operationId: idempotencyKey }, 502);
       }
       const result = safeResetCreditConsumeDto(await resp.json());
+      if (!["reset", "already_redeemed", "nothing_to_reset", "no_credit"].includes(result.code)) {
+        markManualResetCreditOperationAmbiguous(identity);
+        return jsonResponse({ error: "Upstream returned an invalid reset-credit outcome", code: "ambiguous", operationId: idempotencyKey }, 502);
+      }
+      settleManualResetCreditOperation(identity, result.code as "reset" | "already_redeemed" | "nothing_to_reset" | "no_credit");
       // After a successful redeem (or an idempotent already_redeemed), refresh WHAM usage
       // and return remaining only when that refresh freshly parsed available_count.
       // Do not fall back to a preserved cached resetCredits (failed/omitted refresh).
@@ -1109,12 +1134,13 @@ export async function handleCodexAuthAPI(
         }
         return jsonResponse({
           code: result.code,
+          operationId: idempotencyKey,
           ...(typeof freshResetCredits === "number" && Number.isFinite(freshResetCredits)
             ? { remaining: freshResetCredits }
             : {}),
         });
       }
-      return jsonResponse(result);
+      return jsonResponse({ ...result, operationId: idempotencyKey });
     } catch (e) {
       return jsonResponse({ error: e instanceof Error ? e.message : "Reset credit consume failed" }, 500);
     }
