@@ -10,6 +10,7 @@ import {
   readVersionCache,
   scheduleVersionRefreshIfStale,
   refreshVersionCache,
+  VERSION_REFRESH_INTERVAL_MS,
   writeVersionCache,
   type VersionCache,
 } from "../src/update/notify";
@@ -63,6 +64,75 @@ describe("bounded background version refresh scheduling", () => {
     timerCallback?.();
     await Promise.resolve();
     expect(refreshCount).toBe(1);
+  });
+
+  test("re-arms one refresh per freshness interval after the operation settles", async () => {
+    let now = Date.parse("2026-08-21T12:00:00.000Z");
+    let cache: VersionCache | null = null;
+    let refreshCount = 0;
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const timer = { unref: () => undefined };
+    const options = {
+      now: () => now,
+      setTimeoutFn: (callback: () => void, delay: number) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+      readCacheFn: () => cache,
+      refreshFn: async () => {
+        refreshCount += 1;
+        cache = {
+          latest_version: "2.7.1",
+          last_checked_at: new Date(now).toISOString(),
+          tag: "latest",
+        };
+      },
+    };
+
+    scheduleVersionRefreshIfStale("latest", null, options);
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.delay).toBe(0);
+    timers.shift()?.callback();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refreshCount).toBe(1);
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.delay).toBe(VERSION_REFRESH_INTERVAL_MS);
+
+    now += VERSION_REFRESH_INTERVAL_MS;
+    timers.shift()?.callback();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refreshCount).toBe(2);
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.delay).toBe(VERSION_REFRESH_INTERVAL_MS);
+  });
+
+  test("abandons a stuck refresh after its bound so later scheduling is not suppressed", async () => {
+    let timerCallback: (() => void) | undefined;
+    let scheduled = 0;
+    let aborted = false;
+    const timer = { unref: () => undefined };
+    scheduleVersionRefreshIfStale("latest", null, {
+      setTimeoutFn: callback => {
+        scheduled += 1;
+        timerCallback = callback;
+        return timer;
+      },
+      refreshTimeoutMs: 5,
+      refreshFn: async (_channel, signal) => {
+        signal?.addEventListener("abort", () => { aborted = true; });
+        await new Promise<void>(() => {});
+      },
+    });
+    timerCallback?.();
+    await Bun.sleep(15);
+    expect(aborted).toBe(true);
+    expect(scheduled).toBe(2);
   });
 
   test("failed metadata refresh does not advance the successful timestamp", async () => {

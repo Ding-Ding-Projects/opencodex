@@ -157,42 +157,136 @@ function cacheIsStale(cache: VersionCache | null, now = Date.now()): boolean {
 }
 
 type RefreshTimer = ReturnType<typeof setTimeout>;
+const REFRESH_OPERATION_TIMEOUT_MS = 30_000;
 
 export interface VersionRefreshScheduleOptions {
   now?: () => number;
   setTimeoutFn?: (callback: () => void, delayMs: number) => RefreshTimer;
   clearTimeoutFn?: (timer: RefreshTimer) => void;
-  /** Test seam; production uses one detached, non-interactive helper. */
-  refreshFn?: (channel: Channel) => Promise<void> | void;
+  /** Test seam; production runs the actual metadata refresh operation. */
+  refreshFn?: (channel: Channel, signal?: AbortSignal) => Promise<void> | void;
+  /** Re-read the cache after a refresh settles so the next deadline is data-driven. */
+  readCacheFn?: (channel: Channel) => VersionCache | null;
+  refreshTimeoutMs?: number;
 }
 
 let scheduledVersionRefresh: {
   channel: Channel;
   timer: RefreshTimer;
   clearTimeoutFn: (timer: RefreshTimer) => void;
+  generation: number;
 } | null = null;
 let versionRefreshFlight: Promise<void> | null = null;
+let versionRefreshAbort: AbortController | null = null;
+let versionRefreshTimeoutTimer: RefreshTimer | null = null;
+let refreshGeneration = 0;
 
-function spawnVersionRefresh(channel: Channel): void {
+function refreshTimeoutMs(options: VersionRefreshScheduleOptions): number {
+  return Number.isFinite(options.refreshTimeoutMs) && (options.refreshTimeoutMs ?? 0) > 0
+    ? Math.trunc(options.refreshTimeoutMs!)
+    : REFRESH_OPERATION_TIMEOUT_MS;
+}
+
+function runRefreshOperation(
+  channel: Channel,
+  refreshFn: (channel: Channel, signal?: AbortSignal) => Promise<void> | void,
+  timeoutMs: number,
+): Promise<void> {
+  if (versionRefreshFlight) return versionRefreshFlight;
+  const controller = new AbortController();
+  versionRefreshAbort = controller;
+  let operation: Promise<void>;
   try {
-    const entry = process.argv[1];
-    if (!entry || !existsSync(entry)) return;
-    const child = spawn(process.execPath, [entry, "__refresh-version", channel], {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      env: { ...process.env, OCX_BACKGROUND: "1" }, // never let the helper prompt
-    });
-    child.unref();
+    operation = Promise.resolve(refreshFn(channel, controller.signal));
   } catch {
-    /* best-effort; the next process start can try again */
+    operation = Promise.reject();
   }
+  const timeout = new Promise<void>(resolve => {
+    versionRefreshTimeoutTimer = setTimeout(() => {
+      controller.abort();
+      resolve();
+    }, timeoutMs);
+    versionRefreshTimeoutTimer.unref?.();
+  });
+  const settled = Promise.race([operation.then(() => undefined, () => undefined), timeout]);
+  versionRefreshFlight = settled;
+  void settled.then(() => {
+    if (versionRefreshTimeoutTimer) clearTimeout(versionRefreshTimeoutTimer);
+    versionRefreshTimeoutTimer = null;
+    if (versionRefreshFlight === settled) {
+      versionRefreshFlight = null;
+      versionRefreshAbort = null;
+    }
+  });
+  return settled;
+}
+
+function cacheForNextDeadline(
+  channel: Channel,
+  before: VersionCache | null,
+  readCacheFn: (channel: Channel) => VersionCache | null,
+  now: () => number,
+): VersionCache | null {
+  const after = readCacheFn(channel);
+  const beforeMs = before ? Date.parse(before.last_checked_at) : Number.NaN;
+  const afterMs = after ? Date.parse(after.last_checked_at) : Number.NaN;
+  if (after && Number.isFinite(afterMs) && (!Number.isFinite(beforeMs) || afterMs > beforeMs)) return after;
+  // A failed or abandoned refresh must remain due for the next process start,
+  // but an injected operation that settles without writing a cache still gets
+  // one bounded retry interval rather than a zero-delay timer loop.
+  return {
+    latest_version: after?.latest_version ?? before?.latest_version ?? "0.0.0",
+    last_checked_at: new Date(now()).toISOString(),
+    ...(after?.dismissed_version ?? before?.dismissed_version
+      ? { dismissed_version: after?.dismissed_version ?? before?.dismissed_version }
+      : {}),
+    tag: channel,
+  };
 }
 
 /**
- * Schedule at most one detached metadata refresh. A fresh cache schedules the
- * one refresh at its freshness deadline; a missing/stale cache schedules it
- * immediately. The timer is unref'd so a service can shut down normally.
+ * Start the detached helper and keep the refresh flight open until that helper
+ * actually exits. This keeps the foreground service non-blocking while the
+ * scheduler still single-flights the real metadata operation, not merely the
+ * call to spawn it.
+ */
+function spawnVersionRefresh(channel: Channel, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const entry = process.argv[1];
+    if (!entry || !existsSync(entry) || signal?.aborted) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    try {
+      const child = spawn(process.execPath, [entry, "__refresh-version", channel], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        env: { ...process.env, OCX_BACKGROUND: "1" }, // never let the helper prompt
+      });
+      child.once("close", finish);
+      child.once("error", finish);
+      signal?.addEventListener("abort", finish, { once: true });
+      child.unref();
+    } catch {
+      finish();
+    }
+  });
+}
+
+/**
+ * Schedule at most one metadata refresh. A fresh cache schedules the one
+ * refresh at its freshness deadline; a missing/stale cache schedules it
+ * immediately. Once the actual operation settles, the cache is re-read and
+ * the next deadline is scheduled. The timer is unref'd so a service can shut
+ * down normally.
  */
 export function scheduleVersionRefreshIfStale(
   channel: Channel,
@@ -204,24 +298,37 @@ export function scheduleVersionRefreshIfStale(
   const checked = cache ? Date.parse(cache.last_checked_at) : Number.NaN;
   const dueAt = Number.isFinite(checked) ? checked + VERSION_REFRESH_INTERVAL_MS : now();
   const delayMs = Math.max(0, dueAt - now());
+  const generation = refreshGeneration;
   const setTimeoutFn = options.setTimeoutFn ?? ((callback, delay) => setTimeout(callback, delay));
   const clearTimeoutFn = options.clearTimeoutFn ?? ((timer: RefreshTimer) => clearTimeout(timer));
-  const refreshFn = options.refreshFn ?? (async (tag: Channel) => { spawnVersionRefresh(tag); });
+  const refreshFn = options.refreshFn ?? spawnVersionRefresh;
+  const readCacheFn = options.readCacheFn ?? readVersionCache;
   const timer = setTimeoutFn(() => {
+    if (generation !== refreshGeneration) return;
     scheduledVersionRefresh = null;
-    const flight = Promise.resolve().then(() => refreshFn(channel));
-    const settled = flight.then(() => undefined, () => undefined);
-    versionRefreshFlight = settled;
+    const before = readCacheFn(channel);
+    const settled = runRefreshOperation(channel, refreshFn, refreshTimeoutMs(options));
     void settled.then(() => {
-      if (versionRefreshFlight === settled) versionRefreshFlight = null;
+      if (refreshGeneration !== generation) return;
+      scheduleVersionRefreshIfStale(
+        channel,
+        cacheForNextDeadline(channel, before, readCacheFn, now),
+        options,
+      );
     });
   }, delayMs);
   timer.unref?.();
-  scheduledVersionRefresh = { channel, timer, clearTimeoutFn };
+  scheduledVersionRefresh = { channel, timer, clearTimeoutFn, generation };
 }
 
 /** Cancel the one pending refresh timer during process shutdown or test teardown. */
 export function cancelVersionRefreshSchedule(): void {
+  refreshGeneration += 1;
+  versionRefreshAbort?.abort();
+  versionRefreshAbort = null;
+  if (versionRefreshTimeoutTimer) clearTimeout(versionRefreshTimeoutTimer);
+  versionRefreshTimeoutTimer = null;
+  versionRefreshFlight = null;
   if (!scheduledVersionRefresh) return;
   const { timer, clearTimeoutFn } = scheduledVersionRefresh;
   scheduledVersionRefresh = null;
@@ -244,29 +351,32 @@ export function triggerBackgroundRefreshIfStale(channel: Channel, cache: Version
  * for the channel and persist it. Only advances `last_checked_at` on success so
  * a failed fetch retries on the next start.
  */
-export async function refreshVersionCache(
+async function performVersionRefresh(
   channel: Channel,
   resolveLatest: (tag: Channel) => string | null = latestVersion,
   now: () => string = () => new Date().toISOString(),
 ): Promise<void> {
-  if (versionRefreshFlight) return versionRefreshFlight;
-  const flight = Promise.resolve().then(() => {
-    const latest = resolveLatest(channel);
-    if (!latest) return; // do not dirty the cache or advance the timestamp
-    const prev = readVersionCache(channel);
-    writeVersionCache({
-      latest_version: latest,
-      last_checked_at: now(),
-      dismissed_version: prev?.dismissed_version,
-      tag: channel,
-    });
+  const latest = resolveLatest(channel);
+  if (!latest) return; // do not dirty the cache or advance the timestamp
+  const prev = readVersionCache(channel);
+  writeVersionCache({
+    latest_version: latest,
+    last_checked_at: now(),
+    dismissed_version: prev?.dismissed_version,
+    tag: channel,
   });
-  const settled = flight.then(() => undefined, () => undefined);
-  versionRefreshFlight = settled;
-  void settled.then(() => {
-    if (versionRefreshFlight === settled) versionRefreshFlight = null;
-  });
-  return settled;
+}
+
+export function refreshVersionCache(
+  channel: Channel,
+  resolveLatest: (tag: Channel) => string | null = latestVersion,
+  now: () => string = () => new Date().toISOString(),
+): Promise<void> {
+  return runRefreshOperation(
+    channel,
+    () => performVersionRefresh(channel, resolveLatest, now),
+    REFRESH_OPERATION_TIMEOUT_MS,
+  );
 }
 
 /** Persist a dismissal so this exact version stops prompting. */
