@@ -147,6 +147,12 @@ import {
   restoreImageGenCallsInJson,
 } from "../responses-image-gen-repair";
 import { composeSsePayloadRewrites, relaySseWithPayloadRewrite } from "../sse-payload-rewrite";
+import {
+  collectRoutedCustomToolNames,
+  customToolItemId,
+  routedCustomToolWireName,
+  unwrapRoutedCustomToolArguments,
+} from "../../responses/custom-tool-compat";
 import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/catalog";
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
@@ -1534,6 +1540,52 @@ export async function handleResponses(
   }
 
   if ("passthrough" in adapter && adapter.passthrough && !routedCompaction) {
+    const routedCustomToolNames = isCanonicalOpenAiForwardProvider(route.provider)
+      ? new Set<string>()
+      : collectRoutedCustomToolNames(parsed._rawBody, route.provider.supportsResponsesCustomTools);
+    const routedCustomCallIds = new Set<string>();
+    const routedCustomItemIds = new Map<string, string>();
+    const restoreRoutedCustomPayload: (payload: string) => string = payload => {
+      if (routedCustomToolNames.size === 0) return payload;
+      let value: unknown;
+      try { value = JSON.parse(payload); } catch { return payload; }
+      const visit = (entry: unknown): unknown => {
+        if (Array.isArray(entry)) return entry.map(visit);
+        if (!entry || typeof entry !== "object") return entry;
+        const record = entry as Record<string, unknown>;
+        const next: Record<string, unknown> = {};
+        let changed = false;
+        for (const [key, child] of Object.entries(record)) {
+          const rewritten = visit(child);
+          next[key] = rewritten;
+          changed ||= rewritten !== child;
+        }
+        const wireName = routedCustomToolWireName(record);
+        if (record.type === "function_call" && wireName !== undefined && routedCustomToolNames.has(wireName)) {
+          if (typeof record.call_id === "string") routedCustomCallIds.add(record.call_id);
+          if (typeof record.id === "string") routedCustomItemIds.set(record.id, typeof record.call_id === "string" ? record.call_id : record.id);
+          next.type = "custom_tool_call";
+          next.id = customToolItemId(record.id);
+          next.input = unwrapRoutedCustomToolArguments(record.arguments);
+          delete next.arguments;
+          changed = true;
+        } else if (record.type === "function_call_output" && typeof record.call_id === "string" && routedCustomCallIds.has(record.call_id)) {
+          next.type = "custom_tool_call_output";
+          changed = true;
+        } else if ((record.type === "response.function_call_arguments.delta" || record.type === "response.function_call_arguments.done")
+          && typeof record.item_id === "string" && routedCustomItemIds.has(record.item_id)) {
+          next.type = record.type.endsWith(".done") ? "response.custom_tool_call_input.done" : "response.custom_tool_call_input.delta";
+          next.item_id = customToolItemId(record.item_id);
+          if (record.type.endsWith(".done")) {
+            next.input = unwrapRoutedCustomToolArguments(record.arguments);
+            delete next.arguments;
+          }
+          changed = true;
+        }
+        return changed ? next : entry;
+      };
+      return JSON.stringify(visit(value));
+    };
     const imageGenCallAliases = route.provider.authMode === "forward"
       ? new Map<string, { namespace: string; name: string }>()
       : imageGenToolCallAliases(buildToolBridgeMaps(parsed).toolNsMap, parsed._rawBody);
@@ -1744,7 +1796,7 @@ export async function handleResponses(
     // known-bad runtime remains the tee path below.
     if (isEventStream && upstreamResponse.body) {
       const repairConfig = route.provider.responsesItemIdRepair;
-      const needsClientRewrite = imageGenCallAliases.size > 0 || hasResponsesItemIdRepair(repairConfig);
+      const needsClientRewrite = imageGenCallAliases.size > 0 || hasResponsesItemIdRepair(repairConfig) || routedCustomToolNames.size > 0;
       const winNoClientRewrite = process.platform === "win32" && !needsClientRewrite;
       const eagerDecision = winNoClientRewrite ? decideEagerRelay(config.streamMode ?? "auto") : null;
       if (eagerDecision?.useEagerRelay) {
@@ -1864,6 +1916,7 @@ export async function handleResponses(
         hasResponsesItemIdRepair(repairConfig)
           ? createResponsesItemIdPayloadRewrite(repairConfig!)
           : undefined,
+        routedCustomToolNames.size > 0 ? restoreRoutedCustomPayload : undefined,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
       const rewrittenBody = payloadRewrites.length > 0
         ? relaySseWithPayloadRewrite(nativeBody, composeSsePayloadRewrites(...payloadRewrites))

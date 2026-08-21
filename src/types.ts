@@ -940,6 +940,8 @@ export interface OcxProviderConfig {
    * the legacy `/v1/responses` construction.
    */
   responsesPath?: string;
+  /** Whether the Responses destination accepts native custom tools/custom_tool_call items. */
+  supportsResponsesCustomTools?: boolean;
   /**
    * Explicit opt-in for non-registry private-network destinations such as localhost, RFC1918,
    * link-local, or unique-local upstreams. Metadata endpoints remain blocked.

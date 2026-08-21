@@ -70,6 +70,8 @@ export interface ProviderRegistryEntry {
   parallelToolCalls?: boolean;
   /** Opt this provider into forwarding prompt_cache_key (OpenAI-specific; strict backends reject it). */
   promptCacheKey?: boolean;
+  /** Registry default for native Responses custom-tool support. */
+  supportsResponsesCustomTools?: boolean;
   autoToolChoiceOnlyModels?: string[];
   preserveReasoningContentModels?: string[];
   reasoningSplitModels?: string[];
@@ -400,6 +402,9 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     featured: true,
     oauthId: "xai",
     jawcodeBundle: "xai",
+    // xAI's Responses endpoint rejects native custom_tool_call items; lower them to
+    // function_call wire items and restore them only at the client boundary.
+    supportsResponsesCustomTools: false,
     note: "Log in with your Grok account",
     // Parallel tool calls: officially supported and default-on per docs.x.ai function-calling
     // (verified 260709, devlog/_plan/260709_parallel_tool_calls). Streamed calls arrive whole
