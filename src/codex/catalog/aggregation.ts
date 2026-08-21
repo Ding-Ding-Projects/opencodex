@@ -137,6 +137,7 @@ export function deriveComboCatalogModel(
   );
   const contextWindow = Math.min(...members.map(member => member.contextWindow!));
   const maxInputTokens = Math.min(
+    contextWindow,
     ...members.map(member => member.maxInputTokens ?? member.contextWindow!),
   );
   const softBudgets = members

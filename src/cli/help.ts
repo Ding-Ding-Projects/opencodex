@@ -210,8 +210,8 @@ const helpEntries: Record<string, HelpEntry> = {
     summary: "Manage routing features; combo is currently the supported routing resource.",
   },
   agent: {
-    usage: "ocx agent <status|injection|effort|subagents|fallback|sidecar> ...",
-    summary: "Manage headless multi-agent, roster, effort, injection, and sidecar settings.",
+    usage: "ocx agent <status|injection|effort|subagents|roles|fallback|sidecar> ...",
+    summary: "Manage headless multi-agent, roster, named roles, effort, injection, and sidecar settings.",
   },
   observe: {
     usage: "ocx observe <logs|usage|storage|memory|debug|claude-inbound|injection> ...",
