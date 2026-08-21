@@ -12,6 +12,7 @@ import { buildCompactV1Output, COMPACT_PROMPT, decodeCompactionSummary, extractC
 import { FORWARD_HEADERS, sanitizeReasoningInputContent } from "../../adapters/openai-responses";
 import { expandPreviousResponseInput, previousResponseProviderState, rememberResponseState } from "../../responses/state";
 import { routeModel, type RouteResult } from "../../router";
+import { warnRetainedModel404Once } from "../../codex/catalog/provider-fetch";
 import {
   advanceComboAfterFailure,
   comboDefaultEffort,
@@ -1720,6 +1721,7 @@ export async function handleResponses(
     // keep their typed failure envelope. Non-empty bodies are relayed verbatim
     // (headers included) so pool-retry Activation B/D and client diagnostics stay intact.
     if (!upstreamResponse.ok) {
+      if (upstreamResponse.status === 404) warnRetainedModel404Once(route.providerName, route.modelId);
       if (options.comboAttempt) {
         const failure = await consumeComboFailure(upstreamResponse, options.abortSignal);
         options.onConsumedComboFailure?.(failure);
@@ -2405,6 +2407,7 @@ export async function handleResponses(
       break;
     }
     if (!upstreamResponse.ok) {
+      if (upstreamResponse.status === 404) warnRetainedModel404Once(route.providerName, route.modelId);
       if (options.comboAttempt) {
         const failure = await consumeComboFailure(upstreamResponse, options.abortSignal)
           .finally(cleanupUpstreamAbort);
