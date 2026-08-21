@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { getAccountSet, saveCredential } from "../src/oauth/store";
 import { clearAccountQuotaCache, clearProviderQuotaCache, fetchProviderAccountQuotas, fetchProviderQuotaReports, getCachedProviderAccountQuota, setCachedProviderAccountQuotaForTests, supportsPerAccountQuota } from "../src/providers/quota";
 import { fetchAntigravityLiveQuota } from "../src/providers/antigravity-quota";
+import { assertOAuthAccessSnapshotCurrent } from "../src/oauth";
 import { removeTempDir } from "./helpers/temp-dir";
 
 const originalFetch = globalThis.fetch;
@@ -46,6 +47,23 @@ describe("Antigravity quota security boundary", () => {
       accountId: "rotating", projectId: "new-project",
     });
     expect(getCachedProviderAccountQuota("google-antigravity", accountId, DAILY)).toBeNull();
+  });
+
+  test("dispatch validation rejects a mixed old bearer/project tuple after rotation", async () => {
+    await saveCredential("google-antigravity", {
+      access: "snapshot-old-token", refresh: "snapshot-old-refresh", expires: Date.now() + 3_600_000,
+      accountId: "snapshot", projectId: "snapshot-old-project",
+    });
+    const accountId = getAccountSet("google-antigravity")!.activeAccountId;
+    const old = {
+      provider: "google-antigravity", accountId, generation: "old-generation",
+      accessToken: "snapshot-old-token", projectId: "snapshot-old-project", destination: DAILY,
+    } as const;
+    await saveCredential("google-antigravity", {
+      access: "snapshot-new-token", refresh: "snapshot-new-refresh", expires: Date.now() + 3_600_000,
+      accountId: "snapshot", projectId: "snapshot-new-project",
+    });
+    expect(() => assertOAuthAccessSnapshotCurrent(old)).toThrow(/changed before dispatch/);
   });
   test("uses HTTPS known daily/prod peers and rejects redirect-following", async () => {
     const requests: Array<{ url: string; redirect?: RequestRedirect }> = [];
@@ -118,5 +136,21 @@ describe("Antigravity quota security boundary", () => {
     const second = await fetchProviderQuotaReports(config, true);
     expect(second.reports).toEqual([]);
     clearProviderQuotaCache();
+  });
+
+  test("warm per-account quota clears last-good on terminal 401", async () => {
+    await saveCredential("google-antigravity", { access: "warm-token", refresh: "warm-refresh", expires: Date.now() + 3_600_000, accountId: "warm", projectId: "warm-project" });
+    const accountId = getAccountSet("google-antigravity")!.activeAccountId;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(":retrieveUserQuota")) return json({ buckets: [{ modelId: "gemini-test", remainingFraction: 0.2 }] });
+      if (url.includes(":retrieveUserQuotaSummary")) return json({}, 404);
+      return json({}, 404);
+    }) as typeof fetch;
+    const first = await fetchProviderAccountQuotas("google-antigravity", true, DAILY);
+    expect(first.find(row => row.accountId === accountId)?.quota?.customWindows?.[0]?.percent).toBe(80);
+    globalThis.fetch = (async () => json({}, 401)) as typeof fetch;
+    const second = await fetchProviderAccountQuotas("google-antigravity", true, DAILY);
+    expect(second.find(row => row.accountId === accountId)).toMatchObject({ quota: null, unavailable: true });
   });
 });

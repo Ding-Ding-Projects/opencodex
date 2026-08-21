@@ -1,5 +1,12 @@
 import { resolvePublicAddresses, type UrlDestinationAssessment, assessUrlDestination } from "../lib/destination-policy";
 
+/**
+ * Bearer policy for CCA. This module performs an immediate DNS resolution and safety check before
+ * each dispatch; the current Bun fetch executor does not connect to the returned address directly,
+ * so this is deliberately documented as non-pinned revalidation, not a socket-pinning guarantee.
+ * A future transport may consume the returned address through the existing pinned HTTP primitive.
+ */
+
 export const ANTIGRAVITY_DAILY_ORIGIN = "https://daily-cloudcode-pa.googleapis.com";
 export const ANTIGRAVITY_PROD_ORIGIN = "https://cloudcode-pa.googleapis.com";
 

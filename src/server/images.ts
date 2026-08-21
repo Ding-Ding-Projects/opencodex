@@ -30,7 +30,8 @@ import { readJsonRequestBody } from "./request-decompress";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential } from "./auth-cors";
 import type { RequestLogContext } from "./request-log";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
-import { getValidAccessToken, getOAuthCredentialProjectId } from "../oauth/index";
+import { assertOAuthAccessSnapshotCurrent, getValidAccessTokenSnapshot } from "../oauth/index";
+import { resolveAntigravityBearerDestination } from "../providers/antigravity-trust";
 import { safeAntigravityHttpErrorMessage } from "../adapters/google-errors";
 import { sanitizeUpstreamErrorText } from "../adapters/upstream-http-error";
 import { ANTIGRAVITY_REQUEST_UA } from "../adapters/google-antigravity-wire";
@@ -112,7 +113,9 @@ async function tryCcaImageGeneration(
   // OAuth token refresh and project discovery, not just the upstream fetch.
   const timeoutMs = config.images?.timeoutMs ?? IMAGES_UPSTREAM_TIMEOUT_MS;
   const linkedSignal = signalWithTimeout(timeoutMs, signal);
-  let token: string;
+  const registryEntry = getProviderRegistryEntry("google-antigravity");
+  const baseUrl = registryEntry?.baseUrl ?? "https://daily-cloudcode-pa.googleapis.com";
+  let snapshot: Awaited<ReturnType<typeof getValidAccessTokenSnapshot>>;
   try {
     // Race the OAuth refresh against the deadline signal. getValidAccessToken
     // chains through 4 layers (resolveAccessSnapshotForAccount →
@@ -121,7 +124,8 @@ async function tryCcaImageGeneration(
     // threading signal through the entire chain, race the whole call against
     // linkedSignal: when the signal aborts we stop awaiting and surface the
     // cancellation immediately instead of hanging on the refresh HTTP call.
-    token = await abortableRace(getValidAccessToken("google-antigravity"), linkedSignal.signal);
+    snapshot = await abortableRace(getValidAccessTokenSnapshot("google-antigravity", baseUrl), linkedSignal.signal);
+    assertOAuthAccessSnapshotCurrent(snapshot);
   } catch (err) {
     linkedSignal.cleanup();
     // abortableRace rejects immediately when the signal fires, so client
@@ -141,7 +145,8 @@ async function tryCcaImageGeneration(
     }
     return formatErrorResponse(502, "upstream_error", "CCA image generation failed: OAuth token refresh failed");
   }
-  const project = getOAuthCredentialProjectId("google-antigravity");
+  const token = snapshot.accessToken;
+  const project = snapshot.projectId;
   if (!project) {
     linkedSignal.cleanup();
     return formatErrorResponse(
@@ -154,9 +159,8 @@ async function tryCcaImageGeneration(
   logCtx.provider = "google-antigravity";
   logCtx.model = CCA_IMAGE_MODEL;
 
-  // Pin to the registry endpoint — never use a config-level baseUrl override for OAuth token transmission.
-  const registryEntry = getProviderRegistryEntry("google-antigravity");
-  const baseUrl = registryEntry?.baseUrl ?? "https://daily-cloudcode-pa.googleapis.com";
+  // The registry origin is allowlisted and resolved immediately before dispatch. The fetch
+  // executor is not socket-pinned; this is a non-pinned revalidation guarantee.
   const envelope = {
     model: CCA_IMAGE_MODEL,
     userAgent: "antigravity",
@@ -172,6 +176,7 @@ async function tryCcaImageGeneration(
   let upstream: Response;
   try {
     try {
+      await resolveAntigravityBearerDestination(`${baseUrl}/v1internal:generateContent`);
       upstream = await fetch(`${baseUrl}/v1internal:generateContent`, {
         method: "POST",
         headers: {
@@ -181,6 +186,7 @@ async function tryCcaImageGeneration(
         },
         body: JSON.stringify(envelope),
         signal: linkedSignal.signal,
+        redirect: "manual",
       });
     } catch (err) {
       if (signal.aborted) return formatErrorResponse(499, "client_closed_request", "CCA image request canceled by client");

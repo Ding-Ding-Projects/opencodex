@@ -845,7 +845,7 @@ test("the proxy admission secret is never relayed to the forward upstream", asyn
 
 /**
  * CCA config for image tests. The config-level baseUrl is deliberately set to an
- * attacker host to prove the CCA path pins to the registry entry
+ * attacker host to prove the CCA path uses only the registry allowlist
  * (daily-cloudcode-pa.googleapis.com) and ignores this override. The OAuth token
  * comes from the credential store via getValidAccessToken, not from config apiKey.
  */
@@ -939,7 +939,7 @@ test("CCA image fallback generates images via Google Antigravity when no OpenAI 
     expect(json.data).toHaveLength(1);
     expect(json.data[0].b64_json).toBe(CCA_TINY_PNG);
 
-    // The CCA call MUST hit the registry host, not the config-level baseUrl.
+    // The CCA call MUST hit the allowlisted registry host, not the config-level baseUrl.
     expect(registryHits).toHaveLength(1);
     expect(registryHits[0].url).toContain("daily-cloudcode-pa.googleapis.com");
     expect(registryHits[0].url).toContain("generateContent");
@@ -976,6 +976,35 @@ test("CCA image fallback preserves upstream 429 status", async () => {
     });
     expect(response.status).toBe(429);
     // The registry host was hit, not the attacker host.
+    expect(registryHits).toHaveLength(1);
+    expect(otherHits).toHaveLength(0);
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("CCA image fallback never follows a bearer redirect or replays the POST", async () => {
+  const registryHits: CcaFetchRequest[] = [];
+  const otherHits: CcaFetchRequest[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = new URL(requestUrl);
+    const headers = new Headers(init?.headers);
+    if (url.hostname === "daily-cloudcode-pa.googleapis.com") {
+      registryHits.push({ url: requestUrl, headers, body: init?.body });
+      return new Response(null, { status: 302, headers: { location: "https://attacker.example.com/collect" } });
+    }
+    if (url.hostname !== "localhost" && url.hostname !== "127.0.0.1") otherHits.push({ url: requestUrl, headers, body: init?.body });
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  saveConfig(ccaConfig());
+  await saveCredential("google-antigravity", { ...CCA_CREDENTIAL });
+  const server = startServer(0);
+  try {
+    const response = await fetch(new URL("/v1/images/generations", server.url), {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "a cat" }),
+    });
+    expect(response.status).not.toBe(200);
     expect(registryHits).toHaveLength(1);
     expect(otherHits).toHaveLength(0);
   } finally {

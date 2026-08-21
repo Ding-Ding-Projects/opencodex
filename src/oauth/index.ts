@@ -47,6 +47,9 @@ export interface OAuthAccessSnapshot {
   accountId: string;
   generation: string;
   accessToken: string;
+  /** Antigravity routing metadata captured from the same credential generation. */
+  projectId?: string;
+  destination?: string;
   /** Safe request-routing subset; refresh-only Kiro client secrets never leave the credential store. */
   kiro?: Pick<KiroOAuthMetadata, "profileArn" | "apiRegion" | "ssoRegion">;
 }
@@ -228,7 +231,7 @@ export class OAuthLoginRequiredError extends Error {
   }
 }
 
-function accessSnapshot(provider: string, accountId: string, cred: OAuthCredentials): OAuthAccessSnapshot {
+function accessSnapshot(provider: string, accountId: string, cred: OAuthCredentials, destination?: string): OAuthAccessSnapshot {
   const storedKiroRouting = {
     ...(cred.kiro?.profileArn ? { profileArn: cred.kiro.profileArn } : {}),
     ...(cred.kiro?.apiRegion ? { apiRegion: cred.kiro.apiRegion } : {}),
@@ -239,6 +242,8 @@ function accessSnapshot(provider: string, accountId: string, cred: OAuthCredenti
     accountId,
     generation: credentialGeneration(cred),
     accessToken: cred.access,
+    ...(cred.projectId ? { projectId: cred.projectId } : {}),
+    ...(destination ? { destination } : {}),
     // Stored account metadata remains authoritative. Metadata-less legacy/environment credentials
     // may use explicit environment routing, but never borrow the currently signed-in local CLI account.
     ...(provider === "kiro"
@@ -255,12 +260,13 @@ async function resolveAccessSnapshotForAccount(
   provider: string,
   accountId: string,
   rejectedGeneration?: string,
+  destination?: string,
 ): Promise<OAuthAccessSnapshot> {
   const def = OAUTH_PROVIDERS[provider];
   if (!def) throw new UnsupportedOAuthProviderError(provider);
   const cred = getAccountCredential(provider, accountId);
   if (!cred) throw new OAuthLoginRequiredError(provider);
-  const current = accessSnapshot(provider, accountId, cred);
+  const current = accessSnapshot(provider, accountId, cred, destination);
   if (rejectedGeneration !== undefined && current.generation !== rejectedGeneration) return current;
   // This is not merely a "discard when stale" check — it is the ENTRY POINT to
   // refresh. Returning early here for a live credential is what makes refresh
@@ -284,7 +290,7 @@ async function resolveAccessSnapshotForAccount(
     if (persisted.access !== accessToken) {
       throw new Error(`OAuth refresh persisted an unexpected access token for ${provider}`);
     }
-    return accessSnapshot(provider, accountId, persisted);
+    return accessSnapshot(provider, accountId, persisted, destination);
   })().finally(() => {
     if (tokenRefreshes.get(key) === refresh) tokenRefreshes.delete(key);
   });
@@ -292,10 +298,10 @@ async function resolveAccessSnapshotForAccount(
   return refresh;
 }
 
-export async function getValidAccessTokenSnapshot(provider: string): Promise<OAuthAccessSnapshot> {
+export async function getValidAccessTokenSnapshot(provider: string, destination?: string): Promise<OAuthAccessSnapshot> {
   const set = getAccountSet(provider);
   if (!set) throw new OAuthLoginRequiredError(provider);
-  return resolveAccessSnapshotForAccount(provider, set.activeAccountId);
+  return resolveAccessSnapshotForAccount(provider, set.activeAccountId, undefined, destination);
 }
 
 /**
@@ -304,14 +310,14 @@ export async function getValidAccessTokenSnapshot(provider: string): Promise<OAu
  * but it must not trigger a refresh that could adopt the global CLI credential into a
  * background slot — so the pool checks expiry itself and calls this for the fresh case.
  */
-export function storedAccessSnapshot(provider: string, accountId: string): OAuthAccessSnapshot | null {
+export function storedAccessSnapshot(provider: string, accountId: string, destination?: string): OAuthAccessSnapshot | null {
   const cred = getAccountCredential(provider, accountId);
-  return cred ? accessSnapshot(provider, accountId, cred) : null;
+  return cred ? accessSnapshot(provider, accountId, cred, destination) : null;
 }
 
 /** Account-scoped snapshot resolver: refreshes and persists for THAT account only. */
-export async function getAccessSnapshotForAccount(provider: string, accountId: string): Promise<OAuthAccessSnapshot> {
-  return resolveAccessSnapshotForAccount(provider, accountId);
+export async function getAccessSnapshotForAccount(provider: string, accountId: string, destination?: string): Promise<OAuthAccessSnapshot> {
+  return resolveAccessSnapshotForAccount(provider, accountId, undefined, destination);
 }
 
 /**
@@ -337,7 +343,18 @@ export async function forceRefreshOAuthAccessSnapshot(
   rejected: OAuthAccessSnapshot,
 ): Promise<OAuthAccessSnapshot> {
   if (!OAUTH_PROVIDERS[rejected.provider]) throw new UnsupportedOAuthProviderError(rejected.provider);
-  return resolveAccessSnapshotForAccount(rejected.provider, rejected.accountId, rejected.generation);
+  return resolveAccessSnapshotForAccount(rejected.provider, rejected.accountId, rejected.generation, rejected.destination);
+}
+
+/** Validate the complete immutable routing tuple immediately before a bearer dispatch. */
+export function assertOAuthAccessSnapshotCurrent(snapshot: OAuthAccessSnapshot): void {
+  const credential = getAccountCredential(snapshot.provider, snapshot.accountId);
+  if (!credential || credentialGeneration(credential) !== snapshot.generation || credential.access !== snapshot.accessToken) {
+    throw new Error("OAuth account credential changed before dispatch");
+  }
+  if (snapshot.projectId !== undefined && credential.projectId !== snapshot.projectId) {
+    throw new Error("OAuth account project changed before dispatch");
+  }
 }
 
 /** Return a valid access token for the ACTIVE account, refreshing + persisting if expired. */

@@ -12,6 +12,7 @@ import {
 import { recordAntigravityCooldown } from "../oauth/antigravity-routing";
 import { antigravityHostCandidates } from "./google-antigravity-hosts";
 import { resolveAntigravityBearerDestination } from "../providers/antigravity-trust";
+import { assertOAuthAccessSnapshotCurrent } from "../oauth";
 import { recordOAuthAccountCooldown } from "../oauth/provider-pool";
 
 const GOOGLE_RETRY_ATTEMPTS = 3;
@@ -89,6 +90,7 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
   for (let attempt = 0; attempt < GOOGLE_RETRY_ATTEMPTS; attempt++) {
     if (ctx.abortSignal?.aborted) throw abortError(ctx.abortSignal);
     try {
+      if (label === "Antigravity" && ctx.oauthSnapshot) assertOAuthAccessSnapshotCurrent(ctx.oauthSnapshot);
       if (label === "Antigravity") await resolveAntigravityBearerDestination(activeRequest.url);
       const res = await fetchWithAttemptDeadline(activeRequest.url, {
         method: activeRequest.method,

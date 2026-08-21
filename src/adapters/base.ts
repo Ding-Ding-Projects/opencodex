@@ -1,4 +1,5 @@
 import type { AdapterEvent, OcxParsedRequest } from "../types";
+import type { OAuthAccessSnapshot } from "../oauth";
 
 /** Metadata about the caller's incoming request, for auth-forwarding adapters. */
 export interface IncomingMeta {
@@ -61,6 +62,8 @@ export interface AdapterFetchContext {
   abortSignal?: AbortSignal;
   /** OAuth account identity used for provider-local cooldown bookkeeping. */
   accountId?: string;
+  /** Immutable OAuth tuple revalidated immediately before a bearer dispatch. */
+  oauthSnapshot?: OAuthAccessSnapshot;
   /** Deadline for receiving response headers on each attempt, not for consuming the response body. */
   timeoutMs?: number;
   /** Return final non-2xx responses untouched so the caller can own the error-body read. */

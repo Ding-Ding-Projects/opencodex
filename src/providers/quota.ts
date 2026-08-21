@@ -445,10 +445,11 @@ async function fetchAccountQuota(
       const latest = getAccountCredential(provider, accountId);
       if (latest && credentialGeneration(latest) === generation) accountQuotaCache.set(key, entry);
       return entry;
-    } catch {
+    } catch (error) {
+      const terminal = error instanceof AntigravityQuotaRpcError && isTerminalAntigravityQuotaStatus(error.status);
       const entry: AccountQuotaCacheEntry = {
         ts: Date.now(),
-        quota: cached?.quota ?? null,
+        quota: terminal ? null : cached?.quota ?? null,
         unavailable: true,
       };
       const latest = getAccountCredential(provider, accountId);

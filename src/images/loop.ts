@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createAdapterEventQueue } from "../adapters/run-turn-queue";
 import type { AdapterEvent, OcxMessage, OcxParsedRequest, OcxProviderContinuationState, OcxRequestOptions, OcxThinkingContent, OcxUsage } from "../types";
+import type { OAuthAccessSnapshot } from "../oauth";
 import { namespacedToolName } from "../types";
 import { bridgeToResponsesSSE } from "../bridge";
 import { clearableDeadline, idleDeadline } from "../lib/abort";
@@ -200,6 +201,8 @@ class LoopError extends Error {
 export interface ImageBridgeDeps {
   /** OAuth account identity for provider-local cooldown selection. */
   accountId?: string;
+  oauthSnapshot?: OAuthAccessSnapshot;
+  getOAuthDispatchContext?: () => { accountId?: string; oauthSnapshot?: OAuthAccessSnapshot };
   parsed: OcxParsedRequest;
   adapter: ProviderAdapter;
   plan?: ImageBridgePlan;
@@ -228,7 +231,7 @@ export interface ImageBridgeDeps {
    * Optional 429 key-failover for the routed (non-xAI) model. Return a rebuilt adapter for the
    * rotated key, or null when the pool is exhausted.
    */
-  on429?: (retryAfterHeader: string | null) => ProviderAdapter | null;
+  on429?: (retryAfterHeader: string | null) => ProviderAdapter | null | Promise<ProviderAdapter | null>;
   /** Called when the bridged Responses stream completes (parity with runTurn / routed paths). */
   onCompletedResponse?: (response: Record<string, unknown>, providerState?: OcxProviderContinuationState) => void;
   /** WebSocket Responses path only — leave response id empty for protocol compatibility. */
@@ -425,7 +428,8 @@ export async function runWithImageBridge(deps: ImageBridgeDeps): Promise<Respons
               timeoutMs: connectTimeoutMs,
               returnRawErrors: true,
               stream: true,
-              ...(deps.accountId ? { accountId: deps.accountId } : {}),
+              ...(deps.getOAuthDispatchContext?.().accountId ?? deps.accountId ? { accountId: deps.getOAuthDispatchContext?.().accountId ?? deps.accountId } : {}),
+              ...(deps.getOAuthDispatchContext?.().oauthSnapshot ?? deps.oauthSnapshot ? { oauthSnapshot: deps.getOAuthDispatchContext?.().oauthSnapshot ?? deps.oauthSnapshot } : {}),
             })
           : await fetchWithResetRetry(
               () => {
@@ -446,7 +450,7 @@ export async function runWithImageBridge(deps: ImageBridgeDeps): Promise<Respons
       let prepared = await fetchOnce(adapter);
       // 429 key-failover parity with web-search / normal routed path.
       while (prepared.response.status === 429 && deps.on429) {
-        const rotated = deps.on429(prepared.response.headers.get("retry-after"));
+        const rotated = await deps.on429(prepared.response.headers.get("retry-after"));
         if (!rotated) break;
         try { void prepared.response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
         adapter = rotated;

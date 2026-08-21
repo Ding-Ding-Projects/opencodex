@@ -37,6 +37,7 @@ import {
   getOAuthAccountProjectId,
   getValidAccessTokenForAccount,
   getValidAccessTokenSnapshot,
+  assertOAuthAccessSnapshotCurrent,
   type OAuthAccessSnapshot,
   UnsupportedOAuthProviderError,
 } from "../../oauth";
@@ -92,6 +93,7 @@ import { applyOpenAiVirtualModel, resolveOpenAiCompactModel } from "../../provid
 import { isUsageDebugEnabled } from "../../usage/debug";
 import { readJsonRequestBody, DecompressedBodyTooLargeError, UnsupportedContentEncodingError } from "../request-decompress";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
+import type { ProviderAdapter } from "../../adapters/base";
 import { hasKeyPoolFailover, rotateProviderTransportOn429 } from "../../providers/key-failover";
 import { shouldAttemptImageTierRetry } from "../image-retry";
 import { resolveProviderTransport } from "../../providers/xai-transport";
@@ -1333,6 +1335,7 @@ export async function handleResponses(
   const isOAuth401ReplayProvider = route.provider.authMode === "oauth";
   let sentOAuthSnapshot: OAuthAccessSnapshot | undefined;
   let oauthPoolAccountId: string | null = null;
+  let selectedOAuthSnapshot: OAuthAccessSnapshot | undefined;
   let oauthPoolFailovers = 0;
   // Generic OAuth account pool (all providers, "like Codex"): anthropic keeps its
   // config home; everything else opts in via providers[<name>].accountPool.
@@ -1379,7 +1382,7 @@ export async function handleResponses(
     // OF THE AUTHENTICATING ACCOUNT. Re-derived on every call, including failovers: sending no
     // project is recoverable, sending the previous account's is a wrong-tenant request.
     if (route.provider.googleMode === "cloud-code-assist") {
-      const projectId = configuredProject ?? getOAuthAccountProjectId(route.providerName, resolved.accountId);
+      const projectId = configuredProject ?? resolved.projectId ?? getOAuthAccountProjectId(route.providerName, resolved.accountId);
       route.provider = { ...route.provider, project: projectId };
     }
     // Copilot's upstream origin is credential-scoped too, and it is resolved into
@@ -1411,14 +1414,23 @@ export async function handleResponses(
           }
           return formatErrorResponse(401, "authentication_error", `No eligible ${oauthPoolProvider} OAuth account available`);
         }
-        resolved = await getOAuthPoolAccessSnapshot(oauthPoolProvider, selection.accountId);
+        resolved = await getOAuthPoolAccessSnapshot(
+          oauthPoolProvider,
+          selection.accountId,
+          route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+        );
         oauthPoolAccountId = selection.accountId;
         bindOAuthSessionAffinity(oauthPoolProvider, oauthPoolSessionKey, selection.accountId);
         promoteOAuthActiveAccount(oauthPoolProvider, selection.accountId);
         logCtx.provider = formatOAuthProviderForLog(oauthPoolProvider, selection.accountId);
       } else {
-        resolved = await getValidAccessTokenSnapshot(route.providerName);
+        resolved = await getValidAccessTokenSnapshot(
+          route.providerName,
+          route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+        );
       }
+      assertOAuthAccessSnapshotCurrent(resolved);
+      selectedOAuthSnapshot = resolved;
       applyOAuthAccountRouting(resolved);
     } catch (err) {
       if (err instanceof UnsupportedOAuthProviderError) {
@@ -1441,13 +1453,34 @@ export async function handleResponses(
   );
   const adapterProvider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider);
   const adapter = resolveAdapter(adapterProvider, config.cacheRetention);
-  const providerAccountId = route.providerName === "google-antigravity"
+  let providerAccountId = route.providerName === "google-antigravity"
     ? oauthPoolAccountId ?? getAccountSet(route.providerName)?.activeAccountId
     : undefined;
   logCtx.providerAdapter = adapter.name;
   recordEffectiveCacheRetention(logCtx, adapter.name, config.cacheRetention);
   sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, adapter.name);
   const isPassthrough = "passthrough" in adapter && !!adapter.passthrough;
+
+  const rebuildOAuthSidecarAdapterOn429 = async (retryAfter: string | null): Promise<ProviderAdapter | null> => {
+    if (route.providerName !== "google-antigravity" || !oauthPoolProvider || !providerAccountId) return null;
+    const nextAccountId = rotateOAuthAccountOn429(
+      config,
+      oauthPoolProvider,
+      providerAccountId,
+      retryAfter,
+      oauthPoolSessionKey,
+    );
+    if (!nextAccountId) return null;
+    const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId, route.provider.baseUrl);
+    assertOAuthAccessSnapshotCurrent(snapshot);
+    selectedOAuthSnapshot = snapshot;
+    providerAccountId = nextAccountId;
+    applyOAuthAccountRouting(snapshot);
+    return resolveAdapter(
+      resolveWireProtocolOverride(route.providerName, route.modelId, route.provider),
+      config.cacheRetention,
+    );
+  };
 
   if (adapter.name === "kiro" && parsed.previousResponseId && !parsed._previousResponseInputExpanded) {
     return formatErrorResponse(
@@ -1970,6 +2003,8 @@ export async function handleResponses(
     }
   const imgResponse = await runWithImageBridge({
     ...(providerAccountId ? { accountId: providerAccountId } : {}),
+    ...(selectedOAuthSnapshot ? { oauthSnapshot: selectedOAuthSnapshot } : {}),
+    getOAuthDispatchContext: () => ({ accountId: providerAccountId ?? undefined, oauthSnapshot: selectedOAuthSnapshot }),
       parsed, adapter,
       ...(imgPlan ? { plan: imgPlan } : {}),
       ...(vidPlan ? { videoPlan: vidPlan } : {}),
@@ -1999,7 +2034,9 @@ export async function handleResponses(
           if (logCtx.activeAttempt) logCtx.activeAttempt.usage = usage;
         }
       },
-      on429: retryAfter => {
+      on429: async retryAfter => {
+        const oauthRotated = await rebuildOAuthSidecarAdapterOn429(retryAfter);
+        if (oauthRotated) return oauthRotated;
         const rotated = rotateProviderTransportOn429(config, route.providerName, route.provider, {
           retryAfter,
           now: Date.now(),
@@ -2044,6 +2081,8 @@ export async function handleResponses(
     noteAttemptSend(logCtx.activeAttempt, logCtx.usageLogInputTokens);
   const wsResponse = await runWithWebSearch({
     ...(providerAccountId ? { accountId: providerAccountId } : {}),
+    ...(selectedOAuthSnapshot ? { oauthSnapshot: selectedOAuthSnapshot } : {}),
+    getOAuthDispatchContext: () => ({ accountId: providerAccountId ?? undefined, oauthSnapshot: selectedOAuthSnapshot }),
       parsed, adapter,
       backend: wsPlan.backend,
       forwardProvider: wsPlan.forwardSidecar?.provider,
@@ -2067,7 +2106,9 @@ export async function handleResponses(
       connectTimeoutMs: config.connectTimeoutMs ?? 200_000,
       routedModelStallTimeoutMs: wsPlan.routedModelStallTimeoutMs,
       stallTimeoutSec: wsPlan.stallTimeoutSec,
-      on429: retryAfter => {
+      on429: async retryAfter => {
+        const oauthRotated = await rebuildOAuthSidecarAdapterOn429(retryAfter);
+        if (oauthRotated) return oauthRotated;
         const rotated = rotateProviderTransportOn429(config, route.providerName, route.provider, {
           retryAfter,
           now: Date.now(),
@@ -2234,6 +2275,7 @@ export async function handleResponses(
         timeoutMs: connectMs,
         stream: parsed.stream,
         ...(providerAccountId ? { accountId: providerAccountId } : {}),
+        ...(selectedOAuthSnapshot ? { oauthSnapshot: selectedOAuthSnapshot } : {}),
       });
     } else {
       upstreamResponse = await fetchWithResetRetry(
@@ -2287,6 +2329,7 @@ export async function handleResponses(
               timeoutMs: connectMs,
               stream: parsed.stream,
               ...(providerAccountId ? { accountId: providerAccountId } : {}),
+              ...(selectedOAuthSnapshot ? { oauthSnapshot: selectedOAuthSnapshot } : {}),
             })
           : await fetchWithHeaderTimeout(retryRequest.url, {
               method: retryRequest.method, headers: retryRequest.headers, body: retryRequest.body,
@@ -2318,6 +2361,8 @@ export async function handleResponses(
           return formatErrorResponse(401, "authentication_error", err instanceof Error ? err.message : String(err));
         }
         // The forced refresh is account-scoped, so the routing it implies is too.
+        assertOAuthAccessSnapshotCurrent(refreshed);
+        selectedOAuthSnapshot = refreshed;
         applyOAuthAccountRouting(refreshed);
         const refreshedProvider = resolveProviderTransport(
           route.providerName,
@@ -2378,9 +2423,15 @@ export async function handleResponses(
         if (!nextAccountId) break;
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         try {
-          const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId);
+          const snapshot = await getOAuthPoolAccessSnapshot(
+            oauthPoolProvider,
+            nextAccountId,
+            route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+          );
+          assertOAuthAccessSnapshotCurrent(snapshot);
           oauthPoolAccountId = nextAccountId;
           oauthPoolFailovers += 1;
+          selectedOAuthSnapshot = snapshot;
           // Re-apply the FULL account wiring, not just the bearer: the failover target has
           // its own Kiro routing metadata and CCA project id.
           applyOAuthAccountRouting(snapshot);
@@ -2476,6 +2527,7 @@ export async function handleResponses(
               timeoutMs: connectMs,
               stream: nextParsed.stream,
               ...(providerAccountId ? { accountId: providerAccountId } : {}),
+              ...(selectedOAuthSnapshot ? { oauthSnapshot: selectedOAuthSnapshot } : {}),
             });
         } else {
           response = await fetchWithResetRetry(
@@ -2542,9 +2594,15 @@ export async function handleResponses(
         if (nextAccountId) {
           try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
           try {
-            const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId);
+            const snapshot = await getOAuthPoolAccessSnapshot(
+              oauthPoolProvider,
+              nextAccountId,
+              route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+            );
+            assertOAuthAccessSnapshotCurrent(snapshot);
             oauthPoolAccountId = nextAccountId;
             oauthPoolFailovers += 1;
+            selectedOAuthSnapshot = snapshot;
             applyOAuthAccountRouting(snapshot);
             promoteOAuthActiveAccount(oauthPoolProvider, nextAccountId);
             logCtx.provider = formatOAuthProviderForLog(oauthPoolProvider, nextAccountId);
