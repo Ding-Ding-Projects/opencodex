@@ -17,6 +17,7 @@ import {
   rewriteCodexFileEditGuidanceForGrok,
 } from "./grok-structured-edit";
 import { effectiveInstructionText } from "./tool-catalog-nudge";
+import { resolveVercelGatewayRouting, vercelGatewayProviderPayload } from "../providers/vercel-gateway-routing";
 
 // Providers may opt into stripping one trailing "[...]" group from the wire model id.
 // Z.AI needs this because its OpenAI path rejects glm-5.2[1m] with 400 code 1211;
@@ -564,6 +565,8 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
       const maxTokens = resolveMaxTokens(provider, parsed);
       const openRouterRouting = resolveOpenRouterRouting(provider, parsed.modelId);
       if (openRouterRouting) body.provider = openRouterProviderPayload(openRouterRouting);
+      const vercelGatewayRouting = resolveVercelGatewayRouting(provider, parsed.modelId);
+      if (vercelGatewayRouting) body.provider = vercelGatewayProviderPayload(vercelGatewayRouting);
       if (tools) body.tools = tools;
       if (tools && toolChoice !== undefined) {
         body.tool_choice = modelInList(provider.autoToolChoiceOnlyModels, parsed.modelId)

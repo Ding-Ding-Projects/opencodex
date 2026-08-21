@@ -18,8 +18,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConfigDir, getConfigPath, readConfigDiagnostics } from "../config";
 import { listStateHistory } from "../lib/state-history";
+import { collectOrcaCodexHomeDiagnostic, type OrcaCodexHomeDiagnostic } from "../codex/home";
 
-const USAGE = "Usage: ocx export <new-file> --yes  |  ocx export --history [--json]  |  ocx export data <dataset> [--format <f>] [--out <path>] [--list]";
+const USAGE = "Usage: ocx export --client orca --json [--out <path>]  |  ocx export <new-file> --yes  |  ocx export --history [--json]  |  ocx export data <dataset> [--format <f>] [--out <path>] [--list]";
 
 const WARNING = `
 ⚠️  THIS EXPORT CONTAINS SECRETS.
@@ -39,6 +40,72 @@ function readJsonIfPresent(path: string): { value: unknown; error?: string } {
   }
 }
 
+export interface OrcaLaunchManifest {
+  schemaVersion: 1;
+  capabilities: {
+    proxy: { required: false; state: "not_required" };
+  };
+  service: {
+    ready: { argv: string[]; passThroughArgs: false };
+    dashboard: { argv: string[]; passThroughArgs: false };
+  };
+  agents: {
+    codex: { prelaunch: { argv: string[]; passThroughArgs: false }; launch: { argv: string[]; passThroughArgs: true } };
+    claude: { prelaunch: { argv: string[]; passThroughArgs: false }; launch: { argv: string[]; passThroughArgs: true } };
+  };
+  home: {
+    status: "compatible" | "conflict";
+    conflict?: {
+      kind: "orca-runtime-home-mismatch";
+      effectiveCodexHome: string;
+      appCodexHome: string;
+      orcaCodexHome: string | null;
+      warning: string;
+      action: string;
+    };
+  };
+}
+
+/**
+ * Build the stopped-proxy Orca contract without reading live catalog/config secrets.
+ * Every executable instruction is an argv array so consumers never need to re-shell-quote it.
+ */
+export function buildOrcaLaunchManifest(
+  diagnostic: OrcaCodexHomeDiagnostic = collectOrcaCodexHomeDiagnostic(),
+): OrcaLaunchManifest {
+  const conflict = diagnostic.mismatch
+    ? {
+        kind: "orca-runtime-home-mismatch" as const,
+        effectiveCodexHome: diagnostic.effectiveCodexHome,
+        appCodexHome: diagnostic.appCodexHome,
+        orcaCodexHome: diagnostic.orcaCodexHome,
+        warning: diagnostic.warning ?? "The effective Codex home differs from the app Codex home.",
+        action: diagnostic.action ?? "Use one intentional CODEX_HOME for every Orca launch stage before installing a service.",
+      }
+    : undefined;
+  return {
+    schemaVersion: 1,
+    capabilities: {
+      proxy: { required: false, state: "not_required" },
+    },
+    service: {
+      ready: { argv: ["ocx", "ready", "--wait", "--json"], passThroughArgs: false },
+      dashboard: { argv: ["ocx", "gui"], passThroughArgs: false },
+    },
+    agents: {
+      codex: {
+        prelaunch: { argv: ["ocx", "ensure"], passThroughArgs: false },
+        launch: { argv: ["codex"], passThroughArgs: true },
+      },
+      claude: {
+        prelaunch: { argv: ["ocx", "ensure"], passThroughArgs: false },
+        launch: { argv: ["ocx", "claude"], passThroughArgs: true },
+      },
+    },
+    home: conflict ? { status: "conflict", conflict } : { status: "compatible" },
+  };
+}
+
 export async function handleExportCommand(args: string[]): Promise<number> {
   if (args.includes("--help") || args.includes("-h") || args.length === 0) {
     console.log(
@@ -55,6 +122,35 @@ export async function handleExportCommand(args: string[]): Promise<number> {
   }
 
   const json = args.includes("--json");
+
+  const clientIndex = args.indexOf("--client");
+  if (clientIndex !== -1) {
+    const client = args[clientIndex + 1];
+    if (client !== "orca") {
+      console.error(`ocx export: unknown client "${client ?? ""}". Supported client: orca.`);
+      return 2;
+    }
+    const manifest = buildOrcaLaunchManifest();
+    const content = `${JSON.stringify(manifest, null, 2)}\n`;
+    const outIndex = args.indexOf("--out");
+    if (outIndex === -1) {
+      process.stdout.write(content);
+      return 0;
+    }
+    const targetArg = args[outIndex + 1];
+    if (!targetArg || targetArg.startsWith("--")) {
+      console.error("ocx export --client orca: --out requires a destination path.");
+      return 2;
+    }
+    const target = resolve(targetArg);
+    if (existsSync(target) && !args.includes("--force")) {
+      console.error(`ocx export --client orca: refusing to overwrite existing file ${target}. Use --force.`);
+      return 1;
+    }
+    writeFileSync(target, content, { encoding: "utf8", mode: 0o600 });
+    console.log(`Wrote secret-free Orca launch manifest to ${target}.`);
+    return 0;
+  }
 
   /*
    * `ocx export data` — the headless twin of `/api/export`.

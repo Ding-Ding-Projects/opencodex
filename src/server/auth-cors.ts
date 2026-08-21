@@ -21,6 +21,8 @@ import { providerConfigSeed } from "../providers/derive";
 import type { DataPlaneApiKeyPurpose, OcxConfig, OcxProviderConfig } from "../types";
 import { providerConfigurationState, providerHasConfiguredApiKey } from "../providers/setup-status";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
+import { vercelGatewayRoutingConfigError } from "../providers/vercel-gateway-routing";
+import { responsesTerminalRepairConfigError } from "../providers/terminal-repair";
 
 let _corsOrigin = "http://localhost:10100";
 export function setCorsOrigin(port: number): void { _corsOrigin = `http://localhost:${port}`; }
@@ -465,6 +467,10 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
   if (maxOutputError) return `provider ${name} ${maxOutputError}`;
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
+  const vercelGatewayError = vercelGatewayRoutingConfigError(typed);
+  if (vercelGatewayError) return `provider ${name} ${vercelGatewayError}`;
+  const terminalRepairError = responsesTerminalRepairConfigError(typed);
+  if (terminalRepairError) return `provider ${name} ${terminalRepairError}`;
   if (typed.authMode === "local") {
     // "local" bypasses key-requirement enforcement (api-keys/key-failover treat non-oauth/
     // forward as key auth; openai-chat skips credential checks for local). Only providers
@@ -537,6 +543,9 @@ export function safeConfigDTO(config: OcxConfig): unknown {
       "modelMaxOutputTokens",
       "openRouterRouting",
       "modelOpenRouterRouting",
+      "vercelGatewayRouting",
+      "modelVercelGatewayRouting",
+      "modelResponsesTerminalRepair",
       "reasoningEfforts",
       "modelReasoningEfforts",
       "noVisionModels",

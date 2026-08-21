@@ -12,6 +12,12 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 - fix(responses): repair decorated apply_patch envelopes without rewriting arbitrary exec input
 - fix(grok): translate collision-free native edit/read/shell tools through request-local Codex sinks, including Windows PowerShell history parsing
 - docs(responses): record that reasoning replay scope/memo from upstream PR2313 remains unported until this head has the required identity invariants
+- feat(providers): add canonical Vercel AI Gateway provider routing with exact-model overrides
+- feat(cli): add a versioned secret-free Orca launch manifest for stopped-proxy discovery
+- fix(responses): add explicit custom per-model terminal repair with fail-closed partial streams
+- fix(sidecar): expose effective web-search enabled state in management responses
+- feat(grok): serialize each model's accepted reasoning ladder into Grok Build configuration
+- fix(quota): parse host-pinned BigModel coding-plan token, weekly, and MCP allowance windows
 - fix(startup): retain Bun's exact crash marker independently of the bounded stderr tail, honor stderr backpressure, and compare both PID and runtime-owner snapshots before stale journal recovery; the journal warning alone still never classifies a crash
 - fix(auth): pin forwarded Codex OAuth credentials to the canonical ChatGPT host and refuse to forward them to any other configured `authMode: "forward"` provider; refuse cross-origin redirects on every credential-bearing sidecar fetch (ported from upstream lidge-jun/opencodex#1471)
 - fix(oauth): guard `expires_in` and the computed token expiry against `NaN`, `Infinity`/overflow, and negative values across the Anthropic, ChatGPT, Kimi, and Codex-account-store OAuth refresh paths, so a malformed token response cannot stamp a credential as valid forever or already-expired (ported from upstream lidge-jun/opencodex, three-commit chain ending 355b69e5b)

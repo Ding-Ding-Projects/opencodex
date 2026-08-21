@@ -54,6 +54,23 @@ process keeps the environment it started with.
 Nothing about the command line comes from the browser. A request carries a catalog id, which is
 looked up on the server; the package id and every argument are constants in the source.
 
+## Orca launch manifest
+
+Orca and similar agent hosts can discover the OpenCodex launch contract without starting the
+proxy or copying provider credentials:
+
+```bash
+ocx export --client orca --json
+```
+
+The versioned JSON contains argv arrays for readiness, the dashboard, `ocx ensure`, Codex, and
+Claude Code. Consumers append their own arguments only where `passThroughArgs` is true; they never
+need to construct a shell command. Its schema-v1 `capabilities.proxy` state is
+`{ "required": false, "state": "not_required" }`: the manifest is proxy-independent and does
+not claim that a stopped process was observed. On Windows, if an Orca-scoped `CODEX_HOME` points at a different
+runtime home from the desktop Codex home, the manifest reports a structured conflict with redacted
+paths and corrective guidance instead of pretending that service installation is safe.
+
 ## The embedded terminal
 
 **Terminal** in the sidebar runs commands inside the app — no console window appears, which is the

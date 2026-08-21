@@ -16,6 +16,8 @@ import { recordOwnedConfigPath } from "./lib/config-ownership";
 import { announceDebugSandboxOnce, debugSandboxEnabled } from "./lib/debug-sandbox";
 import { providerDestinationConfigError } from "./lib/destination-policy";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
+import { vercelGatewayRoutingConfigError } from "./providers/vercel-gateway-routing";
+import { responsesTerminalRepairConfigError } from "./providers/terminal-repair";
 import {
   isWirePinnedModel,
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
@@ -443,6 +445,7 @@ const providerConfigSchema = z.object({
     reasoning: z.array(z.string().min(1)).optional(),
     repairMissingTerminalIds: z.boolean().optional(),
   }).strict().optional(),
+  modelResponsesTerminalRepair: z.record(z.string(), z.object({ graceMs: z.number().int().positive().max(120_000).optional() }).strict()).optional(),
 }).passthrough();
 
 const RESERVED_PROVIDER_NAMES = new Set(["__proto__", "prototype", "constructor"]);
@@ -775,6 +778,24 @@ const configSchema = z.object({
         ],
         message: openRouterRoutingError,
       });
+    }
+    const vercelGatewayRoutingError = vercelGatewayRoutingConfigError(provider);
+    if (vercelGatewayRoutingError) {
+      ctx.addIssue({
+        code: "custom",
+        path: [
+          "providers",
+          name,
+          vercelGatewayRoutingError.startsWith("modelVercelGatewayRouting")
+            ? "modelVercelGatewayRouting"
+            : "vercelGatewayRouting",
+        ],
+        message: vercelGatewayRoutingError,
+      });
+    }
+    const terminalRepairError = responsesTerminalRepairConfigError(provider);
+    if (terminalRepairError) {
+      ctx.addIssue({ code: "custom", path: ["providers", name, "modelResponsesTerminalRepair"], message: terminalRepairError });
     }
     if (Object.hasOwn(provider, "virtualModels")) {
       ctx.addIssue({

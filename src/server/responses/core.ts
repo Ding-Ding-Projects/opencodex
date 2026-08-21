@@ -91,6 +91,7 @@ import { applyOpenAiVirtualModel, resolveOpenAiCompactModel } from "../../provid
 import { isUsageDebugEnabled } from "../../usage/debug";
 import { readJsonRequestBody, DecompressedBodyTooLargeError, UnsupportedContentEncodingError } from "../request-decompress";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
+import { providerModelResponsesTerminalRepair } from "../../providers/registry";
 import { hasKeyPoolFailover, rotateProviderTransportOn429 } from "../../providers/key-failover";
 import { shouldAttemptImageTierRetry } from "../image-retry";
 import { resolveProviderTransport } from "../../providers/xai-transport";
@@ -167,6 +168,7 @@ import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEn
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel } from "./fetch-helpers";
 import { guardTerminalEventStream } from "./terminal-guard";
 import { grokNativeToolNamesForRequest } from "../../adapters/grok-structured-edit";
+import { relayResponsesSseWithTerminalRepair } from "../responses-terminal-repair";
 
 /**
  * Adapters whose continuation state must survive Codex's store:false requests.
@@ -1796,8 +1798,19 @@ export async function handleResponses(
     // devlog/_plan/260723_win_mem_safestream/020). Default on the bundled
     // known-bad runtime remains the tee path below.
     if (isEventStream && upstreamResponse.body) {
+      const terminalRepairPolicy = providerModelResponsesTerminalRepair(
+        route.providerName,
+        route.provider,
+        route.modelId,
+      );
+      const passthroughBody = terminalRepairPolicy
+        ? relayResponsesSseWithTerminalRepair(upstreamResponse.body, upstream, terminalRepairPolicy)
+        : upstreamResponse.body;
       const repairConfig = route.provider.responsesItemIdRepair;
-      const needsClientRewrite = imageGenCallAliases.size > 0 || hasResponsesItemIdRepair(repairConfig) || routedCustomToolNames.size > 0;
+      const needsClientRewrite = imageGenCallAliases.size > 0
+        || hasResponsesItemIdRepair(repairConfig)
+        || routedCustomToolNames.size > 0
+        || terminalRepairPolicy !== undefined;
       const winNoClientRewrite = process.platform === "win32" && !needsClientRewrite;
       const eagerDecision = winNoClientRewrite ? decideEagerRelay(config.streamMode ?? "auto") : null;
       if (eagerDecision?.useEagerRelay) {
@@ -1832,7 +1845,7 @@ export async function handleResponses(
           onCompletedResponse: rememberPassthroughResponse,
           onFirstOutput: options.onFirstOutput,
         });
-        const eagerBody = relaySseEagerBounded(upstreamResponse.body, turnAc, {
+        const eagerBody = relaySseEagerBounded(passthroughBody, turnAc, {
           inspectChunk: chunk => inspector.feed(chunk),
           finishInspection: () => inspector.finish(),
           sawTerminal: () => inspector.reported(),
@@ -1858,7 +1871,7 @@ export async function handleResponses(
           headers,
         }));
       }
-      const [nativeBody, inspectBody] = upstreamResponse.body.tee();
+      const [nativeBody, inspectBody] = passthroughBody.tee();
       const turnAc = new AbortController();
       linkAbortSignal(upstream, turnAc.signal);
       registerTurn(turnAc);

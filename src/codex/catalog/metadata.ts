@@ -103,6 +103,13 @@ export function nativeReasoningEfforts(slug: string): string[] {
   return ["low", "medium", "high", "xhigh"];
 }
 
+export function nativeDefaultReasoningEffort(slug: string): string | undefined {
+  const efforts = nativeReasoningEfforts(slug);
+  if (efforts.includes("medium")) return "medium";
+  if (efforts.includes("high")) return "high";
+  return efforts[0];
+}
+
 export function nativeParallelToolCalls(slug: string): boolean {
   return UPSTREAM_NATIVE_ENTRIES.get(slug)?.supports_parallel_tool_calls === true
     || false;

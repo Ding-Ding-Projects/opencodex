@@ -15,6 +15,9 @@ const CACHE_TTL_MS = 5 * 60_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
 const KIMI_CODE_USAGE_URL = `${KIMI_CODE_BASE_URL}/usages`;
+const ZAI_BASE_URL = "https://api.z.ai";
+const BIGMODEL_BASE_URL = "https://open.bigmodel.cn";
+const ZAI_QUOTA_PATH = "/api/monitor/usage/quota/limit";
 /** Keep a failed probe's previous row at most this long before dropping it. */
 const LAST_GOOD_MAX_AGE_MS = 30 * 60_000;
 
@@ -112,6 +115,84 @@ function normalizePercent(value: unknown): number | undefined {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function normalizedQuotaBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function isZaiQuotaBaseUrl(baseUrl: string): boolean {
+  const normalized = normalizedQuotaBaseUrl(baseUrl);
+  return normalized === ZAI_BASE_URL
+    || normalized === `${ZAI_BASE_URL}/api/coding/paas/v4`;
+}
+
+function isBigModelQuotaBaseUrl(baseUrl: string): boolean {
+  const normalized = normalizedQuotaBaseUrl(baseUrl);
+  return normalized === BIGMODEL_BASE_URL
+    || normalized === `${BIGMODEL_BASE_URL}/api/paas/v4`
+    || normalized === `${BIGMODEL_BASE_URL}/api/coding/paas/v4`;
+}
+
+/**
+ * Parse the response-driven GLM Coding Plan contract shared by Z.AI and BigModel.
+ * Unit 3 is the rolling five-hour token window, unit 6 is weekly, and BigModel's
+ * TIME_LIMIT unit 5 is the monthly MCP/tool allowance. Unknown units stay unknown.
+ */
+export function parseZaiQuotaLimits(data: Record<string, unknown> | null): ProviderQuota | null {
+  const outer = asRecord(data?.data) ?? data;
+  const limits = Array.isArray(outer?.limits) ? outer.limits : null;
+  if (!limits) return null;
+  const quota: ProviderQuota = { updatedAt: Date.now() };
+  let windows = 0;
+  for (const raw of limits) {
+    const row = asRecord(raw);
+    if (!row) continue;
+    let percent = normalizePercent(row.percentage);
+    if (percent === undefined) {
+      const used = toFiniteNumber(row.currentValue);
+      const total = toFiniteNumber(row.usage);
+      if (used !== undefined && total !== undefined && total > 0) {
+        percent = normalizePercent((used / total) * 100);
+      }
+    }
+    if (percent === undefined) continue;
+    const resetAt = normalizeResetAt(row.nextResetTime);
+    const unit = toFiniteNumber(row.unit);
+    if ((row.type === "TOKENS_LIMIT" || row.type === "CREDIT_LIMIT") && unit === 3) {
+      quota.fiveHourPercent = percent;
+      if (resetAt !== undefined) quota.fiveHourResetAt = resetAt;
+      windows += 1;
+    } else if ((row.type === "TOKENS_LIMIT" || row.type === "CREDIT_LIMIT") && unit === 6) {
+      quota.weeklyPercent = percent;
+      if (resetAt !== undefined) quota.weeklyResetAt = resetAt;
+      windows += 1;
+    } else if (row.type === "TIME_LIMIT" && unit === 5) {
+      quota.monthlyPercent = percent;
+      if (resetAt !== undefined) quota.monthlyResetAt = resetAt;
+      windows += 1;
+    }
+  }
+  return windows > 0 ? quota : null;
+}
+
+async function fetchZaiQuota(provider: string, config: OcxProviderConfig): Promise<ProviderQuotaReport | null> {
+  const bigModel = isBigModelQuotaBaseUrl(config.baseUrl);
+  if (!bigModel && !isZaiQuotaBaseUrl(config.baseUrl)) return null;
+  const apiKey = resolveEnvValue(config.apiKey)?.trim();
+  if (!apiKey) return null;
+  const response = await fetch(`${bigModel ? BIGMODEL_BASE_URL : ZAI_BASE_URL}${ZAI_QUOTA_PATH}`, {
+    headers: {
+      Accept: "application/json",
+      // BigModel's quota endpoint expects the key directly; Z.AI's endpoint uses Bearer.
+      Authorization: bigModel ? apiKey : `Bearer ${apiKey}`,
+    },
+    redirect: "error",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) return null;
+  const quota = parseZaiQuotaLimits(asRecord(await response.json().catch(() => null)));
+  return quota ? report(provider, bigModel ? "bigmodel:usage-quota" : "zai:usage-quota", quota) : null;
 }
 
 function isBuiltInChatGptForwardProvider(name: string, provider: OcxProviderConfig): boolean {
@@ -859,8 +940,11 @@ async function maybeFetchProviderQuota(
     // Kimi Code `/usages` accepts OAuth or coding-plan API keys, but only on the canonical
     // host and only for real key auth — forward/local modes carry no credential of ours.
     if (provider.authMode === "oauth" && name === "kimi") return fetchKimiQuota(name, provider);
-    if (provider.authMode === "key" && isCanonicalKimiCodeBaseUrl(provider.baseUrl)) {
+    if ((provider.authMode ?? "key") === "key" && isCanonicalKimiCodeBaseUrl(provider.baseUrl)) {
       return fetchKimiQuota(name, provider);
+    }
+    if ((provider.authMode ?? "key") === "key" && (name === "zai" || name === "zhipu-bigmodel")) {
+      return fetchZaiQuota(name, provider);
     }
     return null;
   } catch {

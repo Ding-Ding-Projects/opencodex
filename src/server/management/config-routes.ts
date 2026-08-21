@@ -275,7 +275,7 @@ export async function handleConfigRoutes(ctx: ManagementContext): Promise<Respon
     const ws = config.webSearchSidecar ?? {};
     const vs = config.visionSidecar ?? {};
     return jsonResponse({
-      webSearch: { model: ws.model ?? "gpt-5.6-luna", backend: ws.backend },
+      webSearch: { enabled: ws.enabled !== false, model: ws.model ?? "gpt-5.6-luna", backend: ws.backend },
       vision: {
         model: vs.model ?? "gpt-5.6-luna",
         backend: vs.backend,
@@ -341,7 +341,7 @@ export async function handleConfigRoutes(ctx: ManagementContext): Promise<Respon
     const vs = config.visionSidecar ?? {};
     return jsonResponse({
       ok: true,
-      webSearch: { model: ws.model ?? "gpt-5.6-luna", backend: ws.backend },
+      webSearch: { enabled: ws.enabled !== false, model: ws.model ?? "gpt-5.6-luna", backend: ws.backend },
       vision: {
         model: vs.model ?? "gpt-5.6-luna",
         backend: vs.backend,
