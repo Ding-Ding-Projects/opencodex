@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -245,17 +249,53 @@ func runLaunch(args []string, streams IO) error {
 	if len(positional) > 1 {
 		return fmt.Errorf("usage: ocx launch [target] [--json]")
 	}
-	targets := []map[string]any{{"id": "codex", "kind": "cli", "label": "Codex", "available": false}, {"id": "claude", "kind": "cli", "label": "Claude Code", "available": false}, {"id": "grok", "kind": "cli", "label": "Grok", "available": false}}
+	targets := []map[string]any{}
+	for _, target := range []struct {
+		id, label string
+		names     []string
+	}{{"codex", "Codex", []string{"codex.exe", "codex.cmd", "codex", "codex.bat"}}, {"claude", "Claude Code", []string{"claude.exe", "claude.cmd", "claude", "claude.bat"}}, {"grok", "Grok", []string{"grok.exe", "grok.cmd", "grok", "grok.bat"}}} {
+		path := ""
+		for _, name := range target.names {
+			if found, err := exec.LookPath(name); err == nil {
+				path = found
+				break
+			}
+		}
+		targets = append(targets, map[string]any{"id": target.id, "kind": "cli", "label": target.label, "available": path != "", "pathPresent": path != "", "path": path})
+	}
 	if len(positional) == 1 {
 		for _, target := range targets {
 			if target["id"] == positional[0] {
-				return jsonOrTextUnavailable(streams, jsonOutput, target)
+				if target["available"] != true {
+					return jsonOrTextUnavailable(streams, jsonOutput, target)
+				}
+				path := target["path"].(string)
+				cmd := exec.Command(path)
+				if err := cmd.Start(); err != nil {
+					return err
+				}
+				if jsonOutput {
+					return json.NewEncoder(streams.Out).Encode(map[string]any{"ok": true, "id": positional[0], "pid": cmd.Process.Pid})
+				}
+				fmt.Fprintf(streams.Out, "Launched %s (PID %d).\n", target["label"], cmd.Process.Pid)
+				go func() { _ = cmd.Wait() }()
+				return nil
 			}
 		}
 		return fmt.Errorf("unknown launch target %q", positional[0])
 	}
 	if jsonOutput {
-		return json.NewEncoder(streams.Out).Encode(map[string]any{"targets": targets})
+		public := make([]map[string]any, 0, len(targets))
+		for _, target := range targets {
+			copy := map[string]any{}
+			for key, value := range target {
+				if key != "path" {
+					copy[key] = value
+				}
+			}
+			public = append(public, copy)
+		}
+		return json.NewEncoder(streams.Out).Encode(map[string]any{"targets": public})
 	}
 	for _, target := range targets {
 		fmt.Fprintf(streams.Out, "%s\t%s\tnot installed\n", target["id"], target["label"])
@@ -266,17 +306,49 @@ func runLaunch(args []string, streams IO) error {
 func runTerminal(args []string, streams IO) error {
 	jsonOutput := false
 	verb := "list"
-	for _, arg := range args {
-		if arg == "--json" {
+	preset := ""
+	commandText := ""
+	wait := 4000
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--json":
 			jsonOutput = true
-		} else if verb == "list" && !strings.HasPrefix(arg, "--") {
-			verb = arg
-		} else {
-			return fmt.Errorf("usage: ocx terminal [list] [--json]")
+		case "--command", "--wait":
+			if i+1 >= len(args) {
+				return fmt.Errorf("ocx terminal: %s requires a value", arg)
+			}
+			if arg == "--command" {
+				commandText = args[i+1]
+			} else {
+				parsed, err := strconv.Atoi(args[i+1])
+				if err != nil || parsed < 1 || parsed > 120000 {
+					return fmt.Errorf("ocx terminal: --wait must be 1..120000 milliseconds")
+				}
+				wait = parsed
+			}
+			i++
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return fmt.Errorf("unsupported terminal option %s", arg)
+			}
+			if verb == "list" {
+				verb = arg
+			} else if preset == "" {
+				preset = arg
+			} else {
+				return fmt.Errorf("usage: ocx terminal <list|run> [preset]")
+			}
 		}
 	}
+	if verb == "run" {
+		if preset == "" {
+			return fmt.Errorf("ocx terminal: preset is required")
+		}
+		return runTerminalPreset(preset, commandText, wait, jsonOutput, streams)
+	}
 	if verb != "list" {
-		return fmt.Errorf("terminal sessions require the authenticated management host; use ocx terminal list")
+		return fmt.Errorf("usage: ocx terminal <list|run> [preset]")
 	}
 	presets := []map[string]any{{"id": "shell", "label": "Shell", "available": false}, {"id": "powershell", "label": "PowerShell", "available": false}}
 	if jsonOutput {
@@ -288,10 +360,74 @@ func runTerminal(args []string, streams IO) error {
 	return nil
 }
 
+func runTerminalPreset(preset, commandText string, wait int, jsonOutput bool, streams IO) error {
+	var command string
+	var args []string
+	switch preset {
+	case "shell":
+		if runtime.GOOS == "windows" {
+			command = "powershell.exe"
+			args = []string{"-NoLogo", "-NoProfile", "-NoExit", "-Command", "-"}
+		} else {
+			command = os.Getenv("SHELL")
+			if command == "" {
+				command = "/bin/bash"
+			}
+			args = []string{"-i"}
+		}
+	case "codex", "claude", "grok":
+		names := []string{preset + ".exe", preset + ".cmd", preset}
+		for _, name := range names {
+			if found, err := exec.LookPath(name); err == nil {
+				command = found
+				break
+			}
+		}
+		if command == "" {
+			return fmt.Errorf("%s is not installed", preset)
+		}
+	default:
+		return fmt.Errorf("unknown terminal preset %q", preset)
+	}
+	cmd := exec.Command(command, args...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if commandText != "" {
+		_, _ = io.WriteString(stdin, commandText+"\n")
+	}
+	time.Sleep(time.Duration(wait) * time.Millisecond)
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	if jsonOutput {
+		return json.NewEncoder(streams.Out).Encode(map[string]any{"ok": true, "preset": preset, "stdout": out.String(), "stderr": errOut.String()})
+	}
+	if out.Len() > 0 {
+		_, _ = streams.Out.Write(out.Bytes())
+	}
+	if errOut.Len() > 0 {
+		_, _ = streams.Err.Write(errOut.Bytes())
+	}
+	return nil
+}
+
 func jsonOrTextUnavailable(streams IO, jsonOutput bool, target map[string]any) error {
 	target["reason"] = "target_unavailable"
 	if jsonOutput {
-		return json.NewEncoder(streams.Out).Encode(target)
+		public := map[string]any{}
+		for key, value := range target {
+			if key != "path" {
+				public[key] = value
+			}
+		}
+		return json.NewEncoder(streams.Out).Encode(public)
 	}
 	return fmt.Errorf("%s is not installed", target["label"])
 }

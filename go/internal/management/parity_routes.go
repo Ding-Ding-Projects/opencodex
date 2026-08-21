@@ -7,6 +7,8 @@ package management
 // parity.
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -16,8 +18,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -116,7 +120,7 @@ func (a *API) handleParityRoutes(w http.ResponseWriter, r *http.Request) bool {
 	case path == "/api/export/capabilities" && r.Method == http.MethodGet:
 		writeJSON(w, http.StatusOK, map[string]any{
 			"datasets": []map[string]any{{"id": "config", "label": "Sanitized configuration", "formats": []string{"json", "yaml", "toml", "xml", "csv", "tsv", "markdown", "html", "jsonl", "sql"}}},
-			"archives": map[string]any{"zip": map[string]any{"available": false, "reason": "native archive adapter is not bundled"}, "sevenZip": map[string]any{"available": false, "encryptionAvailable": false, "encryptionUnavailableReason": "encrypted archive export is unavailable without a protected password channel"}},
+			"archives": map[string]any{"zip": map[string]any{"available": true}, "sevenZip": map[string]any{"available": false, "encryptionAvailable": false, "encryptionUnavailableReason": "encrypted archive export is unavailable without a protected password channel"}},
 		})
 		return true
 	case path == "/api/export" && r.Method == http.MethodPost:
@@ -187,10 +191,9 @@ func (a *API) handleParityRoutes(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "reason": "install_unavailable", "message": "native launch targets are reported but automatic installation is not available"})
 		return true
 	case path == "/api/terminal" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
-		return a.handleNativeTerminal(w, r)
+		return a.handleNativeTerminalReal(w, r)
 	case strings.HasPrefix(path, "/api/terminal/"):
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "reason": "terminal_session_not_found", "message": "terminal session not found"})
-		return true
+		return a.handleNativeTerminalReal(w, r)
 	}
 	return false
 }
@@ -213,6 +216,7 @@ func (a *API) handleNativeExport(w http.ResponseWriter, r *http.Request) bool {
 	var body struct {
 		Dataset string `json:"dataset"`
 		Format  string `json:"format"`
+		Archive string `json:"archive"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return true
@@ -268,6 +272,32 @@ func (a *API) handleNativeExport(w http.ResponseWriter, r *http.Request) bool {
 	case "sql":
 		data = []byte("-- Sanitized configuration export\nINSERT INTO exports(format, payload) VALUES ('json', " + strconv.Quote(string(jsonData)) + ");\n")
 		contentType = "application/sql"
+	}
+	if body.Archive != "" {
+		if body.Archive != "zip" {
+			writeError(w, http.StatusConflict, "7z archive export is unavailable on the native line")
+			return true
+		}
+		var archive bytes.Buffer
+		writer := zip.NewWriter(&archive)
+		file, err := writer.Create("opencodex-config." + format)
+		if err != nil {
+			writeError(w, 500, "could not create export archive")
+			return true
+		}
+		if _, err = file.Write(data); err != nil {
+			writeError(w, 500, "could not write export archive")
+			return true
+		}
+		if err = writer.Close(); err != nil {
+			writeError(w, 500, "could not finalize export archive")
+			return true
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="opencodex-config.zip"`)
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(archive.Bytes())
+		return true
 	}
 	w.Header().Set("Content-Type", contentType+"; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="opencodex-config.`+format+`"`)
@@ -635,7 +665,21 @@ func addNativeCustomKey(cfg *config.Config, name, value string) (string, string)
 }
 
 func (a *API) handleNativeLaunchList(w http.ResponseWriter) bool {
-	writeJSON(w, http.StatusOK, map[string]any{"targets": []map[string]any{{"id": "codex", "kind": "cli", "label": "Codex", "available": false, "reason": "native executable discovery is not configured"}, {"id": "claude", "kind": "cli", "label": "Claude Code", "available": false, "reason": "native executable discovery is not configured"}, {"id": "grok", "kind": "cli", "label": "Grok", "available": false, "reason": "native executable discovery is not configured"}}})
+	targets := []map[string]any{}
+	for _, target := range nativeLaunchTargets() {
+		path, ok := resolveNativeLaunchTarget(target)
+		row := map[string]any{"id": target.ID, "label": target.Label, "kind": "cli", "available": ok, "installUrl": target.InstallURL}
+		if !ok {
+			row["reason"] = "not_installed"
+		} else {
+			row["pathPresent"] = true
+		}
+		if path != "" {
+			row["pathPresent"] = true
+		}
+		targets = append(targets, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"targets": targets})
 	return true
 }
 
@@ -646,12 +690,59 @@ func (a *API) handleNativeLaunch(w http.ResponseWriter, r *http.Request) bool {
 	if !decodeJSON(w, r, &body) {
 		return true
 	}
-	if body.ID != "codex" && body.ID != "claude" && body.ID != "grok" {
+	if a.loopback == nil || !a.loopback() {
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "reason": "loopback_required", "message": "launching local applications requires a proven loopback listener"})
+		return true
+	}
+	target, ok := nativeLaunchTargetByID(body.ID)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "unknown launch target")
 		return true
 	}
-	writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "reason": "target_unavailable", "message": "launch target is not installed"})
+	path, ok := resolveNativeLaunchTarget(target)
+	if !ok {
+		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "reason": "target_unavailable", "message": "launch target is not installed"})
+		return true
+	}
+	cmd := exec.Command(path)
+	if runtime.GOOS == "windows" {
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".cmd" || ext == ".bat" {
+			cmd = exec.Command("cmd.exe", "/d", "/c", path)
+		}
+	}
+	if err := cmd.Start(); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "reason": "launch_failed", "message": "launch target could not be started"})
+		return true
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": target.ID, "pid": cmd.Process.Pid})
+	go func() { _ = cmd.Wait() }()
 	return true
+}
+
+type nativeLaunchTarget struct {
+	ID, Label, InstallURL string
+	Names                 []string
+}
+
+func nativeLaunchTargets() []nativeLaunchTarget {
+	return []nativeLaunchTarget{{"codex", "Codex CLI", "https://developers.openai.com/codex/cli", []string{"codex.exe", "codex.cmd", "codex.bat", "codex"}}, {"claude", "Claude Code", "https://claude.com/claude-code", []string{"claude.exe", "claude.cmd", "claude.bat", "claude"}}, {"grok", "Grok CLI", "https://github.com/superagent-ai/grok-cli", []string{"grok.exe", "grok.cmd", "grok.bat", "grok"}}}
+}
+func nativeLaunchTargetByID(id string) (nativeLaunchTarget, bool) {
+	for _, target := range nativeLaunchTargets() {
+		if target.ID == id {
+			return target, true
+		}
+	}
+	return nativeLaunchTarget{}, false
+}
+func resolveNativeLaunchTarget(target nativeLaunchTarget) (string, bool) {
+	for _, name := range target.Names {
+		if path, err := exec.LookPath(name); err == nil && path != "" {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 func (a *API) handleNativeTerminal(w http.ResponseWriter, r *http.Request) bool {

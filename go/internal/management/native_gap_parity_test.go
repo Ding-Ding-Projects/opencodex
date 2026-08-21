@@ -61,6 +61,10 @@ func TestNativeChangelogExportAndPairingRoutesAreRealAndSecretFree(t *testing.T)
 	if err := json.Unmarshal(export.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("export JSON: %v", err)
 	}
+	archive := serveManagement(api, http.MethodPost, "/api/export", `{"dataset":"config","format":"json","archive":"zip"}`)
+	if archive.Code != http.StatusOK || archive.Header().Get("Content-Type") != "application/zip" || len(archive.Body.Bytes()) < 100 {
+		t.Fatalf("zip export=%d headers=%v bytes=%d", archive.Code, archive.Header(), len(archive.Body.Bytes()))
+	}
 	pair := serveManagement(api, http.MethodPost, "/api/host/pair", "")
 	if pair.Code != http.StatusOK || !strings.Contains(pair.Body.String(), "token") {
 		t.Fatalf("pair=%d %s", pair.Code, pair.Body.String())
@@ -149,5 +153,32 @@ func TestHostWildcardIsRemoteAndLoopbackIsLocal(t *testing.T) {
 		if !isLoopbackHost(host) {
 			t.Fatalf("loopback host %q was classified as remote", host)
 		}
+	}
+}
+
+func TestLoopbackTerminalRunsFixedShellAndSupportsSessionLifecycle(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg, func(options *Options) { options.Loopback = func() bool { return true } })
+	created := serveManagement(api, http.MethodPost, "/api/terminal", `{"preset":"shell"}`)
+	if created.Code != http.StatusOK || !strings.Contains(created.Body.String(), `"state":"running"`) {
+		t.Fatalf("create=%d %s", created.Code, created.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	session := payload["session"].(map[string]any)
+	id := session["id"].(string)
+	input := serveManagement(api, http.MethodPost, "/api/terminal/"+id+"/input", `{"data":"echo parity\n"}`)
+	if input.Code != http.StatusOK {
+		t.Fatalf("input=%d %s", input.Code, input.Body.String())
+	}
+	read := serveManagement(api, http.MethodGet, "/api/terminal/"+id, "")
+	if read.Code != http.StatusOK {
+		t.Fatalf("read=%d %s", read.Code, read.Body.String())
+	}
+	deleted := serveManagement(api, http.MethodDelete, "/api/terminal/"+id, "")
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete=%d %s", deleted.Code, deleted.Body.String())
 	}
 }
