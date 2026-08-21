@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mergeConfiguredModelsIntoLiveCatalog } from "../src/codex/catalog/provider-fetch";
+import { nonBlankStringArrayConfigError } from "../src/config";
 import type { CatalogModel } from "../src/codex/catalog/parsing";
 import type { OcxProviderConfig } from "../src/types";
 
@@ -89,5 +90,33 @@ describe("#1690 retainModels provider configuration", () => {
 
     expect(models.map(m => m.id)).toEqual(["gemini-3.7-flash", "claude-sonnet-4-6"]);
     expect(droppedConfiguredIds).toEqual(["dropped-model"]);
+  });
+
+  test("reports retained provenance only when live discovery omitted the retained model", () => {
+    const prov: OcxProviderConfig = {
+      adapter: "google",
+      baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+      retainModels: ["gemini-3.7-flash"],
+    };
+    const omitted = mergeConfiguredModelsIntoLiveCatalog({
+      name: "google-antigravity",
+      provider: prov,
+      models: [model("gemini-3.5-flash")],
+      configured: [model("gemini-3.7-flash")],
+    });
+    expect(omitted.retainedConfiguredIds).toEqual(["gemini-3.7-flash"]);
+
+    const present = mergeConfiguredModelsIntoLiveCatalog({
+      name: "google-antigravity",
+      provider: prov,
+      models: [model("gemini-3.7-flash")],
+      configured: [model("gemini-3.7-flash")],
+    });
+    expect(present.retainedConfiguredIds).toEqual([]);
+  });
+
+  test("rejects blank retainModels entries without rejecting a missing optional field", () => {
+    expect(nonBlankStringArrayConfigError(undefined, "retainModels")).toBeNull();
+    expect(nonBlankStringArrayConfigError(["  "], "retainModels")).toContain("nonblank");
   });
 });
