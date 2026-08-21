@@ -211,6 +211,7 @@ describe("diagnostics sanitization contract", () => {
       compliant: true,
       reason: "read-only ACL listing proves the explicit owner Full Control policy",
     });
+    expect(verifyExistingAclOutput(`C:\\Secrets\\folder DOMAIN\\tester:(OI)(CI)(F)\nSuccessfully processed 1 files`, "DOMAIN\\tester").compliant).toBe(true);
     expect(verifyExistingAclOutput(`C:\\Secrets\\token.json DOMAIN\\tester:(F) Everyone:(R)\nSuccessfully processed 1 files`, "DOMAIN\\tester").compliant).toBe(false);
     expect(verifyExistingAclOutput(`C:\\Secrets\\token.json DOMAIN\\tester:(F) (I)`, "DOMAIN\\tester").compliant).toBe(false);
     expect(verifyExistingAclOutput(compliant, "DOMAIN\\other").compliant).toBe(false);

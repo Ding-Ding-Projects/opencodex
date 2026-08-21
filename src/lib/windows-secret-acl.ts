@@ -80,13 +80,14 @@ export function verifyExistingAclOutput(output: string, expectedPrincipal: strin
   const aces: Array<{ principal: string; permissions: string; inherited: boolean }> = [];
   for (const line of output.split(/\r?\n/)) {
     if (/^\s*(successfully\s+processed|processed\s+file|files?\s+processed)\b/i.test(line)) break;
-    const matches = line.matchAll(/(?:^|\s)([^:\r\n]+):\(([^)]*)\)(?:\s+\(([^)]*)\))?/gi);
+    const matches = line.matchAll(/(?:^|\s)([^:\r\n]+):((?:\s*\([^)]*\))+)/gi);
     for (const match of matches) {
       const name = match[1]?.trim();
-      const permissions = match[2]?.trim() ?? "";
-      const marker = match[3]?.trim() ?? "";
+      const groups = [...(match[2] ?? "").matchAll(/\(([^)]*)\)/g)].map(group => group[1]?.trim() ?? "");
+      const inheritance = new Set(["I", "OI", "CI", "IO", "NP"]);
+      const permissions = groups.filter(group => !inheritance.has(group.toUpperCase())).join(",");
       if (!name || !permissions) continue;
-      aces.push({ principal: name.toLowerCase(), permissions, inherited: /\bI\b/i.test(marker) || /\(I\)/i.test(match[0] ?? "") });
+      aces.push({ principal: name.toLowerCase(), permissions, inherited: groups.some(group => group.toUpperCase() === "I") });
     }
   }
   if (aces.length !== 1) return { compliant: false, reason: aces.length === 0 ? "ACL listing contained no parseable ACE" : "ACL listing contained extra or ambiguous ACEs" };
