@@ -151,7 +151,7 @@ describe("vertex retry fetch", () => {
       new Response("ok", { status: 200 }),
     ]);
 
-    const res = await fetchAntigravityWithRetry(repairableRequest, { timeoutMs: 5_000 });
+    const res = await fetchAntigravityWithRetry({ ...repairableRequest, url: "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse" }, { timeoutMs: 5_000 });
 
     expect(res.status).toBe(200);
     expect(mock.calls).toHaveLength(2);
@@ -186,7 +186,7 @@ describe("vertex retry fetch", () => {
 
   test("Antigravity normal mode retains classified redacted errors", async () => {
     mockFetch([new Response(vertexError(400, "INVALID_ARGUMENT", "bad Authorization: Bearer secret-token"), { status: 400 })]);
-    const res = await fetchAntigravityWithRetry(request, { timeoutMs: 5_000 });
+    const res = await fetchAntigravityWithRetry({ ...request, url: "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse" }, { timeoutMs: 5_000 });
     const text = await res.text();
     expect(text).toContain("Antigravity invalid request");
     expect(text).not.toContain("secret-token");
