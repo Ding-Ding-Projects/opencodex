@@ -199,7 +199,9 @@ function runRefreshOperation(
   try {
     operation = Promise.resolve(refreshFn(channel, controller.signal));
   } catch {
-    operation = Promise.reject();
+    // A synchronous resolver failure is still a settled, failed refresh: keep
+    // the cache timestamp untouched and let the scheduler choose the next bound.
+    operation = Promise.resolve();
   }
   const timeout = new Promise<void>(resolve => {
     versionRefreshTimeoutTimer = setTimeout(() => {

@@ -146,6 +146,17 @@ describe("bounded background version refresh scheduling", () => {
     expect(readVersionCache("latest")).toMatchObject(cache);
   });
 
+  test("a thrown metadata resolver also preserves the successful timestamp", async () => {
+    const cache: VersionCache = {
+      latest_version: "2.7.0",
+      last_checked_at: "2026-08-20T12:00:00.000Z",
+      tag: "latest",
+    };
+    writeVersionCache(cache);
+    await refreshVersionCache("latest", () => { throw new Error("registry unavailable"); });
+    expect(readVersionCache("latest")).toMatchObject(cache);
+  });
+
   test("shutdown cancellation clears the single scheduled timer", () => {
     let clearCount = 0;
     const timer = { unref: () => undefined };
