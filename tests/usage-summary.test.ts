@@ -947,4 +947,58 @@ describe("summarizeUsage", () => {
     expect(sum.models[0]?.resolvedModel).toBeUndefined();
   });
 
+  test("exposes provider/model cache counters, deterministic hit rate, and explicit cost coverage", () => {
+    const entries: PersistedUsageEntry[] = [
+      entry({
+        ts: FIXED_NOW - 1,
+        provider: "openai",
+        model: "gpt-5.5",
+        usageStatus: "reported",
+        usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 40, cacheCreationInputTokens: 5 },
+      }),
+      entry({
+        ts: FIXED_NOW - 2,
+        requestId: "unknown-cache",
+        provider: "openai",
+        model: "gpt-5.5",
+        usageStatus: "reported",
+        usage: { inputTokens: 20, outputTokens: 2 },
+      }),
+      entry({
+        ts: FIXED_NOW - 3,
+        requestId: "unmetered",
+        provider: "openai",
+        model: "gpt-5.5",
+        usageStatus: "unreported",
+      }),
+    ];
+    const sum = summarizeUsage(entries, "30d", FIXED_NOW);
+    expect(sum.models[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.5",
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 5,
+      cacheHitRate: 40 / 120,
+      cacheCoverage: "partial",
+      pricedRequests: 0,
+      unpricedRequests: 2,
+      unmeteredRequests: 1,
+      costCoverage: "unknown",
+    });
+    expect(sum.providers[0]).toMatchObject({
+      provider: "openai",
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 5,
+      cacheHitRate: 40 / 120,
+      cacheCoverage: "partial",
+    });
+    const dayModel = sum.days.find(day => day.requests === 3)?.models[0];
+    expect(dayModel).toMatchObject({
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 5,
+      cacheHitRate: 0.4,
+      cacheCoverage: "partial",
+    });
+  });
+
 });
