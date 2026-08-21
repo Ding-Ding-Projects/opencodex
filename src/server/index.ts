@@ -150,6 +150,7 @@ import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
 import { handleSearch } from "./search";
 import { BUILD_STAMP, fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
+import { tenantBoundary } from "./tenant-boundary";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -514,6 +515,11 @@ export function startServer(port?: number) {
         // remote OpenAI-style bearer clients and Claude gateway discovery (anthropic-version).
         const apiAuthError = requireApiAuth(req, config, "data-plane");
         if (apiAuthError) return withCors(apiAuthError, req, config);
+        const tenantAdmissionResult = tenantBoundary.admit(req);
+        if (tenantAdmissionResult.kind === "unauthorized" || tenantAdmissionResult.kind === "forbidden") {
+          return withCors(formatErrorResponse(tenantAdmissionResult.status, "tenant_admission", tenantAdmissionResult.message), req, config);
+        }
+        const tenantAdmission = tenantAdmissionResult.kind === "admitted" ? tenantAdmissionResult.admission : undefined;
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
@@ -553,7 +559,7 @@ export function startServer(port?: number) {
             : idsParam === "desktop"
               ? "desktop3p" as const
               : (/^claude-code\//i.test(req.headers.get("user-agent") ?? "") ? "readable" as const : "desktop3p" as const);
-          const data = buildAnthropicModelInfos([...visibleNativeSlugs(config)], goOrdered, resolveAutoContext(config.claudeCode), idStyle, activeDesktop3pAlias);
+          const data = tenantBoundary.filterModels(tenantAdmission, buildAnthropicModelInfos([...visibleNativeSlugs(config)], goOrdered, resolveAutoContext(config.claudeCode), idStyle, activeDesktop3pAlias));
           return jsonResponse({ data }, 200, req, config);
         }
         if (!copilotAdmission.active && url.searchParams.has("client_version")) {
@@ -564,14 +570,14 @@ export function startServer(port?: number) {
           // on-disk sync; codex-rs keeps them out of the picker itself).
           const maMode = config.multiAgentMode === "v1" || config.multiAgentMode === "v2" ? config.multiAgentMode : "default";
           const entries = buildCatalogEntries(loadCatalogTemplate(), nativeSlugs, goOrdered, config.subagentModels, websocketsEnabled(config), maMode as "v1" | "default" | "v2", exactComboCatalogSlugs(config));
-          return jsonResponse({ models: applyNativeVisibility(entries, disabledNativeSlugs(config)) }, 200, req, config);
+          return jsonResponse({ models: applyNativeVisibility(tenantBoundary.filterCatalogEntries(tenantAdmission, entries), disabledNativeSlugs(config)) }, 200, req, config);
         }
         // OpenAI list shape: native gpt bare + routed models namespaced "<provider>/<id>"
         // (pure availability list — disabled natives are omitted entirely).
-        let data = [
+        let data = tenantBoundary.filterModels(tenantAdmission, [
           ...visibleNativeSlugs(config).map(id => ({ id, object: "model", created: 0, owned_by: "openai" })),
           ...uniqueCatalogModelsForRawPublicList(goOrdered).map(m => ({ id: m.alias ?? `${m.provider}/${m.id}`, object: "model", created: 0, owned_by: m.owned_by ?? m.provider })),
-        ];
+        ]);
         if (copilotAdmission.active) {
           const profile = await buildCopilotDesktopProfile(config);
           const callable = callableCopilotModels(profile.models);
