@@ -74,4 +74,16 @@ describe("named subagent roles", () => {
     expect(agentTaskRecoveryState(base, true)).toMatchObject({ state: "off", enabled: false, eligible: true });
     expect(agentTaskRecoveryState({ ...base, agentTaskRecovery: { enabled: true } }, true)).toMatchObject({ state: "on", enabled: true, eligible: true });
   });
+
+  test("max-role trimming emits one specialist clause and stays within the body budget", async () => {
+    const parsed = { modelId: "gpt-5.6-sol", context: { messages: [], tools: [{ name: "spawn_agent" }, { name: "send_message" }] }, stream: false, options: { reasoning: "high" } } as any;
+    const roles = Array.from({ length: 8 }, (_, index) => role(`role-${index}`, `provider/model-${index}`));
+    const candidates = roles.map(item => ({ model: item.model, efforts: ["high"] }));
+    const text = await multiAgentGuidanceText(parsed, { subagentRoles: roles, multiAgentGuidanceEnabled: true }, {
+      resolveEffectiveSubagentRoster: async () => ({ candidates, advertised: candidates, excluded: [] }),
+    });
+    const body = text!.replace(/^<multi_agent_mode>|<\/multi_agent_mode>$/g, "");
+    expect(body.length).toBeLessThanOrEqual(700);
+    expect(body.match(/When spawning, use a named specialist:/g)?.length ?? 0).toBeLessThanOrEqual(1);
+  });
 });

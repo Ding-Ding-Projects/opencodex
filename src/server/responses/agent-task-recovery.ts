@@ -106,6 +106,7 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
   let taskName: string | null = null;
   let sender: string | null = null;
   let encryptedIndex = -1;
+  let headerIndex = -1;
   let ciphertext = "";
   let encryptedPartCount = 0;
   let ciphertextCount = 0;
@@ -125,6 +126,7 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
           || part.text.slice(match.index + match[0].length).trim().length > 0
         ) return null;
         headerText = match[0].startsWith("\n") ? match[0].slice(1) : match[0];
+        headerIndex = index;
         messageType = "NEW_TASK";
         taskName = match[2]!;
         sender = match[3]!;
@@ -146,6 +148,9 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
     || !messageType
     || !taskName
     || !sender
+    || content.length !== 2
+    || headerIndex !== 0
+    || encryptedIndex !== 1
     || encryptedIndex < 0
     || encryptedPartCount !== 1
     || ciphertextCount !== 1

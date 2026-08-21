@@ -1324,7 +1324,7 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   // ordinary save persists the normalized absence.
   const syncDisabledReason = nativeSubagentSyncDisabledReason(config, rawParsed);
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
-  const normalized = normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed), rawParsed), rawParsed), rawParsed);
+  const normalized = normalizeModelAutoCompactConfig(normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed), rawParsed), rawParsed), rawParsed), rawParsed);
   const warnings = configPlaceholderWarnings(normalized);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {
     warnings.push(`claudeCode.subagentEffort ignored: expected one of ${CLAUDE_SUBAGENT_EFFORTS.join(", ")}`);

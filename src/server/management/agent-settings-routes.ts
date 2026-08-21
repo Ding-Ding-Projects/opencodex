@@ -48,7 +48,7 @@ import {
   setDebugSettings,
   type DebugFlag,
 } from "../../lib/debug-settings";
-import type { OcxClaudeCodeConfig, OcxConfig, OcxCustomModel, OcxProviderConfig } from "../../types";
+import type { OcxClaudeCodeConfig, OcxConfig, OcxCustomModel, OcxProviderConfig, OcxSubagentRole } from "../../types";
 import { drainAndShutdown } from "../lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
@@ -63,6 +63,11 @@ import { isPlainRecord, parseDebugLogQuery, tokPerSecondResult, unavailableCostR
 import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, CostResult, MetricSource } from "./shared";
 
 let grokApplyChain: Promise<unknown> = Promise.resolve();
+
+function subagentRoleStatusDto(role: OcxSubagentRole): Omit<OcxSubagentRole, "developerInstructions"> {
+  const { developerInstructions: _privateInstructions, ...status } = role;
+  return status;
+}
 /**
  * Serializes Grok applies: injectGrokConfig is read-modify-write over a single file,
  * so two concurrent clicks must not interleave two cycles.
@@ -363,7 +368,7 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     const roles = config.subagentRoles ?? [];
     const hasRoutedV2Child = config.multiAgentMode === "v2" && roles.some(role => role.enabled !== false && role.model.includes("/"));
     return jsonResponse({
-      roles,
+      roles: roles.map(subagentRoleStatusDto),
       revision: config.subagentRolesRevision ?? 0,
       efforts: CODEX_REASONING_LEVELS.map(level => level.effort),
       available: [...native, ...routed],
@@ -399,14 +404,14 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
       await refreshCodexCatalogBestEffort();
       await syncClaudeAgentDefsBestEffort();
       await autoApplyDesktopBestEffort();
-      return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, warnings,
+      return jsonResponse({ ok: true, roles: config.subagentRoles.map(subagentRoleStatusDto), revision: config.subagentRolesRevision, warnings,
         compatibility: agentTaskRecoveryState(config, config.multiAgentMode === "v2" && parsed.roles.some(role => role.enabled !== false && role.model.includes("/"))) });
     }
     saveConfigPreservingClaudeCode(config);
     await refreshCodexCatalogBestEffort();
     await syncClaudeAgentDefsBestEffort();
     await autoApplyDesktopBestEffort();
-    return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, removed: body.remove,
+    return jsonResponse({ ok: true, roles: config.subagentRoles.map(subagentRoleStatusDto), revision: config.subagentRolesRevision, removed: body.remove,
       compatibility: agentTaskRecoveryState(config, config.multiAgentMode === "v2" && (config.subagentRoles ?? []).some(role => role.enabled !== false && role.model.includes("/"))) });
   }
 

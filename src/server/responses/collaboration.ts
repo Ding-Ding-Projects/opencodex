@@ -262,32 +262,30 @@ export async function multiAgentGuidanceText(
       return `<multi_agent_mode>${applyInjectionPlaceholders(injectionPrompt, injectionModel, injectionEffort, roster, fallbackGuidance, depth, rolesText)}</multi_agent_mode>`;
     }
     if (!preferred && roster === "" && fallbackGuidance === "" && rolesText === "" && depthGuidance === "") return null;
-    let text = "When the active spawn_agent tool supports optional \"model\" or \"reasoning_effort\" overrides, "
+    const preamble = "When the active spawn_agent tool supports optional \"model\" or \"reasoning_effort\" overrides, "
       + "use only models listed for this collaboration surface. "
       + "When setting either override, set fork_turns to \"none\" "
       + "(or a positive turn count such as \"3\"; full-history forks reject overrides) "
       + "and make the task message self-contained.";
+    let preferredText = "";
     if (preferred) {
-      text += ` Preferred sub-agent: model "${preferred.model}"`
+      preferredText = ` Preferred sub-agent: model "${preferred.model}"`
         + (injectionEffort ? `, reasoning_effort "${injectionEffort}"` : "")
         + " — use it unless the user names another.";
     }
-    text += fallbackGuidance;
-    if (rolesText) text += ` When spawning, use a named specialist: ${rolesText}.`;
-    // Depth/budget sits BEFORE the roster so the budget-trim below cannot eat it: the roster is
-    // a convenience, the ceiling is the thing the model must not be surprised by.
-    text += depthGuidance;
-    text += roster;
+    const rolePrefix = " When spawning, use a named specialist: ";
+    const buildGuidance = (roleCatalog: string, rosterCatalog: string): string =>
+      preamble + preferredText + fallbackGuidance
+      + (roleCatalog ? `${rolePrefix}${roleCatalog}.` : "")
+      // Depth/budget sits before the roster so trimming can only remove optional catalogs.
+      + depthGuidance + rosterCatalog;
+    let text = buildGuidance(rolesText, roster);
     if (text.length > V2_GUIDANCE_CHAR_BUDGET) {
-      // Role descriptions are user-authored and bounded, but still trim the optional roster first.
-      text = text.slice(0, text.length - roster.length);
-      if (text.length > V2_GUIDANCE_CHAR_BUDGET) {
-        const rolesBudget = Math.max(0, V2_GUIDANCE_CHAR_BUDGET - (text.length - rolesText.length - 1));
-        const shortened = compactRolesCatalog(visibleRoles, rolesBudget);
-        text = text.slice(0, text.length - rolesText.length - (rolesText ? 1 : 0))
-          + (shortened ? ` When spawning, use a named specialist: ${shortened}.` : "");
-      }
+      const withoutRoles = buildGuidance("", roster);
+      const roleBudget = Math.max(0, V2_GUIDANCE_CHAR_BUDGET - withoutRoles.length - rolePrefix.length - 1);
+      text = buildGuidance(compactRolesCatalog(visibleRoles, roleBudget), roster);
     }
+    if (text.length > V2_GUIDANCE_CHAR_BUDGET) text = buildGuidance("", "");
     return `<multi_agent_mode>${text}</multi_agent_mode>`;
   }
 

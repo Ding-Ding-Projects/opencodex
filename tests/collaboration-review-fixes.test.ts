@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateConfigCandidate } from "../src/config";
+import { readConfigDiagnostics, validateConfigCandidate } from "../src/config";
 import { salvageSubagentRoles } from "../src/codex/agent-roles";
 import { handleResponses } from "../src/server/responses";
 import { encryptedInput, routedConfig, codexHeaders, providerResponse, originalFetch } from "./helpers/agent-task-recovery";
 import { handleAgentCommand } from "../src/cli/agent";
+import { handleManagementAPI } from "../src/server/management-api";
+import { ManagementRequest } from "./helpers/management-auth";
 
 describe("collaboration parent-review boundaries", () => {
   test("salvage scans invalid persisted role arrays with a hard bound", () => {
@@ -21,6 +23,42 @@ describe("collaboration parent-review boundaries", () => {
     const tooMany = Object.fromEntries(Array.from({ length: 129 }, (_, index) => [`model-${index}`, 1_000]));
     expect(validateConfigCandidate({ ...base, providers: { custom: { ...base.providers.custom, modelAutoCompactTokenLimits: tooMany } } })).toMatchObject({ ok: false, error: expect.stringContaining("at most") });
     expect(validateConfigCandidate({ ...base, subagentRolesRevision: -1 })).toMatchObject({ ok: false, error: expect.stringContaining("subagentRolesRevision") });
+  });
+
+  test("config diagnostics remove invalid persisted budget maps while retaining providers and warning", () => {
+    const previous = process.env.OPENCODEX_HOME;
+    const dir = mkdtempSync(join(tmpdir(), "ocx-budget-diagnostics-"));
+    process.env.OPENCODEX_HOME = dir;
+    try {
+      writeFileSync(join(dir, "config.json"), JSON.stringify({
+        port: 10100,
+        defaultProvider: "custom",
+        providers: { custom: { adapter: "openai-chat", baseUrl: "https://example.test/v1", modelAutoCompactTokenLimits: { constructor: 1 } } },
+      }));
+      const diagnostics = readConfigDiagnostics();
+      expect(diagnostics.config.providers.custom?.modelAutoCompactTokenLimits).toBeUndefined();
+      expect(diagnostics.warnings?.some(warning => warning.includes("modelAutoCompactTokenLimits"))).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ordinary role status DTO omits private developer instructions", async () => {
+    const sentinel = "private-instructions-8000-sentinel";
+    const config = {
+      port: 10100,
+      defaultProvider: "openai",
+      providers: {},
+      subagentRoles: [{ id: "reviewer", description: "review", model: "gpt-5.6-sol", developerInstructions: sentinel, enabled: true }],
+    } as any;
+    const req = new ManagementRequest("http://localhost/api/subagent-roles");
+    const response = await handleManagementAPI(req, new URL(req.url), config);
+    expect(response).not.toBeNull();
+    const body = await response!.json() as { roles?: Array<Record<string, unknown>> };
+    expect(JSON.stringify(body)).not.toContain(sentinel);
+    expect(body.roles?.[0]).not.toHaveProperty("developerInstructions");
   });
 
   test("oversized encrypted-task envelope is rejected before recovery dispatch", async () => {
