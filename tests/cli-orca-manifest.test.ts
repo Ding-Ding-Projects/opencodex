@@ -16,7 +16,8 @@ describe("Orca stopped-proxy launch manifest", () => {
   test("is versioned, secret-free, and argv-only", () => {
     const manifest = buildOrcaLaunchManifest(compatible);
     expect(manifest.schemaVersion).toBe(1);
-    expect(manifest.generatedWhileProxyStopped).toBe(true);
+    expect(manifest.capabilities.proxy).toEqual({ required: false, state: "not_required" });
+    expect(JSON.stringify(manifest)).not.toContain("generatedWhileProxyStopped");
     expect(manifest.home.status).toBe("compatible");
     const json = JSON.stringify(manifest);
     expect(json).not.toContain("apiKey");

@@ -65,8 +65,9 @@ ocx export --client orca --json
 
 The versioned JSON contains argv arrays for readiness, the dashboard, `ocx ensure`, Codex, and
 Claude Code. Consumers append their own arguments only where `passThroughArgs` is true; they never
-need to construct a shell command. The manifest is intentionally secret-free and can be generated
-while the proxy is stopped. On Windows, if an Orca-scoped `CODEX_HOME` points at a different
+need to construct a shell command. Its schema-v1 `capabilities.proxy` state is
+`{ "required": false, "state": "not_required" }`: the manifest is proxy-independent and does
+not claim that a stopped process was observed. On Windows, if an Orca-scoped `CODEX_HOME` points at a different
 runtime home from the desktop Codex home, the manifest reports a structured conflict with redacted
 paths and corrective guidance instead of pretending that service installation is safe.
 

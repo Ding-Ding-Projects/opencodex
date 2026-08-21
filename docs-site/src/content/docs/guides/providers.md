@@ -95,6 +95,16 @@ allowance. BigModel's quota endpoint receives the API key directly in `Authoriza
 Z.AI endpoint keeps its separate bearer contract. Unknown future units are ignored until their
 meaning is verified; quota failures never affect inference routing.
 
+### Custom Responses terminal repair
+
+`modelResponsesTerminalRepair` is an explicit per-model compatibility policy for custom
+`openai-responses` routes. It is bounded by a grace period and is rejected for forward-auth
+providers. A real upstream terminal remains authoritative. A synthetic completion is allowed only
+for a structurally complete graph of message, reasoning, and function-call items; malformed,
+partial, open-tool, duplicate, unknown-index, or oversized graphs fail closed to an incomplete
+result. Cancellation aborts the upstream and clears the repair timer. The policy is never inferred
+from a provider name and never applies to unrelated models.
+
 The ChatGPT passthrough catalog also layers in the bare GPT-5.6 Sol/Terra/Luna slugs
 (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) for accounts that can use them.
 

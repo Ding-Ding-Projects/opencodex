@@ -15,6 +15,14 @@ describe("custom Responses terminal-repair policy", () => {
     expect(providerModelResponsesTerminalRepair("custom", value, "model-b")).toBeUndefined();
   });
 
+  test("never resolves registry repair for forward-auth providers", () => {
+    const value = provider({
+      authMode: "forward",
+      modelResponsesTerminalRepair: { model: { graceMs: 250 } },
+    });
+    expect(providerModelResponsesTerminalRepair("deepseek", value, "deepseek-v4-flash")).toBeUndefined();
+  });
+
   test.each([
     ["wrong wire", provider({ adapter: "openai-chat", modelResponsesTerminalRepair: { model: {} } }), "openai-responses"],
     ["forward auth", provider({ authMode: "forward", modelResponsesTerminalRepair: { model: {} } }), "forward-auth"],

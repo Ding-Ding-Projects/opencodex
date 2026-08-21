@@ -1124,14 +1124,22 @@ export function getProviderRegistryEntry(id: string): ProviderRegistryEntry | un
 }
 
 /** Resolve explicit custom or registry-owned terminal repair only after the effective wire is known. */
+function isForwardAuthMode(value: unknown): boolean {
+  return value === "forward";
+}
+
 export function providerModelResponsesTerminalRepair(
   id: string,
   provider: Pick<OcxProviderConfig, "baseUrl" | "adapter" | "authMode" | "modelResponsesTerminalRepair">,
   modelId: string,
 ): ResponsesTerminalRepairPolicy | undefined {
+  if (isForwardAuthMode(provider.authMode)) return undefined;
   const custom = resolveCustomResponsesTerminalRepair(provider, modelId);
   if (custom) return custom;
   const entry = getProviderRegistryEntry(id);
+  // Keep the registry-owned fallback fail-closed too; a forward-auth route must never
+  // inherit a compatibility mutation merely because its provider id has registry metadata.
+  if (isForwardAuthMode(provider.authMode)) return undefined;
   if (!entry?.modelResponsesTerminalRepair || provider.adapter !== "openai-responses") return undefined;
   const configuredBase = provider.baseUrl.trim().replace(/\/+$/, "").toLowerCase();
   const registryBase = entry.baseUrl.trim().replace(/\/+$/, "").toLowerCase();

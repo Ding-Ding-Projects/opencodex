@@ -42,7 +42,9 @@ function readJsonIfPresent(path: string): { value: unknown; error?: string } {
 
 export interface OrcaLaunchManifest {
   schemaVersion: 1;
-  generatedWhileProxyStopped: true;
+  capabilities: {
+    proxy: { required: false; state: "not_required" };
+  };
   service: {
     ready: { argv: string[]; passThroughArgs: false };
     dashboard: { argv: string[]; passThroughArgs: false };
@@ -83,7 +85,9 @@ export function buildOrcaLaunchManifest(
     : undefined;
   return {
     schemaVersion: 1,
-    generatedWhileProxyStopped: true,
+    capabilities: {
+      proxy: { required: false, state: "not_required" },
+    },
     service: {
       ready: { argv: ["ocx", "ready", "--wait", "--json"], passThroughArgs: false },
       dashboard: { argv: ["ocx", "gui"], passThroughArgs: false },
