@@ -172,6 +172,10 @@ advertised effort control on those models as proof of upstream-native reasoning 
   and `desktopExecutor` integrations have separate opt-ins; `nativeLocalExec: "on"` enables the
   broader built-in executor and bypasses Codex approval/sandbox semantics, and legacy
   `unsafeAllowNativeLocalExec: true` remains equivalent only when `nativeLocalExec` is unset.
+- Treats a clean Connect `END_STREAM` as the `Run` terminal after earlier frame handlers drain.
+  Open client tools fail closed, drained client-tool finalizers complete without waiting for their
+  grace timer, and an admitted `done`/`error` cannot be replayed or relabelled by later HTTP-body
+  EOF, abort, or reset teardown.
 
 ## `azure-openai` (alias: `azure`)
 
