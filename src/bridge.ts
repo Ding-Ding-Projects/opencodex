@@ -5,6 +5,7 @@ import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
 import { usageDisplayTotalTokens } from "./usage/totals";
+import { rewriteGrokNativeCallsForCodexExec } from "./adapters/grok-structured-edit";
 
 function uuid(): string {
   return crypto.randomUUID().replace(/-/g, "");
@@ -134,6 +135,8 @@ export function bridgeToResponsesSSE(
      * from this callback instead of re-parsing the bridged SSE.
      */
     onUsage?: (usage: OcxUsage | undefined) => void;
+    /** Exact Grok native tool names introduced for this request. */
+    convertedGrokNativeToolNames?: ReadonlySet<string>;
     /**
      * Test seam for the wire/stall beat loop. Production omits this and uses the
      * global timers; injecting here must not change scheduling semantics.
@@ -144,6 +147,12 @@ export function bridgeToResponsesSSE(
     };
   },
 ): ReadableStream<Uint8Array> {
+  events = rewriteGrokNativeCallsForCodexExec(
+    events,
+    freeformToolNames,
+    undefined,
+    options?.convertedGrokNativeToolNames,
+  );
   const setBeatInterval = options?.timers?.setInterval ?? ((handler: () => void, ms: number) => setInterval(handler, ms));
   const clearBeatInterval = options?.timers?.clearInterval ?? ((id: unknown) => clearInterval(id as ReturnType<typeof setInterval>));
   // Freeform/custom tools (apply_patch) carry their body in `input`; the model is given a

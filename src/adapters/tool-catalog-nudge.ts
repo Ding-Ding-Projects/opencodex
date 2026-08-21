@@ -6,7 +6,50 @@ import {
   type OcxRequestOptions,
   type OcxTool,
   type OcxProviderConfig,
+  type OcxMessage,
 } from "../types";
+
+/** Collect developer/system text plus the latest user turn for provider-local guidance. */
+export function effectiveInstructionText(messages: readonly OcxMessage[] | undefined, system?: readonly string[]): string[] {
+  const out = [...(system ?? [])];
+  let latestUserText: string[] = [];
+  for (const message of messages ?? []) {
+    if (message.role !== "developer" && message.role !== "user") continue;
+    const text = typeof message.content === "string"
+      ? [message.content]
+      : message.content.filter(part => part.type === "text").map(part => part.text);
+    if (message.role === "developer") out.push(...text);
+    else latestUserText = text;
+  }
+  return [...out, ...latestUserText];
+}
+
+export function shouldSuppressCodeModePatchGuidance(instructions: string): boolean {
+  return /<collaboration_mode>\s*#?\s*Collaboration Mode:\s*Plan\b|You are in \*\*Plan Mode\*\*|\b(?:do not|must not|never)\s+(?:make|perform)\s+(?:any\s+)?mutations?\b|\b(?:do not|must not|never)\s+(?:edit|modify|use\s+apply_patch)\b|\b(?:do not|must not|never)\s+write\s+(?:to\s+)?(?:any\s+)?(?:files?|code|the\s+workspace)\b|\buse\s+(?:the\s+)?shell\s+for\s+(?:file\s+)?edits\b/i.test(instructions);
+}
+
+/** Extract only the balanced tools object from a code-mode tool description. */
+export function declaredToolsBlock(description: string): string | undefined {
+  const declaration = /(?:declare\s+)?const\s+tools\s*:\s*\{/i.exec(description);
+  if (!declaration) return undefined;
+  const open = declaration.index + declaration[0].lastIndexOf("{");
+  let depth = 0;
+  let quote: "'" | '"' | "`" | undefined;
+  let escaped = false;
+  for (let index = open; index < description.length; index += 1) {
+    const character = description[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") { quote = character; continue; }
+    if (character === "{") depth += 1;
+    else if (character === "}" && --depth === 0) return description.slice(open + 1, index);
+  }
+  return undefined;
+}
 
 const NEIGHBOR_AGENT_TOOL_NAMES = ["Read", "Grep", "Glob", "Bash", "LS", "apply_patch"] as const;
 

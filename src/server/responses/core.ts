@@ -166,6 +166,7 @@ import {
 import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel } from "./fetch-helpers";
 import { guardTerminalEventStream } from "./terminal-guard";
+import { grokNativeToolNamesForRequest } from "../../adapters/grok-structured-edit";
 
 /**
  * Adapters whose continuation state must survive Codex's store:false requests.
@@ -2676,6 +2677,7 @@ export async function handleResponses(
             if (logCtx.activeAttempt) logCtx.activeAttempt.usage = usage;
           }
         },
+        convertedGrokNativeToolNames: grokNativeToolNamesForRequest(parsed, route.provider),
         // Compaction turns must NOT enter the continuation cache: _rawBody still holds the full
         // PRE-compaction history, and a later previous_response_id expansion would rehydrate the
         // giant stale chain Codex just replaced.
@@ -2725,13 +2727,14 @@ export async function handleResponses(
       toolSearchToolNames,
       ...(routedCompaction ? { compaction: true } : {}),
       onProviderState: state => { providerState = state; },
-      onUsage: usage => {
+        onUsage: usage => {
         logCtx.usageFromBridge = true;
         if (usage) {
           logCtx.usage = usage;
           if (logCtx.activeAttempt) logCtx.activeAttempt.usage = usage;
         }
-      },
+        },
+        convertedGrokNativeToolNames: grokNativeToolNamesForRequest(parsed, route.provider),
     });
     // See the streaming branch: compaction turns skip the continuation cache.
     if (!routedCompaction) {
