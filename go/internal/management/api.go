@@ -175,6 +175,10 @@ func New(options Options) (*API, error) {
 // New for existing callers.
 func NewAPI(options Options) (*API, error) { return New(options) }
 
+// Close terminates fixed terminal children before the owning HTTP server is
+// torn down, preventing a shell or its descendants from surviving shutdown.
+func (a *API) Close() { a.killAllTerminalSessions() }
+
 var routes = []string{
 	"GET /api/config", "PUT /api/config", "GET /api/settings", "PUT /api/settings", "GET /api/diagnostics/project-config", "GET /api/sidecar-settings", "PUT /api/sidecar-settings",
 	"GET /api/providers", "POST /api/providers", "PATCH /api/providers", "DELETE /api/providers", "POST /api/providers/test", "GET /api/provider-presets",

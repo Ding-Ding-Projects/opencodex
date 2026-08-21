@@ -637,6 +637,11 @@ func (s *Server) MemoryWatchdog() *MemoryWatchdog {
 }
 
 func (s *Server) Close() {
+	if s != nil {
+		if closer, ok := s.config.Management.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
 	if s != nil && s.watchdog != nil {
 		s.watchdog.Stop()
 	}

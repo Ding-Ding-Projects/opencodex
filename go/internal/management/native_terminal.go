@@ -265,7 +265,7 @@ func (a *API) handleNativeTerminalSession(w http.ResponseWriter, r *http.Request
 	if len(parts) == 1 && r.Method == http.MethodDelete {
 		session.mu.Lock()
 		if session.child.Process != nil && session.view.State == "running" {
-			_ = session.child.Process.Kill()
+			terminateNativeTerminal(session.child)
 		}
 		session.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"ok": true})
@@ -273,4 +273,27 @@ func (a *API) handleNativeTerminalSession(w http.ResponseWriter, r *http.Request
 	}
 	writeError(w, 404, "unknown terminal session")
 	return true
+}
+
+func terminateNativeTerminal(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/PID", fmt.Sprint(cmd.Process.Pid), "/T", "/F").Run()
+		return
+	}
+	_ = cmd.Process.Kill()
+}
+
+func (a *API) killAllTerminalSessions() {
+	a.terminalMu.Lock()
+	defer a.terminalMu.Unlock()
+	for _, session := range a.terminalSessions {
+		session.mu.Lock()
+		if session.view.State == "running" {
+			terminateNativeTerminal(session.child)
+		}
+		session.mu.Unlock()
+	}
 }
