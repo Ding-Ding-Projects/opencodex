@@ -31,7 +31,10 @@ differing backup and rewrites known legacy namespaced selected ids to bare ids.
 | --- | --- | --- | --- |
 | `port` | `number` | `10100` | Port the proxy listens on. |
 | `hostname?` | `string` | `"127.0.0.1"` | Bind address. `"0.0.0.0"` exposes it on the LAN and then requires a data-plane credential to start; prefer `ocx host enable` over setting it by hand (see [Remote access](#remote-access) below). |
-| `proxy?` | `string` | — | Outbound HTTP(S) proxy URL or `${ENV_VAR}` reference. Applied to `HTTP_PROXY` / `HTTPS_PROXY` when those env vars are unset; loopback stays in `NO_PROXY`. |
+| `proxy?` | `string` | — | Outbound HTTP(S) proxy URL or `${ENV_VAR}` reference. Applied when those environment variables are unset; loopback stays in `NO_PROXY`. |
+| `noProxy?` | `string \| string[]` | — | Bounded host/IP/host-port bypass entries merged with inherited `NO_PROXY`; URLs, credentials, control characters, wildcards, ambiguous dots, and invalid ports are rejected. Loopback entries are always present. This bypass does not authorize private-network provider destinations. |
+| `systemProxy?` | `"off" \| "static"` | `"off"` | Opt-in Windows-only read of the static WinINet proxy. PAC/WPAD and auto-detect are never followed, and an enabled option with no usable static proxy fails closed rather than forcing a direct route. |
+| `providerApiKeyVault?` | `"off" \| "windows"` | `"off"` | Opt-in provider API-key storage in the Windows user vault (DPAPI-backed). Config and pool entries contain only opaque `vault:` references; unavailable vaults leave the plaintext config untouched and routing without a usable key fails closed. |
 | `providers` | `Record<string, OcxProviderConfig>` | — | Map of provider name → config. |
 | `openaiProviderTierVersion?` | `2` | set by migration | Marks the single option-aware OpenAI projection as complete. |
 | `defaultProvider` | `string` | `"openai"` | Provider used when routing finds no better match. |

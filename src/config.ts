@@ -28,6 +28,8 @@ import {
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "./providers/openai-tiers";
 import { parseDesktopProfile } from "./claude/desktop-profile";
 import { isCodexReasoningEffort, modelRecordValue } from "./reasoning-effort";
+import { mergeNoProxyEntries, proxyEnvironment } from "./lib/proxy-env";
+import { detectStaticWindowsSystemProxy, StaticSystemProxyUnavailableError } from "./lib/system-proxy";
 
 let _atomicSeq = 0;
 
@@ -675,6 +677,10 @@ const configSchema = z.object({
   // is safe: startServer() already falls back to 127.0.0.1 for a missing hostname. Write-time
   // rejection lives in validateConfigCandidate() so bad values still surface to the caller.
   hostname: z.string().trim().min(1).optional().catch(undefined),
+  proxy: z.string().trim().min(1).optional(),
+  noProxy: z.union([z.string(), z.array(z.string())]).optional(),
+  systemProxy: z.enum(["off", "static"]).optional(),
+  providerApiKeyVault: z.enum(["off", "windows"]).optional(),
   providers: z.record(z.string(), providerConfigSchema),
   defaultProvider: z.string().min(1).default("openai"),
   openaiProviderTierVersion: z.union([z.literal(1), z.literal(2)]).optional(),
@@ -706,6 +712,10 @@ const configSchema = z.object({
     purpose: z.string().trim().min(1).max(64).optional().catch("invalid"),
   }).passthrough()).optional(),
 }).passthrough().superRefine((config, ctx) => {
+  if (config.noProxy !== undefined) {
+    try { mergeNoProxyEntries(config.noProxy, {}); }
+    catch (error) { ctx.addIssue({ code: "custom", path: ["noProxy"], message: error instanceof Error ? error.message : "invalid noProxy" }); }
+  }
   const claudeCode = (config as { claudeCode?: unknown }).claudeCode;
   if (claudeCode !== undefined && (!claudeCode || typeof claudeCode !== "object" || Array.isArray(claudeCode))) {
     ctx.addIssue({ code: "custom", path: ["claudeCode"], message: "claudeCode must be an object" });
@@ -1645,20 +1655,21 @@ export function resolveEnvValue(value: string | undefined): string | undefined {
  * that makes outbound provider requests (server start, catalog sync).
  */
 export function applyProxyEnv(config: OcxConfig): void {
-  const proxy = resolveEnvValue(config.proxy);
-  if (!proxy) return;
-  if (!process.env.HTTP_PROXY?.trim() && !process.env.http_proxy?.trim()) process.env.HTTP_PROXY = proxy;
-  if (!process.env.HTTPS_PROXY?.trim() && !process.env.https_proxy?.trim()) process.env.HTTPS_PROXY = proxy;
-  const existing = process.env.NO_PROXY ?? process.env.no_proxy ?? "";
-  const entries = existing.split(",").map(s => s.trim()).filter(Boolean);
-  const seen = new Set(entries.map(e => e.toLowerCase()));
-  for (const host of ["localhost", "127.0.0.1", "::1", "[::1]"]) {
-    if (!seen.has(host)) {
-      entries.push(host);
-      seen.add(host);
-    }
+  let detectedProxy: string | undefined;
+  if (config.systemProxy === "static" && !resolveEnvValue(config.proxy)) {
+    detectedProxy = detectStaticWindowsSystemProxy()?.proxy;
+    if (!detectedProxy && process.platform === "win32") throw new StaticSystemProxyUnavailableError();
   }
-  process.env.NO_PROXY = entries.join(",");
+  const env = proxyEnvironment({
+    proxy: resolveEnvValue(config.proxy),
+    noProxy: config.noProxy,
+    systemProxy: config.systemProxy,
+  }, process.env, detectedProxy);
+  // Bun fetch reads this process environment. Child launchers must use
+  // proxyEnvironment() directly instead of inheriting this mutation.
+  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] as const) {
+    if (env[key] !== undefined) process.env[key] = env[key];
+  }
 }
 
 export function writePid(pid: number): void {

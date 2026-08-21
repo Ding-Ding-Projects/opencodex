@@ -8,6 +8,7 @@
  */
 import { createHash } from "node:crypto";
 import { saveConfigPreservingClaudeCode } from "../config";
+import { createProviderVaultReference, deleteProviderVaultReference, isProviderVaultReference } from "../lib/provider-credentials";
 import type { OcxConfig, OcxProviderConfig } from "../types";
 
 export interface ProviderApiKeyInfo {
@@ -24,6 +25,7 @@ function isEnvReference(value: string): boolean {
 }
 
 export function maskApiKey(value: string): string {
+  if (isProviderVaultReference(value)) return "vault reference (secret not in config)";
   if (isEnvReference(value)) return value;
   if (value.length <= 8) return "****";
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
@@ -86,14 +88,19 @@ export function addProviderApiKey(config: OcxConfig, name: string, key: string, 
   const trimmed = sanitizeApiKeyValue(key);
   if (!trimmed) return { error: "key must not include line breaks" };
   const pool = ensurePool(provider);
-  const id = apiKeyPoolEntryId(trimmed);
+  let stored = trimmed;
+  if (config.providerApiKeyVault === "windows") {
+    try { stored = createProviderVaultReference(trimmed); }
+    catch (error) { return { error: error instanceof Error ? `OS credential vault unavailable: ${error.message}` : "OS credential vault unavailable" }; }
+  }
+  const id = apiKeyPoolEntryId(stored);
   const existing = pool.find(e => e.id === id);
   if (existing) {
     if (label?.trim()) existing.label = label.trim();
   } else {
-    pool.push({ id, key: trimmed, ...(label?.trim() ? { label: label.trim() } : {}), addedAt: Date.now() });
+    pool.push({ id, key: stored, ...(label?.trim() ? { label: label.trim() } : {}), addedAt: Date.now() });
   }
-  provider.apiKey = trimmed;
+  provider.apiKey = stored;
   saveConfigPreservingClaudeCode(config);
   return { id };
 }
@@ -128,6 +135,7 @@ export function removeProviderApiKey(config: OcxConfig, name: string, id: string
   const pool = ensurePool(provider);
   const entry = pool.find(e => e.id === id);
   if (!entry) return false;
+  if (isProviderVaultReference(entry.key)) deleteProviderVaultReference(entry.key);
   provider.apiKeyPool = pool.filter(e => e.id !== id);
   if (provider.apiKey === entry.key) {
     const next = provider.apiKeyPool[0];
@@ -137,4 +145,35 @@ export function removeProviderApiKey(config: OcxConfig, name: string, id: string
   if (provider.apiKeyPool.length === 0) delete provider.apiKeyPool;
   saveConfigPreservingClaudeCode(config);
   return true;
+}
+
+/**
+ * One-way, opt-in migration for legacy plaintext provider keys. Nothing is rewritten until
+ * every secret has been accepted by the OS vault; a missing vault therefore leaves the original
+ * config untouched and routing fails closed on the next request rather than guessing.
+ */
+export function migrateProviderApiKeysToVault(config: OcxConfig): { migrated: number; unavailable: boolean } {
+  if (config.providerApiKeyVault !== "windows") return { migrated: 0, unavailable: false };
+  const replacements: Array<{ provider: OcxProviderConfig; field: "apiKey" | "pool"; index?: number; ref: string }> = [];
+  try {
+    for (const provider of Object.values(config.providers)) {
+      if (provider.apiKey && !isProviderVaultReference(provider.apiKey)) {
+        replacements.push({ provider, field: "apiKey", ref: createProviderVaultReference(provider.apiKey) });
+      }
+      for (const [index, entry] of (provider.apiKeyPool ?? []).entries()) {
+        if (!isProviderVaultReference(entry.key)) {
+          replacements.push({ provider, field: "pool", index, ref: createProviderVaultReference(entry.key) });
+        }
+      }
+    }
+  } catch {
+    for (const replacement of replacements) deleteProviderVaultReference(replacement.ref);
+    return { migrated: 0, unavailable: true };
+  }
+  for (const replacement of replacements) {
+    if (replacement.field === "apiKey") replacement.provider.apiKey = replacement.ref;
+    else replacement.provider.apiKeyPool![replacement.index!]!.key = replacement.ref;
+  }
+  if (replacements.length > 0) saveConfigPreservingClaudeCode(config);
+  return { migrated: replacements.length, unavailable: false };
 }

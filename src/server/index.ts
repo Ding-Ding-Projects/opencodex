@@ -17,6 +17,7 @@ import {
   saveConfig,
   websocketsEnabled,
 } from "../config";
+import { migrateProviderApiKeysToVault } from "../providers/api-keys";
 import { reconcileOAuthProviders } from "../oauth";
 import { invalidateCodexModelsCache } from "../codex/catalog";
 import { startMemoryWatchdog } from "./memory-watchdog";
@@ -335,6 +336,7 @@ export function startServer(port?: number) {
   void warmDashboardMountModules();
 
   const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()));
+  migrateProviderApiKeysToVault(config);
   applyProxyEnv(config);
   assertServerAuthConfig(config);
   // Refresh OAuth provider presets (models/noReasoningModels) from the registry so a proxy update

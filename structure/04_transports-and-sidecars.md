@@ -5,7 +5,10 @@
 Provider connection tests and live model discovery share the GET-only provider outbound wrapper.
 Direct HTTP(S) resolves once and pins the validated address; HTTPS preserves the original Host/SNI
 and always verifies certificates. Proxy-configured requests stay on Bun fetch so HTTP(S)_PROXY,
-ALL_PROXY, and NO_PROXY semantics remain authoritative. The wrapper classifies successful local DNS answers, but
+ALL_PROXY, and bounded NO_PROXY semantics remain authoritative. Configured `noProxy` entries are
+merged with inherited values and loopback defaults, but reject URL/credential/control/wildcard
+ambiguity. The bypass list never grants private-network access by itself; `allowPrivateNetwork`
+and destination checks remain required. The wrapper classifies successful local DNS answers, but
 only a typed DNS-resolution failure degrades to proxy resolution; every literal, metadata, and
 resolved-address policy error still rejects. Proxy mode logs once that the proxy-selected peer
 cannot be pinned. Private destinations additionally require allowPrivateNetwork plus NO_PROXY.

@@ -36,7 +36,7 @@
  * this Windows account.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../config";
@@ -186,6 +186,17 @@ function runVaultScript(script: string, stdinPayload: string): Promise<string> {
   });
 }
 
+function runVaultScriptSync(script: string, stdinPayload: string): string {
+  if (process.platform !== "win32") throw new CredentialVaultError("unsupported-platform", "The OS credential vault is only available on Windows.");
+  try {
+    return execFileSync(resolveTrustedWindowsPowerShellExe(), [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
+    ], { windowsHide: true, input: stdinPayload, encoding: "utf8", timeout: VAULT_TIMEOUT_MS, maxBuffer: TOKEN_MAX_LENGTH * 4 }).trim();
+  } catch (error) {
+    throw new CredentialVaultError("powershell-failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
 /** Encrypts and stores `plaintext` under `tokenRef`, replacing any prior value. */
 export async function storeVaultSecret(tokenRef: string, plaintext: string): Promise<void> {
   assertValidTokenRef(tokenRef);
@@ -194,6 +205,18 @@ export async function storeVaultSecret(tokenRef: string, plaintext: string): Pro
   }
   const plaintextB64 = Buffer.from(plaintext, "utf8").toString("base64");
   const ciphertext = await runVaultScript(ENCRYPT_SCRIPT, JSON.stringify({ plaintextB64, entropy: ENTROPY }));
+  const file = readSecretsFile();
+  file[tokenRef] = { alg: "dpapi-currentuser", ciphertext, createdAt: new Date().toISOString() };
+  writeSecretsFile(file);
+}
+
+/** Synchronous counterpart for request routing, which is intentionally synchronous today. */
+export function storeVaultSecretSync(tokenRef: string, plaintext: string): void {
+  assertValidTokenRef(tokenRef);
+  if (!plaintext || plaintext.length > TOKEN_MAX_LENGTH) throw new CredentialVaultError("invalid-token-ref", `token must be 1-${TOKEN_MAX_LENGTH} characters.`);
+  const ciphertext = runVaultScriptSync(ENCRYPT_SCRIPT, JSON.stringify({
+    plaintextB64: Buffer.from(plaintext, "utf8").toString("base64"), entropy: ENTROPY,
+  }));
   const file = readSecretsFile();
   file[tokenRef] = { alg: "dpapi-currentuser", ciphertext, createdAt: new Date().toISOString() };
   writeSecretsFile(file);
@@ -212,6 +235,19 @@ export async function readVaultSecret(tokenRef: string): Promise<string | null> 
   try {
     const plaintextB64 = await runVaultScript(DECRYPT_SCRIPT, JSON.stringify({ ciphertextB64: entry.ciphertext, entropy: ENTROPY }));
     return Buffer.from(plaintextB64, "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+export function readVaultSecretSync(tokenRef: string): string | null {
+  assertValidTokenRef(tokenRef);
+  const entry = readSecretsFile()[tokenRef];
+  if (!entry) return null;
+  try {
+    const plaintextB64 = runVaultScriptSync(DECRYPT_SCRIPT, JSON.stringify({ ciphertextB64: entry.ciphertext, entropy: ENTROPY }));
+    const plaintext = Buffer.from(plaintextB64, "base64").toString("utf8");
+    return plaintext && plaintext.length <= TOKEN_MAX_LENGTH ? plaintext : null;
   } catch {
     return null;
   }
