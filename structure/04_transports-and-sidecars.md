@@ -183,6 +183,21 @@ The endpoint handles `response.create`, ignores `response.processed`, supports w
 frame rather than always emitting `response.completed`. If the response status is `failed`, a
 `response.failed` frame is sent; otherwise `response.completed` carries through the original status.
 
+## Kiro client parallel-tool hint
+
+Kiro's wire remains serialized when an OpenAI Responses client sends
+`parallel_tool_calls: true`. That request field is permissive: it allows parallel calls but does not
+require the routed transport to expose a matching flag. The Kiro catalog therefore continues to
+advertise `supports_parallel_tool_calls: false`, the parsed client hint remains available to internal
+policy, and the adapter emits no parallel-control field in the CodeWhisperer payload.
+
+[Decision Log]
+- purpose: keep Codex tool turns usable with Kiro without claiming or inventing parallel execution on the CodeWhisperer wire.
+- constraint: Kiro has no verified parallel-control request field and serializes tool execution, while clients may send the permission hint.
+- choice: accept the parsed hint as permission and leave the Kiro wire unchanged.
+- reason: rejecting permission as a transport requirement blocks valid turns; rewriting shared request state hides caller intent and can affect later policy or diagnostics.
+- impact: Kiro remains honest about serialized execution while ordinary tool turns continue when the client permits parallel calls.
+
 ## Heartbeat and stall deadline
 
 The HTTP/SSE bridge emits `response.heartbeat` events during upstream silence to re-arm Codex's idle

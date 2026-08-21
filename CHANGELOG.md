@@ -6,6 +6,7 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(kiro): accept client parallel_tool_calls permission while retaining the parsed hint and omitting unsupported parallel fields from the CodeWhisperer wire
 - fix(cursor): settle clean Connect END_STREAM after ordered frame drain, fail-close open tools, finish drained client-tool finalizers, and prohibit terminal replay after accepted output
 - fix(startup): retain Bun's exact crash marker independently of the bounded stderr tail, honor stderr backpressure, and compare both PID and runtime-owner snapshots before stale journal recovery; the journal warning alone still never classifies a crash
 - fix(auth): pin forwarded Codex OAuth credentials to the canonical ChatGPT host and refuse to forward them to any other configured `authMode: "forward"` provider; refuse cross-origin redirects on every credential-bearing sidecar fetch (ported from upstream lidge-jun/opencodex#1471)

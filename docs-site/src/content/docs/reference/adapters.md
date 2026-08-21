@@ -97,6 +97,9 @@ streams the response back **untranslated**.
 
 - Builds Kiro `conversationState`, maps Codex tools and tool results, and sends image blocks supported
   by the Kiro wire.
+- Treats client `parallel_tool_calls: true` as permission rather than a wire requirement. Kiro stays
+  serialized: the routed catalog advertises no parallel capability, the parsed hint remains available
+  to internal policy, and the adapter emits no parallel-control field upstream.
 - Decodes `application/vnd.amazon.eventstream`, reconstructs text/thinking/tool events, detects
   truncated tool JSON, and estimates usage because the upstream does not return token counts.
 - Uses the configured `baseUrl` verbatim when it is custom. A canonical
