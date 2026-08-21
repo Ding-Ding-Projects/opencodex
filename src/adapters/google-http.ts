@@ -1,5 +1,5 @@
 import type { AdapterFetchContext, AdapterRequest } from "./base";
-import { isQuotaExhaustedBody, retryableGoogleStatus, safeGoogleHttpErrorMessage } from "./google-errors";
+import { isAntigravityGeoBlockedBody, isQuotaExhaustedBody, retryableGoogleStatus, safeGoogleHttpErrorMessage } from "./google-errors";
 import { repairGoogleInvalidRequestBody } from "./google-wire-compiler";
 import { normalizeUpstreamHttpErrorResponse, readDisplaySafeErrorPayloadText } from "./upstream-http-error";
 import {
@@ -9,10 +9,36 @@ import {
   retryBackoffDelayMs,
   sleepWithAbort,
 } from "../lib/upstream-retry";
+import { recordAntigravityCooldown } from "../oauth/antigravity-routing";
 
 const GOOGLE_RETRY_ATTEMPTS = 3;
 const GOOGLE_RETRY_BASE_MS = 250;
 const GOOGLE_RETRY_MAX_MS = 2_000;
+
+function retryAfterMs(value: string | null, now = Date.now()): number | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    const seconds = Number(text);
+    return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds * 1000) : undefined;
+  }
+  const timestamp = Date.parse(text);
+  return Number.isFinite(timestamp) && timestamp > now ? timestamp - now : undefined;
+}
+
+async function recordAntigravityHttpCooldown(response: Response, accountId: string | undefined): Promise<boolean> {
+  if (!accountId || (response.status !== 429 && response.status !== 403)) return false;
+  const payload = await readDisplaySafeErrorPayloadText(response.clone());
+  if (response.status === 429) {
+    recordAntigravityCooldown(accountId, isQuotaExhaustedBody(payload) ? "quota_exhausted" : "rate_limited", retryAfterMs(response.headers.get("retry-after")));
+    return true;
+  }
+  if (isAntigravityGeoBlockedBody(payload)) {
+    recordAntigravityCooldown(accountId, "geo_blocked");
+    return true;
+  }
+  return false;
+}
 
 async function normalizeFinalGoogleError(label: string, res: Response, signal?: AbortSignal): Promise<Response> {
   return normalizeUpstreamHttpErrorResponse(res, {
@@ -40,6 +66,9 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
         headers: activeRequest.headers,
         body: activeRequest.body,
       }, timeoutMs, ctx.abortSignal, ctx.stream);
+      if (label === "Antigravity" && await recordAntigravityHttpCooldown(res, ctx.accountId)) {
+        return ctx.returnRawErrors ? res : normalizeFinalGoogleError(label, res, ctx.abortSignal);
+      }
       if (res.status === 400 && !compatibilityReplayUsed) {
         let payloadText = "";
         try {

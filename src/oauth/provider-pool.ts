@@ -224,6 +224,24 @@ export function clearOAuthAccountCooldown(provider: string, accountId: string): 
   return healthMap(provider).delete(accountId);
 }
 
+/** Record a provider-local failure without selecting or promoting another account. */
+export function recordOAuthAccountCooldown(
+  provider: string,
+  accountId: string,
+  retryAfterHeader: string | null | undefined,
+  now = Date.now(),
+): void {
+  const parsedRetry = parseRetryAfterMs(retryAfterHeader, now);
+  const cooldownMs = parsedRetry ?? DEFAULT_COOLDOWN_MS;
+  const map = healthMap(provider);
+  const current = map.get(accountId);
+  const until = now + cooldownMs;
+  if (!current || current.cooldownUntil < until) {
+    map.set(accountId, { cooldownUntil: until, cooldownSource: parsedRetry ? "retry-after" : "default" });
+  }
+  clearOAuthSessionAffinityForAccount(provider, accountId);
+}
+
 /** Test / logout helper. */
 export function clearOAuthPoolState(provider?: string): void {
   if (provider) {

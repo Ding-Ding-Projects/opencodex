@@ -54,6 +54,7 @@ import {
   resolveOAuthAccountForSession,
   rotateOAuthAccountOn429,
 } from "../../oauth/provider-pool";
+import { getAccountSet } from "../../oauth/store";
 import { buildWebSearchTool, planWebSearch, runWithWebSearch, shouldResolveOpenAiWebSearchSidecar } from "../../web-search";
 import { buildImageTool, buildVideoTool, planImageBridge, planVideoBridge, runWithImageBridge, clampImageMaxRounds, IMAGE_GEN_TOOL_NAME, VIDEO_GEN_TOOL_NAME } from "../../images";
 import { describeImagesInPlace, planVisionSidecar, shouldResolveOpenAiVisionSidecar, stripImagesInPlace } from "../../vision";
@@ -1440,6 +1441,9 @@ export async function handleResponses(
   );
   const adapterProvider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider);
   const adapter = resolveAdapter(adapterProvider, config.cacheRetention);
+  const providerAccountId = route.providerName === "google-antigravity"
+    ? oauthPoolAccountId ?? getAccountSet(route.providerName)?.activeAccountId
+    : undefined;
   logCtx.providerAdapter = adapter.name;
   recordEffectiveCacheRetention(logCtx, adapter.name, config.cacheRetention);
   sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, adapter.name);
@@ -2227,6 +2231,7 @@ export async function handleResponses(
         abortSignal: upstream.signal,
         timeoutMs: connectMs,
         stream: parsed.stream,
+        ...(providerAccountId ? { accountId: providerAccountId } : {}),
       });
     } else {
       upstreamResponse = await fetchWithResetRetry(
@@ -2275,7 +2280,12 @@ export async function handleResponses(
       noteAttemptSend(logCtx.activeAttempt, retryEstimate, recovery);
       try {
         return activeAdapter.fetchResponse
-          ? await activeAdapter.fetchResponse(retryRequest, { abortSignal: upstream.signal, timeoutMs: connectMs, stream: parsed.stream })
+          ? await activeAdapter.fetchResponse(retryRequest, {
+              abortSignal: upstream.signal,
+              timeoutMs: connectMs,
+              stream: parsed.stream,
+              ...(providerAccountId ? { accountId: providerAccountId } : {}),
+            })
           : await fetchWithHeaderTimeout(retryRequest.url, {
               method: retryRequest.method, headers: retryRequest.headers, body: retryRequest.body,
             }, upstream.signal, connectMs, parsed.stream, providerFetch(route.provider));
@@ -2463,6 +2473,7 @@ export async function handleResponses(
               abortSignal: upstream.signal,
               timeoutMs: connectMs,
               stream: nextParsed.stream,
+              ...(providerAccountId ? { accountId: providerAccountId } : {}),
             });
         } else {
           response = await fetchWithResetRetry(
