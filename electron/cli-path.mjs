@@ -162,43 +162,49 @@ export function installCliOnPath(execPath, deps = {}) {
     mkdir(plan.binDir);
     writeFile(plan.shimPath, plan.shimContent);
   } catch (err) {
-    restoreShim(plan, before, binDirExisted, { writeFile, removeFile, removeDir, readDir });
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `could not write the ocx shim (${plan.shimPath}): ${err?.message ?? err}`,
       manualCommand: plan.manualCommand,
+      ...rollback,
     };
   }
 
   if (!exists(plan.scriptPath)) {
-    restoreShim(plan, before, binDirExisted, { writeFile, removeFile, removeDir, readDir });
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `the PATH-repair helper is missing from this build (expected ${plan.scriptPath})`,
       manualCommand: plan.manualCommand,
+      ...rollback,
     };
   }
 
   const result = runPowerShell(plan.scriptPath, plan.binDir, { action: "install" });
   if (result.error) {
-    restoreShim(plan, before, binDirExisted, { writeFile, removeFile, removeDir, readDir });
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `could not run the PATH-repair helper: ${result.error.message}`,
       manualCommand: plan.manualCommand,
+      transactionRecovered: false,
+      rollbackFailed: rollback.rollbackFailed,
     };
   }
   if (result.status !== 0) {
-    restoreShim(plan, before, binDirExisted, { writeFile, removeFile, removeDir, readDir });
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     const stderrTail = String(result.stderr ?? "").trim().slice(0, 500);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `the PATH-repair helper exited ${result.status}${stderrTail ? `: ${stderrTail}` : ""}`,
       manualCommand: plan.manualCommand,
+      transactionRecovered: false,
+      rollbackFailed: rollback.rollbackFailed,
     };
   }
 
@@ -206,22 +212,26 @@ export function installCliOnPath(execPath, deps = {}) {
   try {
     parsed = JSON.parse(String(result.stdout ?? "").trim());
   } catch {
-    restoreShim(plan, before, binDirExisted, { writeFile, removeFile, removeDir, readDir });
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     return {
       ok: false,
       binDir: plan.binDir,
       reason: "the PATH-repair helper produced output that could not be parsed",
       manualCommand: plan.manualCommand,
+      transactionRecovered: false,
+      rollbackFailed: rollback.rollbackFailed,
     };
   }
 
   if (!parsed || parsed.ok !== true) {
-    restoreShim(plan, before, binDirExisted, { writeFile, removeFile, removeDir, readDir });
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     return {
       ok: false,
       binDir: plan.binDir,
       reason: typeof parsed?.reason === "string" ? parsed.reason : "the PATH-repair helper reported failure",
       manualCommand: plan.manualCommand,
+      transactionRecovered: parsed?.transactionRecovered === true ? parsed.transactionRecovered : false,
+      rollbackFailed: parsed?.rollbackFailed === true || rollback.rollbackFailed,
     };
   }
 
@@ -264,21 +274,28 @@ function snapshotShim(plan, exists, readFile) {
 }
 
 function restoreShim(plan, before, binDirExisted, deps) {
+  let rollbackFailed = false;
   try {
     if (before.existed) {
       deps.writeFile(plan.shimPath, before.content);
-      return;
+      return { transactionRecovered: true, rollbackFailed: false };
     }
-    try { deps.removeFile(plan.shimPath); } catch {}
+    try {
+      if (deps.exists(plan.shimPath)) deps.removeFile(plan.shimPath);
+    } catch {
+      rollbackFailed = true;
+    }
     if (!binDirExisted) {
       try {
         if (deps.readDir(plan.binDir).length === 0) deps.removeDir(plan.binDir);
-      } catch {}
+      } catch {
+        rollbackFailed = true;
+      }
     }
   } catch {
-    // The caller still returns failure. The status record is the recoverable handoff
-    // when the original bytes cannot be restored before Squirrel exits.
+    rollbackFailed = true;
   }
+  return { transactionRecovered: !rollbackFailed, rollbackFailed };
 }
 
 /**
@@ -316,19 +333,26 @@ export function uninstallCliOnPath(execPath, deps = {}) {
     expectedShimContent: plan.shimContent,
   });
   if (result.error) {
-    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: `could not run the PATH-repair helper: ${result.error.message}` };
+    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: `could not run the PATH-repair helper: ${result.error.message}`, transactionRecovered: false, rollbackFailed: false };
   }
   if (result.status !== 0) {
-    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: `the PATH-repair helper exited ${result.status}` };
+    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: `the PATH-repair helper exited ${result.status}`, transactionRecovered: false, rollbackFailed: false };
   }
   try {
     const parsed = JSON.parse(String(result.stdout ?? "").trim());
     if (!parsed || parsed.ok !== true) {
-      return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: parsed?.reason ?? "the PATH-repair helper reported failure" };
+      return {
+        ...parsed,
+        ok: false,
+        owned: parsed?.owned === true,
+        removed: parsed?.removed === true,
+        binDir: plan.binDir,
+        reason: parsed?.reason ?? "the PATH-repair helper reported failure",
+      };
     }
     return { ...parsed, binDir: plan.binDir };
   } catch {
-    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: "the PATH-repair helper produced output that could not be parsed" };
+    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: "the PATH-repair helper produced output that could not be parsed", transactionRecovered: false, rollbackFailed: false };
   }
 }
 
@@ -373,11 +397,22 @@ export function recordDesktopCliPathStatus(result, deps = {}) {
     now = () => new Date().toISOString(),
   } = deps;
 
+  const rollbackStatus = result.transactionRecovered !== undefined || result.rollbackFailed !== undefined
+    ? { transactionRecovered: result.transactionRecovered === true, rollbackFailed: result.rollbackFailed === true }
+    : {};
   const record = result.ok
     ? (result.removed !== undefined || result.owned !== undefined
-      ? { ok: true, binDir: result.binDir, owned: result.owned === true, removed: result.removed === true, at: now() }
+      ? { ok: true, binDir: result.binDir, owned: result.owned === true, removed: result.removed === true, ...(result.replacementConflict === true ? { replacementConflict: true, claimPath: result.claimPath } : {}), at: now() }
       : { ok: true, binDir: result.binDir, at: now() })
-    : { ok: false, binDir: result.binDir, reason: result.reason, manualCommand: result.manualCommand, at: now() };
+    : {
+      ok: false,
+      binDir: result.binDir,
+      reason: result.reason,
+      manualCommand: result.manualCommand,
+      ...rollbackStatus,
+      ...(result.replacementConflict === true ? { replacementConflict: true, claimPath: result.claimPath } : {}),
+      at: now(),
+    };
 
   try {
     mkdir(configDir);

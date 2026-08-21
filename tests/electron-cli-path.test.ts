@@ -216,12 +216,33 @@ describe("installCliOnPath", () => {
         readFile: () => current,
         writeFile: (_path: string, content: string) => { current = content; existed = true; },
         removeFile: () => { current = ""; existed = false; },
-        runPowerShell: () => ({ status: 1, stdout: "", stderr: "path denied" }),
+        runPowerShell: () => ({ status: 0, stdout: JSON.stringify({ ok: false, reason: "path denied", transactionRecovered: true, rollbackFailed: false }), stderr: "" }),
       }),
     );
     expect(result).toMatchObject({ ok: false });
+    expect(result).toMatchObject({ transactionRecovered: true, rollbackFailed: false });
     expect(existed).toBe(true);
     expect(current).toBe(prior);
+  });
+
+  test("reports a failed shim rollback instead of claiming recovery", () => {
+    const prior = "@echo off\r\nold shim\r\n";
+    let current = prior;
+    let writes = 0;
+    const result = installCliOnPath(
+      EXEC,
+      baseDeps({
+        exists: (path: string) => path === ensurePathScriptPath(EXEC) || path === cliShimPath(EXEC),
+        readFile: () => current,
+        writeFile: (_path: string, content: string) => {
+          writes += 1;
+          if (writes > 1) throw new Error("rollback sharing violation");
+          current = content;
+        },
+        runPowerShell: () => ({ status: 1, stdout: "", stderr: "path denied" }),
+      }),
+    );
+    expect(result).toMatchObject({ ok: false, transactionRecovered: false, rollbackFailed: true });
   });
 
   test("uninstall accepts only the exact owned shim and removes its stable directory", () => {
@@ -237,6 +258,35 @@ describe("installCliOnPath", () => {
     });
     expect(result).toMatchObject({ ok: true, owned: true, removed: true });
     expect(calls[0]).toContain("|uninstall");
+  });
+
+  test("uninstall propagates a preserved quarantine claim and recovered transaction status", () => {
+    const result = uninstallCliOnPath(EXEC, {
+      platform: "win32",
+      exists: (path: string) => path === cliShimPath(EXEC) || path === ensurePathScriptPath(EXEC),
+      readFile: () => cliShimContent(EXEC),
+      runPowerShell: () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          ok: false,
+          owned: false,
+          removed: false,
+          replacementConflict: true,
+          claimPath: "C:\\stable\\claim.tmp",
+          transactionRecovered: true,
+          rollbackFailed: false,
+          reason: "replacement preserved",
+        }),
+        stderr: "",
+      }),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      replacementConflict: true,
+      claimPath: "C:\\stable\\claim.tmp",
+      transactionRecovered: true,
+      rollbackFailed: false,
+    });
   });
 });
 
@@ -291,5 +341,19 @@ describe("recordDesktopCliPathStatus", () => {
         },
       ),
     ).not.toThrow();
+  });
+
+  test("persists rollback status when a lifecycle transaction cannot recover", () => {
+    const writes: Array<{ path: string; content: string }> = [];
+    recordDesktopCliPathStatus(
+      { ok: false, binDir: "C:\\bin", reason: "rollback sharing violation", transactionRecovered: false, rollbackFailed: true },
+      { configDir: "C:\\config", mkdir: () => {}, writeFile: (path: string, content: string) => writes.push({ path, content }), now: () => "2026-08-21T00:00:00.000Z" },
+    );
+    expect(JSON.parse(writes[0]!.content)).toMatchObject({
+      ok: false,
+      reason: "rollback sharing violation",
+      transactionRecovered: false,
+      rollbackFailed: true,
+    });
   });
 });

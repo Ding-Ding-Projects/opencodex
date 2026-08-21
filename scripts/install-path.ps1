@@ -181,8 +181,11 @@ function Remove-OcxPathRegistration {
     <#
     Remove only a registration proven to belong to this build. The exact shim
     bytes are the ownership marker; a missing or edited shim is never a target.
-    PATH changes, shim removal, and empty-directory removal are one transaction
-    with bounded, explicit rollback. No recursive deletion is used.
+    PATH changes and empty-directory removal are one transaction. The shim is
+    first atomically claimed into a unique quarantine path, then its claimed
+    bytes are inspected. An unowned claim is atomically restored when possible;
+    a concurrent replacement is preserved and the quarantine is reported.
+    No recursive deletion is used.
     #>
     [CmdletBinding()]
     param(
@@ -194,8 +197,12 @@ function Remove-OcxPathRegistration {
         [scriptblock]$ReadProcessPath = { $env:Path },
         [scriptblock]$WriteProcessPath = { param([string]$Path) $env:Path = $Path },
         [scriptblock]$ReadShim = { if (Test-Path -LiteralPath $ShimPath -PathType Leaf) { [pscustomobject]@{ Exists = $true; Content = [IO.File]::ReadAllText($ShimPath) } } else { [pscustomobject]@{ Exists = $false; Content = $null } } },
-        [scriptblock]$WriteShim = { param([string]$Content) [IO.File]::WriteAllText($ShimPath, $Content, [Text.UTF8Encoding]::new($false)) },
-        [scriptblock]$RemoveShim = { Remove-Item -LiteralPath $ShimPath -Force },
+        [scriptblock]$NewClaimPath = { param([string]$Path) "$Path.ocx-claim-$([guid]::NewGuid().ToString('N')).tmp" },
+        [scriptblock]$ClaimShim = { param([string]$ClaimPath) Move-Item -LiteralPath $ShimPath -Destination $ClaimPath -Force },
+        [scriptblock]$ReadClaim = { param([string]$ClaimPath) [IO.File]::ReadAllText($ClaimPath) },
+        [scriptblock]$RestoreClaim = { param([string]$ClaimPath) Move-Item -LiteralPath $ClaimPath -Destination $ShimPath -Force },
+        [scriptblock]$RemoveClaim = { param([string]$ClaimPath) Remove-Item -LiteralPath $ClaimPath -Force },
+        [scriptblock]$TestShim = { Test-Path -LiteralPath $ShimPath -PathType Leaf },
         [scriptblock]$TestDirectory = { Test-Path -LiteralPath $BinDir -PathType Container },
         [scriptblock]$GetDirectoryEntries = { Get-ChildItem -LiteralPath $BinDir -Force },
         [scriptblock]$RemoveDirectory = { Remove-Item -LiteralPath $BinDir -Force },
@@ -206,19 +213,36 @@ function Remove-OcxPathRegistration {
     if (-not $shim.Exists) {
         return [pscustomobject]@{ Ok = $true; Owned = $false; Removed = $false; Reason = "the stable ocx shim does not exist" }
     }
-    if ([string]$shim.Content -cne $ExpectedShimContent) {
-        return [pscustomobject]@{ Ok = $true; Owned = $false; Removed = $false; Reason = "the stable ocx shim is not owned by this install" }
-    }
 
     $beforeUser = [string](& $ReadUserPath)
     $beforeProcess = [string](& $ReadProcessPath)
-    $beforeShim = [string]$shim.Content
-    $beforeDir = [bool](& $TestDirectory)
     $userChanged = $false
     $processChanged = $false
     $dirRemoved = $false
-    $ownershipLost = $false
+    $claimPath = $null
+    $claimOwned = $false
+    $claimRemoved = $false
+    $replacementConflict = $false
     try {
+        # Move-Item is a same-volume rename here: it claims the exact inode
+        # before any byte inspection or PATH mutation, so a concurrent writer
+        # cannot be mistaken for the file we just inspected.
+        $claimPath = & $NewClaimPath $ShimPath
+        & $ClaimShim $claimPath
+        $claimedContent = [string](& $ReadClaim $claimPath)
+        $claimOwned = $claimedContent -ceq $ExpectedShimContent
+        if (-not $claimOwned) {
+            if (-not (& $TestShim)) {
+                & $RestoreClaim $claimPath
+                $claimRemoved = $true
+                return [pscustomobject]@{ Ok = $true; Owned = $false; Removed = $false; Reason = "the stable ocx shim is not owned by this install"; TransactionRecovered = $true; RollbackFailed = $false }
+            }
+            # A replacement appeared after the claim. Preserve the quarantine
+            # and the replacement rather than overwriting either one.
+            $replacementConflict = $true
+            return [pscustomobject]@{ Ok = $false; Owned = $false; Removed = $false; Reason = "an unowned replacement ocx shim appeared during uninstall; quarantine preserved"; TransactionRecovered = $true; RollbackFailed = $false; ReplacementConflict = $true; ClaimPath = $claimPath }
+        }
+
         $normalizedBin = Normalize-WindowsPathEntry $BinDir
         $userEntries = if ([string]::IsNullOrWhiteSpace($beforeUser)) { @() } else { @($beforeUser -split ";") }
         $newUserEntries = @($userEntries | Where-Object { (Normalize-WindowsPathEntry $_) -ine $normalizedBin })
@@ -236,15 +260,11 @@ function Remove-OcxPathRegistration {
             $processChanged = $true
         }
 
-        # Re-read immediately before deletion so a concurrent update or user
-        # edit cannot turn an ownership proof from an earlier read into a
-        # deletion of somebody else's replacement shim.
-        $latestShim = & $ReadShim
-        if (-not $latestShim.Exists -or [string]$latestShim.Content -cne $ExpectedShimContent) {
-            $ownershipLost = $true
-            throw "the stable ocx shim changed during uninstall; refusing cleanup"
+        # Never delete a replacement that appeared after the atomic claim.
+        if (& $TestShim) {
+            $replacementConflict = $true
+            throw "a replacement ocx shim appeared during uninstall; quarantine preserved"
         }
-        & $RemoveShim
         if (& $TestDirectory) {
             $children = @(& $GetDirectoryEntries)
             if ($children.Count -eq 0) {
@@ -252,26 +272,33 @@ function Remove-OcxPathRegistration {
                 $dirRemoved = $true
             }
         }
+        # Delete the claimed bytes only after every reversible directory step
+        # has succeeded. If this final delete fails, the claim can still be
+        # atomically restored to the stable path.
+        & $RemoveClaim $claimPath
+        $claimRemoved = $true
         return [pscustomobject]@{
             Ok = $true; Owned = $true; Removed = $true
             UserPathChanged = $userChanged; ProcessPathChanged = $processChanged; StableDirRemoved = $dirRemoved
-            TransactionRecovered = $false
+            TransactionRecovered = $true; RollbackFailed = $false
         }
     } catch {
         $recovered = $true
         try {
             if ($userChanged) { & $WriteUserPath $beforeUser }
             if ($processChanged) { & $WriteProcessPath $beforeProcess }
-            if (-not $ownershipLost) {
-                if (-not (Test-Path -LiteralPath $ShimPath -PathType Leaf)) { & $CreateDirectory }
-                & $WriteShim $beforeShim
+            if (-not $claimRemoved -and $null -ne $claimPath) {
+                if ($dirRemoved -and -not (& $TestShim)) { & $CreateDirectory }
+                if (-not (& $TestShim)) { & $RestoreClaim $claimPath; $claimRemoved = $true }
             }
         } catch {
             $recovered = $false
         }
         return [pscustomobject]@{
-            Ok = $false; Owned = $true; Removed = $false; Reason = $_.Exception.Message
-            TransactionRecovered = $recovered
+            Ok = $false; Owned = $claimOwned; Removed = $false; Reason = $_.Exception.Message
+            TransactionRecovered = $recovered; RollbackFailed = -not $recovered
+            ReplacementConflict = $replacementConflict
+            ClaimPath = if ($claimRemoved) { $null } else { $claimPath }
         }
     }
 }

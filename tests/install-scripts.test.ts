@@ -258,7 +258,7 @@ describe("install scripts", () => {
     const probe = `
       . '${escapedPath}'
       $state = @{ User = 'C:\\Other;C:\\Stable\\cli-bin;C:\\Data'; Process = 'C:\\Stable\\cli-bin;C:\\Other'; Shim = '@echo off'; ShimExists = $true; DirExists = $true }
-      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent '@echo off' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent '@echo off' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -NewClaimPath { 'C:\\Stable\\claim.tmp' } -ClaimShim { param($p) $state.ShimExists = $false } -ReadClaim { param($p) $state.Shim } -RestoreClaim { param($p) $state.ShimExists = $true } -RemoveClaim { param($p) $state.ShimExists = $false } -TestShim { $state.ShimExists } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
       [pscustomobject]@{ Ok = $result.Ok; Owned = $result.Owned; User = $state.User; Process = $state.Process; ShimExists = $state.ShimExists; DirExists = $state.DirExists } | ConvertTo-Json -Compress
     `;
     const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
@@ -276,7 +276,7 @@ describe("install scripts", () => {
     const probe = `
       . '${escapedPath}'
       $state = @{ User = 'C:\\Other;C:\\Stable\\cli-bin;C:\\Data'; Process = 'C:\\Stable\\cli-bin;C:\\Other'; Shim = 'user-owned'; ShimExists = $true; DirExists = $true }
-      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -NewClaimPath { 'C:\\Stable\\claim.tmp' } -ClaimShim { param($p) $state.ShimExists = $false } -ReadClaim { param($p) $state.Shim } -RestoreClaim { param($p) $state.ShimExists = $true } -RemoveClaim { param($p) $state.ShimExists = $false } -TestShim { $state.ShimExists } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
       [pscustomobject]@{ Ok = $result.Ok; Owned = $result.Owned; User = $state.User; Process = $state.Process; Shim = $state.Shim; ShimExists = $state.ShimExists; DirExists = $state.DirExists } | ConvertTo-Json -Compress
     `;
     const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
@@ -288,13 +288,31 @@ describe("install scripts", () => {
     expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: true, Owned: false, User: "C:\\Other;C:\\Stable\\cli-bin;C:\\Data", Process: "C:\\Stable\\cli-bin;C:\\Other", Shim: "user-owned", ShimExists: true, DirExists: true });
   });
 
+  test.skipIf(process.platform !== "win32")("uninstall preserves a concurrent replacement and its quarantine claim", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Stable\\cli-bin'; Process = 'C:\\Stable\\cli-bin'; Shim = 'generated'; Claim = 'generated'; ShimExists = $true; ClaimExists = $false; DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -NewClaimPath { 'C:\\Stable\\claim.tmp' } -ClaimShim { param($p) $state.ShimExists = $true; $state.Shim = 'replacement'; $state.ClaimExists = $true } -ReadClaim { param($p) $state.Claim } -RestoreClaim { param($p) throw 'destination occupied' } -RemoveClaim { param($p) $state.ClaimExists = $false } -TestShim { $state.ShimExists } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
+      [pscustomobject]@{ Ok = $result.Ok; Conflict = $result.ReplacementConflict; ClaimPath = $result.ClaimPath; Shim = $state.Shim; ClaimExists = $state.ClaimExists; User = $state.User } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Conflict: true, ClaimPath: "C:\\Stable\\claim.tmp", Shim: "replacement", ClaimExists: true, User: "C:\\Stable\\cli-bin" });
+  });
+
   test.skipIf(process.platform !== "win32")("uninstall keeps a stable directory that contains unrelated data", async () => {
     const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
     const escapedPath = scriptPath.replace(/'/g, "''");
     const probe = `
       . '${escapedPath}'
       $state = @{ User = 'C:\\Stable\\cli-bin'; Process = 'C:\\Stable\\cli-bin'; Shim = 'generated'; ShimExists = $true; DirExists = $true }
-      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @('unrelated-data.json') } -RemoveDirectory { $state.DirExists = $false }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -NewClaimPath { 'C:\\Stable\\claim.tmp' } -ClaimShim { param($p) $state.ShimExists = $false } -ReadClaim { param($p) $state.Shim } -RestoreClaim { param($p) $state.ShimExists = $true } -RemoveClaim { param($p) $state.ShimExists = $false } -TestShim { $state.ShimExists } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @('unrelated-data.json') } -RemoveDirectory { $state.DirExists = $false }
       [pscustomobject]@{ Ok = $result.Ok; Removed = $result.Removed; DirRemoved = $result.StableDirRemoved; DirExists = $state.DirExists } | ConvertTo-Json -Compress
     `;
     const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
@@ -312,7 +330,7 @@ describe("install scripts", () => {
     const probe = `
       . '${escapedPath}'
       $state = @{ User = 'C:\\Other;C:\\Stable\\cli-bin'; Process = 'C:\\Stable\\cli-bin;C:\\Other'; Shim = 'generated'; ShimExists = $true; DirExists = $true }
-      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -WriteShim { param($p) $state.Shim = $p; $state.ShimExists = $true } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { throw 'sharing violation' } -CreateDirectory { $state.DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -NewClaimPath { 'C:\\Stable\\claim.tmp' } -ClaimShim { param($p) $state.ShimExists = $false } -ReadClaim { param($p) $state.Shim } -RestoreClaim { param($p) $state.ShimExists = $true } -RemoveClaim { param($p) $state.ShimExists = $false } -TestShim { $state.ShimExists } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { throw 'sharing violation' } -CreateDirectory { $state.DirExists = $true }
       [pscustomobject]@{ Ok = $result.Ok; Recovered = $result.TransactionRecovered; User = $state.User; Process = $state.Process; Shim = $state.Shim; ShimExists = $state.ShimExists } | ConvertTo-Json -Compress
     `;
     const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
