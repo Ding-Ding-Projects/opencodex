@@ -135,3 +135,12 @@ squirrelWindows:
   # HTTPS content, not a mutable remote default or a path that only exists in a
   # developer checkout. The docs-site publishes the byte-identical ICO.
   iconUrl: https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico
+
+# The installed shell consumes these GitHub release assets through Electron's
+# built-in Squirrel updater. Publication remains owned by the release workflow;
+# this metadata records the allowlisted project identity for packaging tools.
+publish:
+  provider: github
+  owner: Ding-Ding-Projects
+  repo: opencodex
+  releaseType: release

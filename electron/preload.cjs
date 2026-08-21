@@ -78,6 +78,18 @@ contextBridge.exposeInMainWorld("opencodexDesktop", {
      */
     restoreNative: () => ipcRenderer.invoke("proxy:restore-native"),
   },
+  updater: {
+    state: () => ipcRenderer.invoke("desktop-update:state"),
+    start: () => ipcRenderer.invoke("desktop-update:start"),
+    check: () => ipcRenderer.invoke("desktop-update:check"),
+    cancel: () => ipcRenderer.invoke("desktop-update:cancel"),
+    install: () => ipcRenderer.invoke("desktop-update:install"),
+    onState: (handler) => {
+      const listener = (_event, state) => handler(state);
+      ipcRenderer.on("desktop-update:state", listener);
+      return () => ipcRenderer.off("desktop-update:state", listener);
+    },
+  },
   /**
    * The toy-lock recovery route: "delete this app's local application-data
    * folder" (see `gui/src/shell/app-data-path.ts` and the Support Tickets

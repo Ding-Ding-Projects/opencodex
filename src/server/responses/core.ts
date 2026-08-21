@@ -2727,14 +2727,14 @@ export async function handleResponses(
       toolSearchToolNames,
       ...(routedCompaction ? { compaction: true } : {}),
       onProviderState: state => { providerState = state; },
-        onUsage: usage => {
+      onUsage: usage => {
         logCtx.usageFromBridge = true;
         if (usage) {
           logCtx.usage = usage;
           if (logCtx.activeAttempt) logCtx.activeAttempt.usage = usage;
         }
-        },
-        convertedGrokNativeToolNames: grokNativeToolNamesForRequest(parsed, route.provider),
+      },
+      convertedGrokNativeToolNames: grokNativeToolNamesForRequest(parsed, route.provider),
     });
     // See the streaming branch: compaction turns skip the continuation cache.
     if (!routedCompaction) {

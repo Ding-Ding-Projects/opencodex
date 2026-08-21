@@ -5,7 +5,7 @@ import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
 import { usageDisplayTotalTokens } from "./usage/totals";
-import { rewriteGrokNativeCallsForCodexExec } from "./adapters/grok-structured-edit";
+import { rewriteGrokNativeCallEventList, rewriteGrokNativeCallsForCodexExec } from "./adapters/grok-structured-edit";
 
 function uuid(): string {
   return crypto.randomUUID().replace(/-/g, "");
@@ -945,8 +945,16 @@ export function buildResponseJSON(
     onProviderState?: (state: OcxProviderContinuationState) => void;
     /** Raw adapter-reported usage before wire normalization (see bridgeToResponsesSSE onUsage). */
     onUsage?: (usage: OcxUsage | undefined) => void;
+    /** Exact Grok native tool names introduced for this request. */
+    convertedGrokNativeToolNames?: ReadonlySet<string>;
   },
 ): Record<string, unknown> {
+  events = rewriteGrokNativeCallEventList(
+    events,
+    options?.freeformToolNames,
+    undefined,
+    options?.convertedGrokNativeToolNames,
+  ).events;
   const responseId = `resp_${uuid()}`;
   const output: OutputItem[] = [];
   let usage: OcxUsage | undefined;

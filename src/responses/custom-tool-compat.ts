@@ -146,14 +146,16 @@ function rewriteForUpstream(
   if (!isPlainObject(value)) return value;
 
   if (value.type === "namespace" && typeof value.name === "string" && Array.isArray(value.tools)) {
-    const tools = value.tools.map(child => {
+    const namespaceName = value.name;
+    const namespaceTools = value.tools;
+    const tools = namespaceTools.map(child => {
       if (!isPlainObject(child) || typeof child.name !== "string") return rewriteForUpstream(child, names, callIds);
       return rewriteForUpstream({
         ...child,
-        ...(child.type === "custom" ? { name: customToolWireName(value.name, child.name) } : {}),
+        ...(child.type === "custom" ? { name: customToolWireName(namespaceName, child.name) } : {}),
       }, names, callIds);
     });
-    const changed = tools.some((entry, index) => entry !== value.tools[index]);
+    const changed = tools.some((entry, index) => entry !== namespaceTools[index]);
     return changed ? { ...value, tools } : value;
   }
 

@@ -11,7 +11,7 @@
  * management-auth session bootstrap works unchanged.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,6 +20,7 @@ import { handleSquirrelEvent, planSquirrelEvent } from "./squirrel.mjs";
 import { readBuildStamp } from "./build-stamp.mjs";
 import { classifyDesktopHealth, desktopLauncherPath, launcherExists, normalizeDesktopProbeHostname, planDesktopStartup, readDesktopPortState, runFixedNativeRestore } from "./startup-recovery.mjs";
 import { installCliOnPath, recordDesktopCliPathStatus } from "./cli-path.mjs";
+import { createDesktopAutoUpdater, DEFAULT_DESKTOP_UPDATE_FEED } from "./auto-updater.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
@@ -90,6 +91,7 @@ let proxy = null;
 let proxyPort = DEFAULT_PORT;
 /** True once the user has chosen Quit, so window-close stops meaning "hide to tray". */
 let quitting = false;
+let desktopUpdater = null;
 
 function appVersion() {
   try {
@@ -252,6 +254,32 @@ function stopProxy() {
   setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already gone */ } }, 5000).unref?.();
 }
 
+function broadcastDesktopUpdateState(state) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("desktop-update:state", state);
+  }
+}
+
+/** Start Electron's built-in Squirrel updater only for the installed artifact. */
+function startDesktopUpdater() {
+  if (!app.isPackaged || process.platform !== "win32") return;
+  const feedUrl = process.env.OPENCODEX_UPDATE_FEED_URL
+    || `${DEFAULT_DESKTOP_UPDATE_FEED}${encodeURIComponent(appVersion())}`;
+  desktopUpdater = createDesktopAutoUpdater({
+    updater: autoUpdater,
+    feedUrl,
+    packaged: true,
+    onState: broadcastDesktopUpdateState,
+  });
+  void desktopUpdater.start().catch(error => {
+    broadcastDesktopUpdateState({
+      ...desktopUpdater.snapshot(),
+      status: "failed",
+      error: String(error?.message ?? error),
+    });
+  });
+}
+
 /* ------------------------------------------------------------ window IPC -- */
 
 /**
@@ -395,6 +423,37 @@ function registerWindowIpc() {
     return result.ok
       ? { ok: true, message: result.message }
       : { ok: false, error: result.error };
+  });
+
+  ipcMain.handle("desktop-update:state", () => desktopUpdater?.snapshot() ?? {
+    status: "current",
+    version: appVersion(),
+    progress: 0,
+    releaseNotesUrl: "https://github.com/Ding-Ding-Projects/opencodex/releases/latest",
+    error: null,
+  });
+  ipcMain.handle("desktop-update:start", async () => desktopUpdater ? desktopUpdater.start() : {
+    status: "current",
+    version: appVersion(),
+    progress: 0,
+    releaseNotesUrl: "https://github.com/Ding-Ding-Projects/opencodex/releases/latest",
+    error: null,
+  });
+  ipcMain.handle("desktop-update:check", async () => desktopUpdater ? desktopUpdater.check() : null);
+  ipcMain.handle("desktop-update:cancel", () => desktopUpdater?.cancel() ?? null);
+  ipcMain.handle("desktop-update:install", async event => {
+    if (!desktopUpdater) return { ok: false, reason: "desktop_updater_unavailable" };
+    const window = windowFor(event);
+    const decision = await dialog.showMessageBox(window, {
+      type: "warning",
+      title: "Restart to install update",
+      message: "Save any work before restarting to install the downloaded update.",
+      buttons: ["Restart to install update", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    return desktopUpdater.install({ confirm: async () => decision.response === 0 });
   });
 
   ipcMain.handle("downloads:open-popup", (_event, payload) => {
@@ -650,6 +709,14 @@ function buildAppMenu() {
 app.on("second-instance", showWindow);
 
 app.whenReady().then(async () => {
+  // Register the recovery and updater backend before proxy startup. A proxy
+  // startup failure is recoverable from the desktop shell and must not erase
+  // update state or make the manual retry channels disappear.
+  registerWindowIpc();
+  startDesktopUpdater();
+  buildAppMenu();
+  buildTray();
+
   // A login-item start goes to the tray with no window, so there is nobody to
   // answer a modal. It takes the old behaviour — attach and carry on — and
   // *remembers* that it did, so the question is asked the first time a window is
@@ -659,14 +726,12 @@ app.whenReady().then(async () => {
     const started = await ensureProxy();
     proxyPort = started.port;
   } catch (error) {
-    dialog.showErrorBox("opencodex could not start", String(error?.message ?? error));
-    app.quit();
-    return;
+    dialog.showErrorBox(
+      "opencodex could not start",
+      `${String(error?.message ?? error)}\n\nThe proxy startup failed; keeping the desktop recovery shell alive so you can retry.`,
+    );
   }
 
-  registerWindowIpc();
-  buildAppMenu();
-  buildTray();
   // `--hidden` is what the login item passes, so an auto-start boots to the tray.
   if (!process.argv.includes("--hidden")) createWindow(proxyPort);
 });
@@ -678,6 +743,6 @@ app.on("window-all-closed", () => {
 
 app.on("activate", showWindow);
 
-app.on("before-quit", () => { quitting = true; });
+app.on("before-quit", () => { quitting = true; desktopUpdater?.stop(); });
 app.on("will-quit", stopProxy);
 process.on("exit", stopProxy);
