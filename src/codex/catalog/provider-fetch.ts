@@ -9,7 +9,6 @@ import {
   clearProviderDiscoveryStatus,
   DEFAULT_MODEL_CACHE_TTL_MS,
   getFreshCached,
-  getModelCacheGeneration,
   getStaleCached,
   isModelsFetchCoolingDown,
   markModelsFetchFailure,
@@ -17,6 +16,7 @@ import {
   markProviderDiscoveryOk,
   shouldLogDiscoveryFailure,
   setCached,
+  registerModelCacheInvalidationListener,
   type ProviderModelDiscoveryFailure,
 } from "../model-cache";
 import { buildModelsRequest, resolveModelsAuthToken } from "../../oauth";
@@ -207,18 +207,32 @@ export const lastDropWarnSignature = new Map<string, string>();
 /** Models retained without live confirmation, used by every dispatch surface for one honest 404 diagnosis. */
 export const retainedWithoutDiscoveryRefs = new Map<string, Set<string>>();
 export const warnedRetained404Refs = new Set<string>();
-let lastWarningReconciledGeneration = -1;
-let lastObservedCacheGeneration = -1;
+let lastGlobalWarningReconciledGeneration = -1;
 
 export function reconcileProviderFetchWarnings(generation: number): number {
-  if (generation <= lastWarningReconciledGeneration) return 0;
+  if (generation <= lastGlobalWarningReconciledGeneration) return 0;
   const removed = lastDropWarnSignature.size;
   lastDropWarnSignature.clear();
   retainedWithoutDiscoveryRefs.clear();
   warnedRetained404Refs.clear();
-  lastWarningReconciledGeneration = generation;
+  lastGlobalWarningReconciledGeneration = generation;
   return removed;
 }
+
+export function reconcileProviderFetchWarningsForProvider(providerName: string, generation: number): number {
+  const retained = retainedWithoutDiscoveryRefs.get(providerName);
+  const removed = retained?.size ?? 0;
+  retainedWithoutDiscoveryRefs.delete(providerName);
+  for (const signature of warnedRetained404Refs) {
+    if (signature.startsWith(`${providerName}/`)) warnedRetained404Refs.delete(signature);
+  }
+  return removed;
+}
+
+registerModelCacheInvalidationListener((providerName, generation) => {
+  if (providerName === undefined) reconcileProviderFetchWarnings(generation);
+  else reconcileProviderFetchWarningsForProvider(providerName, generation);
+});
 
 export function warnRetainedModel404Once(providerName: string, modelId: string): void {
   const retained = retainedWithoutDiscoveryRefs.get(providerName);
@@ -300,11 +314,6 @@ export function catalogHintsFromModelsApiItem(providerName: string, item: Provid
 }
 
 export async function fetchProviderModels(name: string, prov: OcxProviderConfig, ttlMs: number, contextCap?: number): Promise<CatalogModel[]> {
-  const cacheGeneration = getModelCacheGeneration();
-  if (cacheGeneration !== lastObservedCacheGeneration) {
-    reconcileProviderFetchWarnings(cacheGeneration);
-    lastObservedCacheGeneration = cacheGeneration;
-  }
   if (prov.authMode === "forward") return []; // ChatGPT backend has no /models
   const apiKey = await resolveModelsAuthToken(name, prov);
   const seedVertexDefault = prov.adapter === "google"

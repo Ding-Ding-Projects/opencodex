@@ -7,6 +7,7 @@ import {
   warnRetainedModel404Once,
   warnedRetained404Refs,
 } from "../src/codex/catalog/provider-fetch";
+import { clearModelCache } from "../src/codex/model-cache";
 import { nonBlankStringArrayConfigError } from "../src/config";
 import type { CatalogModel } from "../src/codex/catalog/parsing";
 import type { OcxProviderConfig } from "../src/types";
@@ -151,5 +152,18 @@ describe("#1690 retainModels provider configuration", () => {
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  test("provider-scoped invalidation leaves another provider's diagnostics intact", () => {
+    recordRetainedOmissionCycle("provider-a", ["model-a"]);
+    recordRetainedOmissionCycle("provider-b", ["model-b"]);
+    warnedRetained404Refs.add("provider-a/model-a");
+    warnedRetained404Refs.add("provider-b/model-b");
+    clearModelCache("provider-a");
+    expect(retainedWithoutDiscoveryRefs.has("provider-a")).toBe(false);
+    expect(warnedRetained404Refs.has("provider-a/model-a")).toBe(false);
+    expect(retainedWithoutDiscoveryRefs.get("provider-b")).toEqual(new Set(["model-b"]));
+    expect(warnedRetained404Refs.has("provider-b/model-b")).toBe(true);
+    reconcileProviderFetchWarnings(1000);
   });
 });
