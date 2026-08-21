@@ -158,16 +158,39 @@ export class TenantBoundary {
     } catch { return undefined; }
   }
 
+  async sessionKeyFromRequest(request: Request): Promise<string | undefined> {
+    const header = request.headers.get("x-session-id")?.trim() || request.headers.get("session-id")?.trim();
+    if (header && header.length <= 200) return header;
+    if (request.method === "GET" || request.method === "HEAD") return undefined;
+    const clone = request.clone();
+    try {
+      const body: unknown = await clone.json();
+      if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+      const value = (body as Record<string, unknown>).prompt_cache_key ?? (body as Record<string, unknown>).session_id;
+      return typeof value === "string" && value.length > 0 && value.length <= 200 ? value : undefined;
+    } catch { return undefined; }
+  }
+
   filterModels<T extends { id: string }>(admission: TenantAdmission | undefined, models: readonly T[]): T[] {
     if (!admission) return [...models];
-    return models.filter(model => admission.allowedModels.has(canonicalRouteIdentity(model.id)));
+    return models.filter(model => {
+      const id = canonicalRouteIdentity(model.id);
+      if (!admission.allowedModels.has(id)) return false;
+      const slash = id.indexOf("/");
+      const provider = slash > 0 ? id.slice(0, slash) : "openai";
+      return admission.allowedProviders.size === 0 || admission.allowedProviders.has(provider);
+    });
   }
 
   filterCatalogEntries<T extends Record<string, unknown>>(admission: TenantAdmission | undefined, entries: readonly T[]): T[] {
     if (!admission) return [...entries];
     return entries.filter(entry => {
       const id = typeof entry.id === "string" ? entry.id : typeof entry.slug === "string" ? entry.slug : "";
-      return admission.allowedModels.has(canonicalRouteIdentity(id));
+      const canonical = canonicalRouteIdentity(id);
+      if (!admission.allowedModels.has(canonical)) return false;
+      const slash = canonical.indexOf("/");
+      const provider = slash > 0 ? canonical.slice(0, slash) : "openai";
+      return admission.allowedProviders.size === 0 || admission.allowedProviders.has(provider);
     });
   }
 
