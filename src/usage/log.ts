@@ -7,6 +7,27 @@ import type { OcxUsage } from "../types";
 
 export type UsageStatus = "reported" | "unreported" | "unsupported" | "estimated";
 
+/** Payload-free stream milestones retained in request history. */
+export type StreamTimeline = {
+  upstreamDispatchMs?: number;
+  upstreamHeadersMs?: number;
+  upstreamFirstByteMs?: number;
+  upstreamFirstSemanticOutputMs?: number;
+  downstreamFirstWriteMs?: number;
+  upstreamEndMs?: number;
+  downstreamEndMs?: number;
+};
+
+export type FailureSide = "upstream" | "relay" | "downstream" | "client" | "local";
+export type FailureStage =
+  | "pre_dispatch"
+  | "upstream_wait_headers"
+  | "upstream_read"
+  | "relay_transform"
+  | "downstream_write"
+  | "client_cancel"
+  | "terminal_delivery";
+
 export type AttemptRecoveryKind =
   | "transient-5xx"
   | "connection-reset"
@@ -76,6 +97,9 @@ export interface PersistedUsageEntry {
   durationMs: number;
   /** TTFT relative to the request start (WP4); unset for non-streaming/tool-only. */
   firstOutputMs?: number;
+  streamTimeline?: StreamTimeline;
+  failureSide?: FailureSide;
+  failureStage?: FailureStage;
   usageStatus: UsageStatus;
   usage?: OcxUsage;
   totalTokens?: number;
@@ -174,8 +198,40 @@ const USAGE_STATUSES = new Set<UsageStatus>([
   "estimated",
 ]);
 
+const STREAM_TIMELINE_FIELDS = [
+  "upstreamDispatchMs",
+  "upstreamHeadersMs",
+  "upstreamFirstByteMs",
+  "upstreamFirstSemanticOutputMs",
+  "downstreamFirstWriteMs",
+  "upstreamEndMs",
+  "downstreamEndMs",
+] as const;
+const FAILURE_SIDES = new Set<FailureSide>(["upstream", "relay", "downstream", "client", "local"]);
+const FAILURE_STAGES = new Set<FailureStage>([
+  "pre_dispatch",
+  "upstream_wait_headers",
+  "upstream_read",
+  "relay_transform",
+  "downstream_write",
+  "client_cancel",
+  "terminal_delivery",
+]);
+const MAX_STREAM_TIMELINE_MS = 7 * 24 * 60 * 60 * 1000;
+
 function isNonNegativeFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function normalizeStreamTimeline(raw: unknown): StreamTimeline | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const timeline: StreamTimeline = {};
+  for (const field of STREAM_TIMELINE_FIELDS) {
+    const value = source[field];
+    if (isNonNegativeFiniteNumber(value) && value <= MAX_STREAM_TIMELINE_MS) timeline[field] = value;
+  }
+  return Object.keys(timeline).length > 0 ? timeline : undefined;
 }
 
 function normalizeAttemptUsage(raw: unknown): OcxUsage | null {
@@ -342,6 +398,13 @@ function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
     durationMs: entry.durationMs,
     ...(isNonNegativeFiniteNumber(entry.firstOutputMs)
       ? { firstOutputMs: entry.firstOutputMs }
+      : {}),
+    ...(normalizeStreamTimeline(entry.streamTimeline) ? { streamTimeline: normalizeStreamTimeline(entry.streamTimeline) } : {}),
+    ...(typeof entry.failureSide === "string" && FAILURE_SIDES.has(entry.failureSide as FailureSide)
+      ? { failureSide: entry.failureSide as FailureSide }
+      : {}),
+    ...(typeof entry.failureStage === "string" && FAILURE_STAGES.has(entry.failureStage as FailureStage)
+      ? { failureStage: entry.failureStage as FailureStage }
       : {}),
     usageStatus: entry.usageStatus,
     ...(entry.usage ? { usage: normalizeUsageValue(entry.usage) } : {}),

@@ -653,6 +653,62 @@ describe("usage log", () => {
     expect(persisted).not.toHaveProperty("cacheRetention");
   });
 
+  test("persists bounded stream timeline and closed failure attribution without payload fields", () => {
+    appendUsageEntry({
+      requestId: "ocx-stream-stage",
+      timestamp: 11,
+      provider: "openai",
+      model: "gpt",
+      status: 502,
+      durationMs: 42,
+      usageStatus: "unreported",
+      streamTimeline: {
+        upstreamDispatchMs: 1,
+        upstreamHeadersMs: 4,
+        upstreamFirstByteMs: 5,
+        upstreamFirstSemanticOutputMs: 8,
+        downstreamFirstWriteMs: 9,
+        upstreamEndMs: 40,
+        downstreamEndMs: 42,
+      },
+      failureSide: "upstream",
+      failureStage: "upstream_read",
+      prompt: "must never persist" as never,
+    } as unknown as Parameters<typeof appendUsageEntry>[0]);
+    const [persisted] = readUsageEntries();
+    expect(persisted).toMatchObject({
+      requestId: "ocx-stream-stage",
+      streamTimeline: { upstreamDispatchMs: 1, upstreamEndMs: 40, downstreamEndMs: 42 },
+      failureSide: "upstream",
+      failureStage: "upstream_read",
+    });
+    expect(persisted).not.toHaveProperty("prompt");
+  });
+
+  test("omits malformed timeline values and unknown attribution enums", () => {
+    appendUsageEntry({
+      requestId: "ocx-stream-stage-bad",
+      timestamp: 12,
+      provider: "openai",
+      model: "gpt",
+      status: 502,
+      durationMs: 1,
+      usageStatus: "unreported",
+      streamTimeline: {
+        upstreamDispatchMs: -1,
+        upstreamHeadersMs: Number.POSITIVE_INFINITY,
+        upstreamFirstByteMs: 8 * 24 * 60 * 60 * 1000,
+        upstreamEndMs: 10,
+      },
+      failureSide: "provider",
+      failureStage: "free_form",
+    } as unknown as Parameters<typeof appendUsageEntry>[0]);
+    const [persisted] = readUsageEntries();
+    expect(persisted?.streamTimeline).toEqual({ upstreamEndMs: 10 });
+    expect(persisted).not.toHaveProperty("failureSide");
+    expect(persisted).not.toHaveProperty("failureStage");
+  });
+
   test("readRecentUsageEntries returns only the newest N rows", () => {
     for (let i = 0; i < 12; i++) {
       appendUsageEntry({

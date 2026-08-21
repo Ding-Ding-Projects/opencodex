@@ -114,6 +114,8 @@ import {
   readConfiguredCodexServiceTier,
   recordAdapterReasoning,
   recordAttemptRequestedEffort,
+  recordStreamFailure,
+  recordStreamStage,
   requestLogSpeedLabel,
   sealRequestAttemptIdentity,
   usageFromResponsesPayload,
@@ -1119,6 +1121,7 @@ export async function handleResponses(
   logCtx: RequestLogContext,
   options: HandleResponsesOptions = {},
 ): Promise<Response> {
+  logCtx.requestStartedAt ??= Date.now();
   let body: unknown;
   try {
     body = await readJsonRequestBody(req);
@@ -1575,7 +1578,11 @@ export async function handleResponses(
     let upstreamResponse: Response;
     const transportFailureResponse = (err: unknown): Response => {
       upstream.abort();
-      if (options.abortSignal?.aborted) return clientCancelledResponse();
+      if (options.abortSignal?.aborted) {
+        recordStreamFailure(logCtx, "client", "client_cancel");
+        return clientCancelledResponse();
+      }
+      recordStreamFailure(logCtx, "upstream", "upstream_wait_headers");
       const outcome = err instanceof Error && err.name === "TimeoutError" ? "timeout" : "connect_error";
       if (usesCodexForwardPoolAuth(authCtx, route.provider)) {
         recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
@@ -1591,6 +1598,7 @@ export async function handleResponses(
       return formatErrorResponse(502, "upstream_error", msg);
     };
     try {
+      recordStreamStage(logCtx, "upstreamDispatchMs");
       // Transient-5xx pre-stream retry (devlog/_plan/260716_claudecode_hardening/010):
       // the ChatGPT backend emits transient 502/520s that an immediate retry absorbs.
       // Body is a replayable string; nothing has streamed to the client yet.

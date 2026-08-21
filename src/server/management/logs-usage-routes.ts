@@ -70,7 +70,7 @@ import {
 } from "../../lib/debug-settings";
 import type { OcxClaudeCodeConfig, OcxConfig, OcxCustomModel, OcxProviderConfig } from "../../types";
 import { drainAndShutdown } from "../lifecycle";
-import { filterRequestLogs, getRequestLogEntries, hydrateRequestLogsFromDisk, resetRequestLogsForReload, type RequestLogEntry } from "../request-log";
+import { filterRequestLogs, getRequestLogEntries, hydrateRequestLogsFromDisk, requestLogEntryFromPersistedUsage, resetRequestLogsForReload, type RequestLogEntry } from "../request-log";
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
 import { applySystemEnvToggle } from "../system-env";
@@ -154,6 +154,21 @@ function refreshedUsageSummary(summary: UsageSummary, range: UsageRange, now: nu
 
 export async function handleLogsUsageRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config, deps, refreshCodexCatalogBestEffort, syncClaudeAgentDefsBestEffort } = ctx;
+
+  const requestHistoryMatch = /^\/api\/request-history\/([A-Za-z0-9._~-]{1,128})$/.exec(url.pathname);
+  if (requestHistoryMatch && req.method === "GET") {
+    try {
+      const snapshot = await readUsageSnapshotForManagement();
+      const entry = snapshot.entries.find(candidate => candidate.requestId === requestHistoryMatch[1]);
+      if (!entry) return jsonResponse({ error: "request_not_found" }, 404);
+      // Reuse the same bounded request DTO as the live log surface. The persisted source is
+      // canonical; this endpoint never reads or reconstructs payloads.
+      const projected = requestLogEntryFromPersistedUsage(entry);
+      return jsonResponse(requestLogDto(projected));
+    } catch {
+      return jsonResponse({ error: "request_history_unavailable" }, 503);
+    }
+  }
 
   if (url.pathname === "/api/logs" && req.method === "GET") {
     const logs = filterRequestLogs(getRequestLogEntries(), url.searchParams);
