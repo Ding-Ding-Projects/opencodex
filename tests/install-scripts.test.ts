@@ -342,6 +342,24 @@ describe("install scripts", () => {
     expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Conflict: true, ClaimPath: "C:\\Stable\\claim.tmp", Shim: "replacement", ClaimExists: true, User: "C:\\Stable\\cli-bin" });
   });
 
+  test.skipIf(process.platform !== "win32")("uninstall refuses an occupied quarantine claim without reporting a false claim path", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Stable\\cli-bin'; Process = 'C:\\Stable\\cli-bin'; Shim = 'generated'; ShimExists = $true; ClaimExists = $true; DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -NewClaimPath { 'C:\\Stable\\claim.tmp' } -ClaimShim { param($p) throw 'claim destination occupied' } -ReadClaim { param($p) $state.Shim } -RestoreClaim { param($p) throw 'must not restore an unclaimed shim' } -RemoveClaim { param($p) throw 'must not remove an unclaimed shim' } -TestShim { $state.ShimExists } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { throw 'must not remove directory' }
+      [pscustomobject]@{ Ok = $result.Ok; Recovered = $result.TransactionRecovered; RollbackFailed = $result.RollbackFailed; ClaimPath = $result.ClaimPath; ShimExists = $state.ShimExists; ClaimExists = $state.ClaimExists } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Recovered: true, RollbackFailed: false, ClaimPath: null, ShimExists: true, ClaimExists: true });
+  });
+
   test.skipIf(process.platform !== "win32")("uninstall PATH apply uses compare-before-write and preserves a concurrent PATH edit", async () => {
     const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
     const escapedPath = scriptPath.replace(/'/g, "''");

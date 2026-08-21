@@ -297,6 +297,7 @@ function Remove-OcxPathRegistration {
     $processChanged = $false
     $dirRemoved = $false
     $claimPath = $null
+    $claimAcquired = $false
     $claimOwned = $false
     $claimRemoved = $false
     $replacementConflict = $false
@@ -306,6 +307,7 @@ function Remove-OcxPathRegistration {
         # cannot be mistaken for the file we just inspected.
         $claimPath = & $NewClaimPath $ShimPath
         & $ClaimShim $claimPath
+        $claimAcquired = $true
         $claimedContent = [string](& $ReadClaim $claimPath)
         $claimOwned = $claimedContent -ceq $ExpectedShimContent
         if (-not $claimOwned) {
@@ -378,7 +380,7 @@ function Remove-OcxPathRegistration {
             $processRollback = Restore-PathCompareAndSwap -ReadPath $ReadProcessPath -WritePath $WriteProcessPath -Before $beforeProcess -Written $pathState.Process -Mutated $pathState.ProcessMutated
             $recovered = $userRollback.Recovered -and $processRollback.Recovered
             $rollbackFailed = $userRollback.Failed -or $processRollback.Failed
-            if (-not $claimRemoved -and $null -ne $claimPath) {
+            if ($claimAcquired -and -not $claimRemoved -and $null -ne $claimPath) {
                 if ($dirRemoved -and -not (& $TestShim)) { & $CreateDirectory }
                 if (-not (& $TestShim)) { & $RestoreClaim $claimPath; $claimRemoved = $true }
             }
@@ -390,7 +392,7 @@ function Remove-OcxPathRegistration {
             Ok = $false; Owned = $claimOwned; Removed = $false; Reason = $_.Exception.Message
             TransactionRecovered = $recovered; RollbackFailed = $rollbackFailed
             ReplacementConflict = $replacementConflict; PathConflict = -not $recovered
-            ClaimPath = if ($claimRemoved) { $null } else { $claimPath }
+            ClaimPath = if ($claimAcquired -and -not $claimRemoved) { $claimPath } else { $null }
         }
     }
 }
