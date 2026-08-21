@@ -71,6 +71,7 @@ func runService(args []string, streams IO) error {
 		if err := assertServiceEnvironmentOwnedHere(); err != nil {
 			return err
 		}
+		if _, err := service.RequireKnownStatus(manager, "restart"); err != nil { return err }
 		_, port := readRuntime()
 		if port <= 0 {
 			port = cfg.Port
@@ -80,6 +81,7 @@ func runService(args []string, streams IO) error {
 		if err := assertServiceEnvironmentOwnedHere(); err != nil {
 			return err
 		}
+		if _, err := service.RequireKnownStatus(manager, "stop"); err != nil { return err }
 		if err := manager.Stop(); err != nil {
 			return err
 		}
@@ -92,6 +94,7 @@ func runService(args []string, streams IO) error {
 		if err := assertServiceEnvironmentOwnedHere(); err != nil {
 			return err
 		}
+		if _, err := service.RequireKnownStatus(manager, "uninstall"); err != nil { return err }
 		if err := manager.Uninstall(); err != nil {
 			return err
 		}

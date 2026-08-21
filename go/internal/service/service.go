@@ -62,6 +62,17 @@ type Manager interface {
 	ArtifactPath() string
 }
 
+// RequireKnownStatus is the destructive-action boundary for service state.
+// An unavailable manager query is not evidence of absence: stop, uninstall,
+// and backend switching must refuse before touching the host in that state.
+func RequireKnownStatus(manager Manager, action string) (Status, error) {
+	if manager == nil { return Status{}, fmt.Errorf("service %s refused: manager is unavailable", action) }
+	status, err := manager.Status()
+	if err != nil { return Status{}, fmt.Errorf("service %s refused: status query failed: %w", action, err) }
+	if status.Unknown { return status, fmt.Errorf("service %s refused: service state is unknown; retry after the manager responds", action) }
+	return status, nil
+}
+
 func NewManager(cfg Config) (Manager, error) {
 	return NewManagerWithOptions(cfg, ManagerOptions{})
 }
@@ -172,6 +183,9 @@ func SwitchBackend(current, target Manager) error {
 		status, err := current.Status()
 		if err != nil {
 			return fmt.Errorf("query current service backend: %w", err)
+		}
+		if status.Unknown {
+			return fmt.Errorf("remove current service backend: service state is unknown; target install aborted")
 		}
 		if status.Installed {
 			if err := current.Uninstall(); err != nil {

@@ -78,3 +78,76 @@ func TestNativeChangelogExportAndPairingRoutesAreRealAndSecretFree(t *testing.T)
 		t.Fatal("pairing token was reusable")
 	}
 }
+
+func TestPairingClaimIsBoundedRateLimitedConstantTimeShapeAndNoStore(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+	offer := serveManagement(api, http.MethodPost, "/api/host/pair", "")
+	if offer.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("offer cache header = %q", offer.Header().Get("Cache-Control"))
+	}
+	var body map[string]any
+	if err := json.Unmarshal(offer.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	token := body["token"].(string)
+	if len(token) != 43 {
+		t.Fatalf("token length = %d, want 43", len(token))
+	}
+	for i := 0; i < 5; i++ {
+		result := serveManagement(api, http.MethodPost, "/api/host/pair/claim", `{"token":"wrong-token-that-is-long-enough-but-wrong-000"}`)
+		if result.Code != http.StatusBadRequest {
+			t.Fatalf("mismatch %d status=%d body=%s", i, result.Code, result.Body.String())
+		}
+		if result.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("mismatch response was cacheable")
+		}
+	}
+	limited := serveManagement(api, http.MethodPost, "/api/host/pair/claim", `{"token":"`+token+`"}`)
+	if limited.Code != http.StatusTooManyRequests || limited.Header().Get("Retry-After") == "" {
+		t.Fatalf("rate limit status=%d headers=%v", limited.Code, limited.Header())
+	}
+	if limited.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("rate-limit response was cacheable")
+	}
+}
+
+func TestPairingPersistenceFailureRestoresTokenAndKeyState(t *testing.T) {
+	dir := t.TempDir()
+	badPath := filepath.Join(dir, "config-directory")
+	if err := os.Mkdir(badPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	api, err := New(Options{Config: &cfg, ConfigPath: badPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer := serveManagement(api, http.MethodPost, "/api/host/pair", "")
+	var body map[string]any
+	if err := json.Unmarshal(offer.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	token := body["token"].(string)
+	claim := serveManagement(api, http.MethodPost, "/api/host/pair/claim", `{"token":"`+token+`"}`)
+	if claim.Code != http.StatusInternalServerError || len(cfg.APIKeys) != 0 {
+		t.Fatalf("claim=%d keys=%d body=%s", claim.Code, len(cfg.APIKeys), claim.Body.String())
+	}
+	retry := serveManagement(api, http.MethodPost, "/api/host/pair/claim", `{"token":"`+token+`"}`)
+	if retry.Code == http.StatusBadRequest && strings.Contains(retry.Body.String(), "expired") {
+		t.Fatalf("persistence failure consumed token: %s", retry.Body.String())
+	}
+}
+
+func TestHostWildcardIsRemoteAndLoopbackIsLocal(t *testing.T) {
+	for _, host := range []string{"0.0.0.0", "::", "192.0.2.10"} {
+		if isLoopbackHost(host) {
+			t.Fatalf("wildcard/remote host %q was classified as loopback", host)
+		}
+	}
+	for _, host := range []string{"", "localhost", "127.0.0.1", "::1", "[::1]"} {
+		if !isLoopbackHost(host) {
+			t.Fatalf("loopback host %q was classified as remote", host)
+		}
+	}
+}

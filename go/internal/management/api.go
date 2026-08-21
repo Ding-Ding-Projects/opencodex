@@ -46,6 +46,7 @@ type Options struct {
 	// POST /api/system/restart rather than letting it half-work.
 	Restart             *RestartBackend
 	ChangelogPath       string
+	Drain               func(time.Duration) (drained bool, remaining int)
 	RefreshCatalog      func() error
 	OnAPIKeysChanged    func([]config.ProxyAPIKey)
 	ModelCache          ModelCacheInvalidator
@@ -96,9 +97,12 @@ type API struct {
 	stop                func()
 	restart             *RestartBackend
 	changelogPath       string
+	drain               func(time.Duration) (bool, int)
 	pairMu              sync.Mutex
 	pairToken           string
 	pairExpires         time.Time
+	pairWindow          time.Time
+	pairAttempts        int
 	restartAccepted     atomic.Bool
 	refreshCatalog      func() error
 	onAPIKeysChanged    func([]config.ProxyAPIKey)
@@ -154,7 +158,7 @@ func New(options Options) (*API, error) {
 	if changelogPath == "" && options.ConfigPath != "" {
 		changelogPath = filepath.Join(filepath.Dir(options.ConfigPath), "CHANGELOG.md")
 	}
-	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, restart: options.Restart, changelogPath: changelogPath, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
+	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, restart: options.Restart, changelogPath: changelogPath, drain: options.Drain, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
 	if api.configPersistence != nil {
 		api.configPersistence.BindConfigMutex(&api.mu)
 	}

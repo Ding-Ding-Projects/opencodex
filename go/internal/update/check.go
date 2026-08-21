@@ -165,37 +165,26 @@ func ValidateChannel(channel Channel) error {
 	return nil
 }
 
-// ValidateNativeTransition enforces the native updater's same-channel,
-// same-major, strictly-newer policy. Equal versions are a successful no-op.
+// ValidateNativeTransition validates only concrete registry output. The
+// TypeScript updater installs the resolved registry version whenever it differs
+// from the current version; it does not impose a native-only same-major,
+// preview, downgrade, or strictly-newer policy. The native line must therefore
+// fail closed on malformed values while preserving the source update decision.
 func ValidateNativeTransition(current, latest string, channel Channel) (bool, error) {
 	if err := ValidateChannel(channel); err != nil {
 		return false, err
 	}
 	current = strings.TrimPrefix(strings.TrimSpace(current), "v")
 	latest = strings.TrimPrefix(strings.TrimSpace(latest), "v")
-	var currentParts, latestParts []int
-	var currentOK, latestOK bool
-	if channel == ChannelLatest {
-		currentParts, currentOK = parseStable(current)
-		latestParts, latestOK = parseStable(latest)
-	} else {
-		currentParts, currentOK = parsePreview(current)
-		latestParts, latestOK = parsePreview(latest)
-	}
-	if !currentOK {
-		return false, fmt.Errorf("current version %q does not match %s channel", current, channel)
-	}
-	if !latestOK {
+	if _, ok := parseConcreteVersion(latest); !ok {
 		return false, fmt.Errorf("release version %q does not match %s channel", latest, channel)
 	}
-	if currentParts[0] != latestParts[0] {
-		return false, fmt.Errorf("native update cannot change major version from %d to %d", currentParts[0], latestParts[0])
-	}
-	if current == latest {
-		return false, nil
-	}
-	if !greater(latestParts, currentParts) {
-		return false, fmt.Errorf("native update requires a strictly newer release than %s", current)
-	}
-	return true, nil
+	return latest != current, nil
+}
+
+func parseConcreteVersion(value string) (string, bool) {
+	value = strings.TrimSpace(strings.TrimPrefix(value, "v"))
+	if stable, ok := parseStable(value); ok { return fmt.Sprintf("%d.%d.%d", stable[0], stable[1], stable[2]), true }
+	if preview, ok := parsePreview(value); ok { return fmt.Sprintf("%d.%d.%d-preview.%d", preview[0], preview[1], preview[2], preview[3]), true }
+	return "", false
 }

@@ -8,10 +8,12 @@ package management
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,8 +27,21 @@ import (
 
 var changelogHeading = regexp.MustCompile(`^##\s+([^\s—-]+)\s*(?:[—-]\s*(\d{4}-\d{2}-\d{2}))?\s*$`)
 
+const (
+	maxPairClaimBody   = 4 << 10
+	maxPairAttempts    = 5
+	pairAttemptWindow  = time.Minute
+	defaultDrainWindow = time.Minute
+	maxDrainWindow     = 5 * time.Minute
+)
+
 func isUnauthenticatedPairingClaim(method, path string) bool {
 	return method == http.MethodPost && path == "/api/host/pair/claim"
+}
+
+func writeNoStoreJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, value)
 }
 
 type nativeChangelogRelease struct {
@@ -41,6 +56,11 @@ type nativeHostHistoryEntry struct {
 	Reason    string    `json:"reason"`
 	Hostname  string    `json:"hostname"`
 	Port      int       `json:"port"`
+}
+
+type nativeHostHistoryStored struct {
+	nativeHostHistoryEntry
+	Config json.RawMessage `json:"config"`
 }
 
 func parseNativeChangelog(markdown string) []nativeChangelogRelease {
@@ -108,13 +128,14 @@ func (a *API) handleParityRoutes(w http.ResponseWriter, r *http.Request) bool {
 	case path == "/api/host/pair/claim" && r.Method == http.MethodPost:
 		return a.handleNativePairClaim(w, r)
 	case path == "/api/host/export" && r.Method == http.MethodGet:
-		payload, err := json.Marshal(safeConfig(a.config))
+		bundle := map[string]any{"kind": "opencodex-export", "exportedAt": time.Now().UTC().Format(time.RFC3339Nano), "warning": "Native export is sanitized and omits provider keys, OAuth tokens, and other secret-bearing state.", "config": safeConfig(a.config), "divergence": "Full TypeScript state-bundle export is not yet available on the native line."}
+		payload, err := json.Marshal(bundle)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not serialize export")
 			return true
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", `attachment; filename="opencodex-config.json"`)
+		w.Header().Set("Content-Disposition", `attachment; filename="opencodex-export.json"`)
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(payload)
 		return true
@@ -128,9 +149,29 @@ func (a *API) handleParityRoutes(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	case path == "/api/host/restore" && r.Method == http.MethodPost:
 		return a.handleNativeHostRestore(w, r)
-		return true
 	case path == "/api/host/exit" && r.Method == http.MethodPost:
-		writeJSON(w, http.StatusAccepted, map[string]any{"success": true, "status": "stopping"})
+		var body struct {
+			DrainMS int  `json:"drainMs"`
+			Force   bool `json:"force"`
+		}
+		if r.ContentLength != 0 && !decodeJSON(w, r, &body) {
+			return true
+		}
+		drain := defaultDrainWindow
+		if body.DrainMS > 0 {
+			drain = time.Duration(body.DrainMS) * time.Millisecond
+			if drain > maxDrainWindow {
+				drain = maxDrainWindow
+			}
+		}
+		if a.drain != nil {
+			drained, remaining := a.drain(drain)
+			if !drained && !body.Force {
+				writeJSON(w, http.StatusConflict, map[string]any{"success": false, "reason": "sessions-in-progress", "activeTurnCount": remaining})
+				return true
+			}
+		}
+		writeNoStoreJSON(w, http.StatusAccepted, map[string]any{"success": true, "status": "stopping", "drained": true})
 		if a.stop != nil {
 			go a.stop()
 		}
@@ -237,20 +278,48 @@ func (a *API) handleNativeExport(w http.ResponseWriter, r *http.Request) bool {
 
 func (a *API) handleNativeHost(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"hostname": a.config.Host, "port": a.config.Port, "exposed": !isLoopbackHost(a.config.Host), "credentialPresent": len(a.config.APIKeys) > 0, "restartRequired": false})
+		writeJSON(w, http.StatusOK, a.nativeHostStatus(false, nil))
 		return true
 	}
 	var body struct {
-		Exposed  *bool  `json:"exposed"`
-		Hostname string `json:"hostname"`
+		Exposed          *bool  `json:"exposed"`
+		Hostname         string `json:"hostname"`
+		NewKeyName       string `json:"newKeyName"`
+		CustomKeyValue   string `json:"customKeyValue"`
+		MintKeyIfMissing bool   `json:"mintKeyIfMissing"`
 	}
 	if !decodeJSON(w, r, &body) {
+		return true
+	}
+	if body.Exposed == nil && body.CustomKeyValue != "" {
+		before, err := cloneParityConfig(a.config)
+		if err != nil {
+			writeError(w, 500, "could not prepare host settings")
+			return true
+		}
+		key, errText := addNativeCustomKey(a.config, body.NewKeyName, body.CustomKeyValue)
+		if errText != "" {
+			writeError(w, http.StatusBadRequest, errText)
+			return true
+		}
+		if err := a.persistParityConfig(); err != nil {
+			*a.config = *before
+			writeNoStoreJSON(w, 500, map[string]any{"error": "host key could not be saved"})
+			return true
+		}
+		writeNoStoreJSON(w, http.StatusOK, a.nativeHostStatus(false, &key))
 		return true
 	}
 	if body.Exposed == nil {
 		writeError(w, http.StatusBadRequest, "exposed must be true or false")
 		return true
 	}
+	before, err := cloneParityConfig(a.config)
+	if err != nil {
+		writeError(w, 500, "could not prepare host settings")
+		return true
+	}
+	var mintedKey *string
 	if *body.Exposed {
 		host := strings.TrimSpace(body.Hostname)
 		if host == "" {
@@ -260,34 +329,77 @@ func (a *API) handleNativeHost(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusBadRequest, "hostname is a loopback address")
 			return true
 		}
+		if body.CustomKeyValue != "" {
+			key, errText := addNativeCustomKey(a.config, body.NewKeyName, body.CustomKeyValue)
+			if errText != "" {
+				writeError(w, http.StatusBadRequest, errText)
+				return true
+			}
+			mintedKey = &key
+		} else if body.MintKeyIfMissing && len(a.config.APIKeys) == 0 {
+			key, err := mintNativeDataPlaneKey(a.config, body.NewKeyName)
+			if err != nil {
+				writeError(w, 500, err.Error())
+				return true
+			}
+			mintedKey = &key
+		} else if body.NewKeyName != "" {
+			key, err := mintNativeDataPlaneKey(a.config, body.NewKeyName)
+			if err != nil {
+				writeError(w, 500, err.Error())
+				return true
+			}
+			mintedKey = &key
+		}
 		if len(a.config.APIKeys) == 0 {
 			writeError(w, http.StatusConflict, "a data-plane credential is required before exposing the host")
 			return true
 		}
-		a.recordHostHistory("before host exposure")
 		a.config.Host = host
 	} else {
-		a.recordHostHistory("before host exposure disabled")
 		a.config.Host = config.DefaultHost
 	}
 	if err := a.persistParityConfig(); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not persist host settings")
+		*a.config = *before
+		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "host settings could not be saved"})
 		return true
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hostname": a.config.Host, "port": a.config.Port, "exposed": !isLoopbackHost(a.config.Host), "credentialPresent": len(a.config.APIKeys) > 0, "restartRequired": true})
+	a.recordHostHistory("host settings changed")
+	writeNoStoreJSON(w, http.StatusOK, a.nativeHostStatus(true, mintedKey))
 	return true
+}
+
+func (a *API) nativeHostStatus(restartRequired bool, mintedKey *string) map[string]any {
+	host := a.config.Host
+	if strings.TrimSpace(host) == "" {
+		host = config.DefaultHost
+	}
+	result := map[string]any{"hostname": host, "port": a.config.Port, "exposed": !isLoopbackHost(host), "credentialConfigured": len(a.config.APIKeys) > 0, "urls": []string{}, "debugSandbox": false, "restartRequired": restartRequired}
+	if mintedKey != nil {
+		result["mintedKey"] = *mintedKey
+	}
+	return result
 }
 
 func (a *API) hostHistoryPath() string { return a.parityConfigPath("host-history.json") }
 
 func (a *API) readHostHistory() []nativeHostHistoryEntry {
+	stored := a.readHostHistoryStored()
+	entries := make([]nativeHostHistoryEntry, 0, len(stored))
+	for _, entry := range stored {
+		entries = append(entries, entry.nativeHostHistoryEntry)
+	}
+	return entries
+}
+
+func (a *API) readHostHistoryStored() []nativeHostHistoryStored {
 	data, err := os.ReadFile(a.hostHistoryPath())
 	if err != nil {
-		return []nativeHostHistoryEntry{}
+		return []nativeHostHistoryStored{}
 	}
-	var entries []nativeHostHistoryEntry
+	var entries []nativeHostHistoryStored
 	if json.Unmarshal(data, &entries) != nil {
-		return []nativeHostHistoryEntry{}
+		return []nativeHostHistoryStored{}
 	}
 	return entries
 }
@@ -297,8 +409,12 @@ func (a *API) recordHostHistory(reason string) {
 	if path == "" {
 		return
 	}
-	entries := a.readHostHistory()
-	entries = append(entries, nativeHostHistoryEntry{ID: fmt.Sprintf("host-%d", time.Now().UnixNano()), CreatedAt: time.Now().UTC(), Reason: reason, Hostname: a.config.Host, Port: a.config.Port})
+	entries := a.readHostHistoryStored()
+	snapshot, err := json.Marshal(a.config)
+	if err != nil {
+		return
+	}
+	entries = append(entries, nativeHostHistoryStored{nativeHostHistoryEntry: nativeHostHistoryEntry{ID: fmt.Sprintf("host-%d", time.Now().UnixNano()), CreatedAt: time.Now().UTC(), Reason: reason, Hostname: a.config.Host, Port: a.config.Port}, Config: snapshot})
 	if len(entries) > 32 {
 		entries = entries[len(entries)-32:]
 	}
@@ -311,7 +427,9 @@ func (a *API) recordHostHistory(reason string) {
 
 func (a *API) handleNativeHostRestore(w http.ResponseWriter, r *http.Request) bool {
 	var body struct {
-		Commit string `json:"commit"`
+		Commit  string `json:"commit"`
+		DrainMS int    `json:"drainMs"`
+		Force   bool   `json:"force"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return true
@@ -321,8 +439,8 @@ func (a *API) handleNativeHostRestore(w http.ResponseWriter, r *http.Request) bo
 		writeError(w, http.StatusBadRequest, "commit is required")
 		return true
 	}
-	var selected *nativeHostHistoryEntry
-	for _, entry := range a.readHostHistory() {
+	var selected *nativeHostHistoryStored
+	for _, entry := range a.readHostHistoryStored() {
 		if entry.ID == commit {
 			copy := entry
 			selected = &copy
@@ -333,15 +451,59 @@ func (a *API) handleNativeHostRestore(w http.ResponseWriter, r *http.Request) bo
 		writeError(w, http.StatusNotFound, "history entry not found")
 		return true
 	}
-	a.config.Host = selected.Hostname
-	a.config.Port = selected.Port
+	drain := defaultDrainWindow
+	if body.DrainMS > 0 {
+		drain = time.Duration(body.DrainMS) * time.Millisecond
+		if drain > maxDrainWindow {
+			drain = maxDrainWindow
+		}
+	}
+	if a.drain != nil {
+		drained, remaining := a.drain(drain)
+		if !drained && !body.Force {
+			writeJSON(w, http.StatusConflict, map[string]any{"success": false, "reason": "sessions-in-progress", "activeTurnCount": remaining})
+			return true
+		}
+	}
+	var restored config.Config
+	if len(selected.Config) == 0 || json.Unmarshal(selected.Config, &restored) != nil {
+		writeError(w, http.StatusConflict, "history entry has no restorable configuration")
+		return true
+	}
+	before, err := cloneParityConfig(a.config)
+	if err != nil {
+		writeError(w, 500, "could not prepare restore")
+		return true
+	}
+	*a.config = restored
 	if err := a.persistParityConfig(); err != nil {
+		*a.config = *before
 		writeError(w, http.StatusInternalServerError, "could not persist restored host settings")
 		return true
 	}
 	a.recordHostHistory("restored " + selected.ID)
-	writeJSON(w, http.StatusAccepted, map[string]any{"success": true, "restored": selected.ID, "restartRequired": true})
+	restarting := a.restart != nil && a.restart.Restart != nil
+	if restarting {
+		a.scheduleParityRestart()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "restored": selected.ID, "restartRequired": restarting})
 	return true
+}
+
+func (a *API) scheduleParityRestart() {
+	if a.restart == nil || a.restart.Restart == nil {
+		return
+	}
+	schedule := a.restart.Schedule
+	if schedule == nil {
+		schedule = func(fn func(), delay time.Duration) { time.AfterFunc(delay, fn) }
+	}
+	schedule(func() {
+		if a.restart.Drain != nil {
+			a.restart.Drain(defaultDrainWindow)
+		}
+		a.restart.Restart()
+	}, 200*time.Millisecond)
 }
 
 func (a *API) handleNativePair(w http.ResponseWriter, r *http.Request) bool {
@@ -350,53 +512,126 @@ func (a *API) handleNativePair(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method == http.MethodDelete {
 		a.pairToken = ""
 		a.pairExpires = time.Time{}
-		writeJSON(w, http.StatusOK, map[string]any{"cancelled": true})
+		writeNoStoreJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return true
 	}
-	if a.pairToken != "" && time.Now().Before(a.pairExpires) {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "a pairing token is already active"})
-		return true
-	}
-	var raw [24]byte
+	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		writeError(w, 500, "could not create pairing token")
+		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not create pairing token"})
 		return true
 	}
 	a.pairToken = base64.RawURLEncoding.EncodeToString(raw[:])
 	a.pairExpires = time.Now().Add(5 * time.Minute)
-	writeJSON(w, http.StatusOK, map[string]any{"token": a.pairToken, "expiresAt": a.pairExpires.UTC().Format(time.RFC3339)})
+	a.pairWindow = time.Now()
+	a.pairAttempts = 0
+	writeNoStoreJSON(w, http.StatusOK, map[string]any{"token": a.pairToken, "expiresAt": a.pairExpires.UnixMilli()})
 	return true
 }
 
 func (a *API) handleNativePairClaim(w http.ResponseWriter, r *http.Request) bool {
+	a.pairMu.Lock()
+	defer a.pairMu.Unlock()
+	now := time.Now()
+	if a.pairWindow.IsZero() || now.Sub(a.pairWindow) >= pairAttemptWindow {
+		a.pairWindow = now
+		a.pairAttempts = 0
+	}
+	a.pairAttempts++
+	if a.pairAttempts > maxPairAttempts {
+		w.Header().Set("Retry-After", "60")
+		writeNoStoreJSON(w, http.StatusTooManyRequests, map[string]any{"error": "too many pairing attempts"})
+		return true
+	}
+	limited := http.MaxBytesReader(w, r.Body, maxPairClaimBody)
+	rawBody, err := io.ReadAll(limited)
+	if err != nil || len(rawBody) > maxPairClaimBody {
+		writeNoStoreJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "pairing request was too large"})
+		return true
+	}
 	var body struct {
 		Token string `json:"token"`
 	}
-	if !decodeJSON(w, r, &body) || len(body.Token) < 20 || len(body.Token) > 128 {
-		writeError(w, http.StatusBadRequest, "invalid pairing token")
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		writeNoStoreJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid JSON"})
 		return true
 	}
-	a.pairMu.Lock()
-	defer a.pairMu.Unlock()
-	if body.Token != a.pairToken || a.pairToken == "" || !time.Now().Before(a.pairExpires) {
-		writeError(w, http.StatusUnauthorized, "pairing token is invalid or expired")
+	if len(body.Token) != 43 || a.pairToken == "" || !now.Before(a.pairExpires) {
+		writeNoStoreJSON(w, http.StatusBadRequest, map[string]any{"error": "pairing token was not accepted", "reason": "expired"})
 		return true
 	}
+	if subtle.ConstantTimeCompare([]byte(body.Token), []byte(a.pairToken)) != 1 {
+		writeNoStoreJSON(w, http.StatusBadRequest, map[string]any{"error": "pairing token was not accepted", "reason": "mismatch"})
+		return true
+	}
+	previous, cloneErr := cloneParityConfig(a.config)
+	if cloneErr != nil {
+		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "the pairing key could not be saved"})
+		return true
+	}
+	oldToken, oldExpiry, oldWindow, oldAttempts := a.pairToken, a.pairExpires, a.pairWindow, a.pairAttempts
 	a.pairToken = ""
 	a.pairExpires = time.Time{}
-	var raw [24]byte
+	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		writeError(w, 500, "could not create data-plane key")
+		a.pairToken, a.pairExpires, a.pairWindow, a.pairAttempts = oldToken, oldExpiry, oldWindow, oldAttempts
+		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "the pairing key could not be saved"})
 		return true
 	}
 	key := "ocx_" + base64.RawURLEncoding.EncodeToString(raw[:])
-	a.config.APIKeys = append(a.config.APIKeys, config.ProxyAPIKey{ID: fmt.Sprintf("pair-%d", time.Now().UnixNano()), Name: "paired device", Key: key, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	a.config.APIKeys = append(a.config.APIKeys, config.ProxyAPIKey{ID: fmt.Sprintf("pair-%d", time.Now().UnixNano()), Name: "Paired device", Key: key, CreatedAt: now.UTC().Format(time.RFC3339)})
 	if err := a.persistParityConfig(); err != nil {
-		writeError(w, 500, "could not persist paired credential")
+		*a.config = *previous
+		a.pairToken, a.pairExpires, a.pairWindow, a.pairAttempts = oldToken, oldExpiry, oldWindow, oldAttempts
+		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "the pairing key could not be saved"})
 		return true
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"key": key, "expiresAt": time.Now().UTC().Add(5 * time.Minute).Format(time.RFC3339)})
+	writeNoStoreJSON(w, http.StatusOK, map[string]any{"key": key})
 	return true
+}
+
+func cloneParityConfig(source *config.Config) (*config.Config, error) {
+	data, err := json.Marshal(source)
+	if err != nil {
+		return nil, err
+	}
+	var clone config.Config
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return nil, err
+	}
+	return &clone, nil
+}
+
+func mintNativeDataPlaneKey(cfg *config.Config, name string) (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("could not create data-plane key")
+	}
+	key := "ocx_" + base64.RawURLEncoding.EncodeToString(raw[:])
+	if strings.TrimSpace(name) == "" {
+		name = "network"
+	}
+	cfg.APIKeys = append(cfg.APIKeys, config.ProxyAPIKey{ID: fmt.Sprintf("key-%d", time.Now().UnixNano()), Name: name, Key: key, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	return key, nil
+}
+
+func addNativeCustomKey(cfg *config.Config, name, value string) (string, string) {
+	key := strings.TrimSpace(value)
+	if len(key) < 12 {
+		return "", "custom key must be at least 12 characters"
+	}
+	if strings.IndexFunc(key, func(r rune) bool { return r == '\r' || r == '\n' || r == ' ' || r == '\t' }) >= 0 {
+		return "", "custom key must not contain whitespace"
+	}
+	for _, existing := range cfg.APIKeys {
+		if existing.Key == key {
+			return "", "a key with this exact value already exists"
+		}
+	}
+	if strings.TrimSpace(name) == "" {
+		name = "custom"
+	}
+	cfg.APIKeys = append(cfg.APIKeys, config.ProxyAPIKey{ID: fmt.Sprintf("key-%d", time.Now().UnixNano()), Name: name, Key: key, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	return key, ""
 }
 
 func (a *API) handleNativeLaunchList(w http.ResponseWriter) bool {
@@ -440,7 +675,7 @@ func (a *API) handleNativeTerminal(w http.ResponseWriter, r *http.Request) bool 
 
 func isLoopbackHost(host string) bool {
 	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
-	return host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" || host == "::"
+	return host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func csvEscape(value string) string { return `"` + strings.ReplaceAll(value, `"`, `""`) + `"` }
