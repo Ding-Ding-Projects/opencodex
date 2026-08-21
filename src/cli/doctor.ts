@@ -228,8 +228,18 @@ export type DesktopCliPathStatus =
   | { present: false }
   | {
       present: true;
+      action: "install" | "uninstall" | null;
+      state: "installed" | "removed" | "unresolved" | "rollback-recovered" | "rollback-failed" | "replacement-conflict";
       ok: boolean;
       binDir: string;
+      shimPath: string | null;
+      shimPresent: boolean;
+      owned: boolean | null;
+      removed: boolean | null;
+      transactionRecovered: boolean | null;
+      rollbackFailed: boolean | null;
+      replacementConflict: boolean;
+      claimPath: string | null;
       reason: string | null;
       manualCommand: string | null;
       at: string | null;
@@ -246,18 +256,55 @@ export function collectDesktopCliPathStatus(configDir: string = getConfigDir()):
   if (!existsSync(statusPath)) return { present: false };
   try {
     const raw = JSON.parse(readFileSync(statusPath, "utf8")) as {
+      action?: unknown;
       ok?: unknown;
       binDir?: unknown;
+      owned?: unknown;
+      removed?: unknown;
+      transactionRecovered?: unknown;
+      rollbackFailed?: unknown;
+      replacementConflict?: unknown;
+      claimPath?: unknown;
       reason?: unknown;
       manualCommand?: unknown;
       at?: unknown;
     };
+    const action = raw.action === "install" || raw.action === "uninstall" ? raw.action : null;
+    const binDir = typeof raw.binDir === "string" ? raw.binDir.slice(0, 1024) : "";
+    const shimPath = binDir ? join(binDir, "ocx.cmd") : null;
+    const shimPresent = shimPath ? existsSync(shimPath) : false;
+    const owned = typeof raw.owned === "boolean" ? raw.owned : null;
+    const removed = typeof raw.removed === "boolean" ? raw.removed : null;
+    const transactionRecovered = typeof raw.transactionRecovered === "boolean" ? raw.transactionRecovered : null;
+    const rollbackFailed = typeof raw.rollbackFailed === "boolean" ? raw.rollbackFailed : null;
+    const replacementConflict = raw.replacementConflict === true;
+    const state = replacementConflict
+      ? "replacement-conflict"
+      : rollbackFailed === true
+        ? "rollback-failed"
+        : raw.ok === false && transactionRecovered === true
+          ? "rollback-recovered"
+          : action === "uninstall" && removed === true
+            ? "removed"
+            : action === "install" && raw.ok === true && shimPresent
+              ? "installed"
+              : "unresolved";
     return {
       present: true,
+      action,
+      state,
       ok: raw.ok === true,
-      binDir: typeof raw.binDir === "string" ? raw.binDir : "",
-      reason: typeof raw.reason === "string" ? raw.reason : null,
-      manualCommand: typeof raw.manualCommand === "string" ? raw.manualCommand : null,
+      binDir,
+      shimPath,
+      shimPresent,
+      owned,
+      removed,
+      transactionRecovered,
+      rollbackFailed,
+      replacementConflict,
+      claimPath: typeof raw.claimPath === "string" ? raw.claimPath.slice(0, 1024) : null,
+      reason: typeof raw.reason === "string" ? raw.reason.slice(0, 2000) : null,
+      manualCommand: typeof raw.manualCommand === "string" ? raw.manualCommand.slice(0, 2000) : null,
       at: typeof raw.at === "string" ? raw.at : null,
     };
   } catch {
@@ -757,10 +804,18 @@ export async function runDoctor(args: string[] = []): Promise<void> {
   console.log(`      Running as: ${identity.entryPath}`);
   const cliPathStatus = collectDesktopCliPathStatus();
   if (cliPathStatus.present) {
-    if (cliPathStatus.ok) {
+    if (cliPathStatus.state === "installed") {
       console.log(`  ok  Desktop app PATH install: ocx is on PATH via ${cliPathStatus.binDir || "the desktop app's CLI shim"}`);
+    } else if (cliPathStatus.state === "removed") {
+      console.log("  --  Desktop app PATH install: removed");
+    } else if (cliPathStatus.state === "replacement-conflict") {
+      console.log(`  !!  Desktop app PATH install: replacement conflict; quarantine preserved${cliPathStatus.claimPath ? ` at ${cliPathStatus.claimPath}` : ""}`);
+    } else if (cliPathStatus.state === "rollback-recovered") {
+      console.log(`  !!  Desktop app PATH install: rollback recovered; ${cliPathStatus.reason ?? "no durable state was applied"}`);
+    } else if (cliPathStatus.state === "rollback-failed") {
+      console.log(`  !!  Desktop app PATH install: rollback failed; ${cliPathStatus.reason ?? "manual inspection required"}`);
     } else {
-      console.log(`  !!  Desktop app PATH install failed: ${cliPathStatus.reason ?? "unknown reason"}`);
+      console.log(`  !!  Desktop app PATH install unresolved: ${cliPathStatus.reason ?? (cliPathStatus.shimPresent ? "ownership could not be proven" : "the stable CLI shim is missing")}`);
       if (cliPathStatus.manualCommand) console.log(`      Fix it manually: ${cliPathStatus.manualCommand}`);
     }
   }

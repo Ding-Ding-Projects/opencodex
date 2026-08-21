@@ -397,22 +397,22 @@ export function recordDesktopCliPathStatus(result, deps = {}) {
     now = () => new Date().toISOString(),
   } = deps;
 
-  const rollbackStatus = result.transactionRecovered !== undefined || result.rollbackFailed !== undefined
-    ? { transactionRecovered: result.transactionRecovered === true, rollbackFailed: result.rollbackFailed === true }
-    : {};
-  const record = result.ok
-    ? (result.removed !== undefined || result.owned !== undefined
-      ? { ok: true, binDir: result.binDir, owned: result.owned === true, removed: result.removed === true, ...(result.replacementConflict === true ? { replacementConflict: true, claimPath: result.claimPath } : {}), at: now() }
-      : { ok: true, binDir: result.binDir, at: now() })
-    : {
-      ok: false,
-      binDir: result.binDir,
-      reason: result.reason,
-      manualCommand: result.manualCommand,
-      ...rollbackStatus,
-      ...(result.replacementConflict === true ? { replacementConflict: true, claimPath: result.claimPath } : {}),
-      at: now(),
-    };
+  const bounded = (value, max = 1024) => typeof value === "string" ? value.slice(0, max) : null;
+  const action = result.action === "uninstall" || result.removed !== undefined || result.owned !== undefined ? "uninstall" : "install";
+  const record = {
+    action,
+    ok: result.ok === true,
+    binDir: bounded(result.binDir),
+    reason: bounded(result.reason, 2000),
+    manualCommand: bounded(result.manualCommand, 2000),
+    owned: typeof result.owned === "boolean" ? result.owned : null,
+    removed: typeof result.removed === "boolean" ? result.removed : null,
+    transactionRecovered: typeof result.transactionRecovered === "boolean" ? result.transactionRecovered : null,
+    rollbackFailed: typeof result.rollbackFailed === "boolean" ? result.rollbackFailed : null,
+    replacementConflict: result.replacementConflict === true,
+    claimPath: bounded(result.claimPath),
+    at: now(),
+  };
 
   try {
     mkdir(configDir);

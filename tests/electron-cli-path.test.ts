@@ -87,12 +87,16 @@ describe("planning", () => {
 
 describe("installCliOnPath", () => {
   function baseDeps(overrides: Record<string, unknown> = {}) {
+    let shimExists = false;
     return {
       platform: "win32",
-      exists: (path: string) => path === ensurePathScriptPath(EXEC),
+      exists: (path: string) => path === ensurePathScriptPath(EXEC) || (path === cliShimPath(EXEC) && shimExists),
       readFile: () => undefined,
       mkdir: () => {},
-      writeFile: () => {},
+      writeFile: () => { shimExists = true; },
+      removeFile: () => { shimExists = false; },
+      removeDir: () => {},
+      readDir: () => [],
       runPowerShell: () => ({
         status: 0,
         stdout: JSON.stringify({ ok: true, collision: false, collisionWinner: null }),
@@ -174,6 +178,7 @@ describe("installCliOnPath", () => {
     );
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("ENOENT");
+    expect(result).toMatchObject({ transactionRecovered: false, rollbackFailed: false });
   });
 
   test("fails closed and surfaces stderr when the PATH-repair script exits non-zero", () => {
@@ -183,6 +188,7 @@ describe("installCliOnPath", () => {
     );
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("access denied");
+    expect(result).toMatchObject({ transactionRecovered: false, rollbackFailed: false });
   });
 
   test("fails closed when the PATH-repair script's own JSON reports ok:false", () => {
@@ -191,18 +197,20 @@ describe("installCliOnPath", () => {
       baseDeps({
         runPowerShell: () => ({
           status: 0,
-          stdout: JSON.stringify({ ok: false, reason: "access denied writing HKCU\\Environment" }),
+          stdout: JSON.stringify({ ok: false, reason: "access denied writing HKCU\\Environment", transactionRecovered: true, rollbackFailed: false }),
           stderr: "",
         }),
       }),
     );
     expect(result).toMatchObject({ ok: false, reason: "access denied writing HKCU\\Environment" });
+    expect(result).toMatchObject({ transactionRecovered: true, rollbackFailed: false });
   });
 
   test("fails closed rather than throwing when the PATH-repair script prints unparseable output", () => {
     const result = installCliOnPath(EXEC, baseDeps({ runPowerShell: () => ({ status: 0, stdout: "not json", stderr: "" }) }));
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("could not be parsed");
+    expect(result).toMatchObject({ transactionRecovered: false, rollbackFailed: false });
   });
 
   test("rolls the shim back to its exact prior bytes when PATH repair fails", () => {
@@ -304,7 +312,7 @@ describe("recordDesktopCliPathStatus", () => {
     );
     expect(writes).toHaveLength(1);
     expect(writes[0]!.path).toBe(`C:\\config\\${CLI_PATH_STATUS_FILENAME}`);
-    expect(JSON.parse(writes[0]!.content)).toEqual({ ok: true, binDir: "C:\\bin", at: "2026-08-13T00:00:00.000Z" });
+    expect(JSON.parse(writes[0]!.content)).toEqual({ action: "install", ok: true, binDir: "C:\\bin", reason: null, manualCommand: null, owned: null, removed: null, transactionRecovered: null, rollbackFailed: null, replacementConflict: false, claimPath: null, at: "2026-08-13T00:00:00.000Z" });
   });
 
   test("writes a failure record carrying the reason and manual command", () => {
@@ -314,10 +322,17 @@ describe("recordDesktopCliPathStatus", () => {
       { configDir: "C:\\config", mkdir: () => {}, writeFile: (path: string, content: string) => writes.push({ path, content }), now: () => "2026-08-13T00:00:00.000Z" },
     );
     expect(JSON.parse(writes[0]!.content)).toEqual({
+      action: "install",
       ok: false,
       binDir: "C:\\bin",
       reason: "access denied",
       manualCommand: 'setx PATH "%PATH%;C:\\bin"',
+      owned: null,
+      removed: null,
+      transactionRecovered: null,
+      rollbackFailed: null,
+      replacementConflict: false,
+      claimPath: null,
       at: "2026-08-13T00:00:00.000Z",
     });
   });
