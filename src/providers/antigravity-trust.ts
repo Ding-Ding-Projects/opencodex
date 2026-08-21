@@ -39,12 +39,20 @@ export function assertAntigravityBearerUrl(value: string): void {
 }
 
 /** Re-resolve immediately before dispatch to reduce DNS-rebinding exposure. */
-export async function resolveAntigravityBearerDestination(value: string): Promise<{
+export async function resolveAntigravityBearerDestination(
+  value: string,
+  resolveAddresses: typeof resolvePublicAddresses = resolvePublicAddresses,
+): Promise<{
   origin: string;
   addresses: Array<{ address: string; family: number }>;
 }> {
   assertAntigravityBearerUrl(value);
-  const resolved = await resolvePublicAddresses(value, { context: "Antigravity OAuth bearer", allowPrivateNetwork: false });
+  const resolved = await resolveAddresses(value, { context: "Antigravity OAuth bearer", allowPrivateNetwork: false });
+  for (const address of resolved.addresses) {
+    const literal = address.family === 6 ? `[${address.address}]` : address.address;
+    const assessment = assessUrlDestination(`https://${literal}`);
+    if (assessment && assessment.kind !== "public") throw new Error(`Antigravity OAuth bearer resolved to ${assessment.detail}`);
+  }
   const origin = normalizedOrigin(value)!;
   return { origin, addresses: resolved.addresses };
 }

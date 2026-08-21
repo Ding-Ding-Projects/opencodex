@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fetchAntigravityWithRetry } from "../src/adapters/google-http";
 import { getAntigravityAccountCooldown, clearAntigravityAccountCooldown } from "../src/oauth/antigravity-routing";
-import { assertAntigravityBearerUrl } from "../src/providers/antigravity-trust";
+import { assertAntigravityBearerUrl, resolveAntigravityBearerDestination } from "../src/providers/antigravity-trust";
 import type { AdapterRequest } from "../src/adapters/base";
 
 const originalFetch = globalThis.fetch;
@@ -22,6 +22,13 @@ describe("Antigravity account cooldown recording", () => {
     expect(() => assertAntigravityBearerUrl("https://attacker.example/v1internal:streamGenerateContent?alt=sse")).toThrow(/known HTTPS/);
     expect(() => assertAntigravityBearerUrl("https://127.0.0.1/v1internal:streamGenerateContent?alt=sse")).toThrow(/known HTTPS/);
     expect(() => assertAntigravityBearerUrl("https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?foo=bar")).toThrow(/known HTTPS/);
+  });
+
+  test("rejects a DNS-rebound private peer even after the hostname passed preflight", async () => {
+    await expect(resolveAntigravityBearerDestination(
+      "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+      async () => ({ hostname: "daily-cloudcode-pa.googleapis.com", addresses: [{ address: "10.0.0.4", family: 4 }], privateNetwork: false }),
+    )).rejects.toThrow(/resolved to a private/);
   });
   test("records hard quota exhaustion and does not retry the paid POST", async () => {
     let calls = 0;
