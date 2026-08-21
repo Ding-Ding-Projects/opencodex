@@ -40,6 +40,12 @@ export type ProviderModelDiscoveryFailure = ProviderModelDiscoveryStatus extends
   : never;
 
 const cache = new Map<string, CacheEntry>();
+let cacheGeneration = 0;
+
+/** Monotonic generation for config/management cache invalidation lifecycle boundaries. */
+export function getModelCacheGeneration(): number {
+  return cacheGeneration;
+}
 
 /** Cooldown after a failed live `/models` fetch, so a dead/unreachable provider doesn't re-pay
  * the full fetch timeout on every catalog poll (issue #54: UI stalls behind corporate proxies). */
@@ -134,6 +140,7 @@ export function setCached(provider: string, models: CatalogModel[], now = Date.n
 
 /** Drop one provider's cache (or all) so the next resolve forces a live re-fetch. */
 export function clearModelCache(provider?: string): void {
+  cacheGeneration += 1;
   if (provider) {
     cache.delete(provider);
     failureAt.delete(provider);

@@ -9,6 +9,7 @@ import {
   clearProviderDiscoveryStatus,
   DEFAULT_MODEL_CACHE_TTL_MS,
   getFreshCached,
+  getModelCacheGeneration,
   getStaleCached,
   isModelsFetchCoolingDown,
   markModelsFetchFailure,
@@ -207,6 +208,7 @@ export const lastDropWarnSignature = new Map<string, string>();
 export const retainedWithoutDiscoveryRefs = new Map<string, Set<string>>();
 export const warnedRetained404Refs = new Set<string>();
 let lastWarningReconciledGeneration = -1;
+let lastObservedCacheGeneration = -1;
 
 export function reconcileProviderFetchWarnings(generation: number): number {
   if (generation <= lastWarningReconciledGeneration) return 0;
@@ -227,6 +229,16 @@ export function warnRetainedModel404Once(providerName: string, modelId: string):
   console.warn(
     `[opencodex] Model "${modelId}" on provider "${providerName}" is retained via retainModels but upstream returned 404/model_not_found; the account or project may not be provisioned for it. Remove it from retainModels if it should not be callable.`,
   );
+}
+
+/** Record one authoritative omission cycle; a repeated omission starts a fresh warn-once window. */
+export function recordRetainedOmissionCycle(providerName: string, modelIds: readonly string[]): void {
+  const previous = retainedWithoutDiscoveryRefs.get(providerName);
+  if (previous) {
+    for (const modelId of previous) warnedRetained404Refs.delete(`${providerName}/${modelId}`);
+  }
+  if (modelIds.length > 0) retainedWithoutDiscoveryRefs.set(providerName, new Set(modelIds));
+  else retainedWithoutDiscoveryRefs.delete(providerName);
 }
 
 export const QUIET_AUTHORITATIVE_CATALOG_PROVIDERS = new Set(["kimi", "xai"]);
@@ -288,6 +300,11 @@ export function catalogHintsFromModelsApiItem(providerName: string, item: Provid
 }
 
 export async function fetchProviderModels(name: string, prov: OcxProviderConfig, ttlMs: number, contextCap?: number): Promise<CatalogModel[]> {
+  const cacheGeneration = getModelCacheGeneration();
+  if (cacheGeneration !== lastObservedCacheGeneration) {
+    reconcileProviderFetchWarnings(cacheGeneration);
+    lastObservedCacheGeneration = cacheGeneration;
+  }
   if (prov.authMode === "forward") return []; // ChatGPT backend has no /models
   const apiKey = await resolveModelsAuthToken(name, prov);
   const seedVertexDefault = prov.adapter === "google"
@@ -317,16 +334,15 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
       seedVertexDefault,
     });
     if (options?.recordRetainedDiagnostics === true) {
-      if (merged.retainedConfiguredIds.length > 0) {
-        retainedWithoutDiscoveryRefs.set(name, new Set(merged.retainedConfiguredIds));
-      } else {
-        retainedWithoutDiscoveryRefs.delete(name);
-      }
+      recordRetainedOmissionCycle(name, merged.retainedConfiguredIds);
     } else {
       const prior = retainedWithoutDiscoveryRefs.get(name);
       if (prior) {
         const currentRetained = new Set(prov.retainModels ?? []);
         const stillApplicable = [...prior].filter(id => currentRetained.has(id) && merged.models.some(model => model.id === id));
+        for (const modelId of prior) {
+          if (!stillApplicable.includes(modelId)) warnedRetained404Refs.delete(`${name}/${modelId}`);
+        }
         if (stillApplicable.length > 0) retainedWithoutDiscoveryRefs.set(name, new Set(stillApplicable));
         else retainedWithoutDiscoveryRefs.delete(name);
       }
@@ -499,10 +515,7 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
       contextCap,
       seedVertexDefault,
     });
-    retainedWithoutDiscoveryRefs.delete(name);
-    if (mergedLive.retainedConfiguredIds.length > 0) {
-      retainedWithoutDiscoveryRefs.set(name, new Set(mergedLive.retainedConfiguredIds));
-    }
+    recordRetainedOmissionCycle(name, mergedLive.retainedConfiguredIds);
     const droppedConfiguredIds = mergedLive.droppedConfiguredIds;
     live.splice(0, live.length, ...mergedLive.models);
     if (live.length === 0 && name !== OPENAI_API_PROVIDER_ID) {

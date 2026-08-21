@@ -11,6 +11,7 @@ import {
   multiAgentGuidanceEnabled,
   providerBaseUrlConfigError,
   providerHeadersConfigError,
+  normalizeNonBlankStringArray,
   saveConfigPreservingClaudeCode,
 } from "../../config";
 import {
@@ -304,6 +305,19 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         next.modelDisplayNames = Object.fromEntries(
           Object.entries(labels as Record<string, string>).map(([modelId, label]) => [modelId, label.trim()]),
         );
+      }
+      touched = true;
+    }
+    if (Object.hasOwn(rawBody, "retainModels")) {
+      const retainModels = rawBody.retainModels;
+      if (retainModels === undefined || retainModels === null) {
+        delete next.retainModels;
+      } else if (!Array.isArray(retainModels) || retainModels.some(value => typeof value !== "string" || value.trim().length === 0)) {
+        return jsonResponse({ error: "retainModels must contain only nonblank strings" }, 400);
+      } else {
+        const normalized = normalizeNonBlankStringArray(retainModels);
+        if (normalized.length > 256) return jsonResponse({ error: "retainModels may contain at most 256 model ids" }, 400);
+        next.retainModels = normalized;
       }
       touched = true;
     }

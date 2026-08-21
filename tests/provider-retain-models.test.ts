@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mergeConfiguredModelsIntoLiveCatalog } from "../src/codex/catalog/provider-fetch";
+import {
+  mergeConfiguredModelsIntoLiveCatalog,
+  recordRetainedOmissionCycle,
+  reconcileProviderFetchWarnings,
+  retainedWithoutDiscoveryRefs,
+  warnRetainedModel404Once,
+  warnedRetained404Refs,
+} from "../src/codex/catalog/provider-fetch";
 import { nonBlankStringArrayConfigError } from "../src/config";
 import type { CatalogModel } from "../src/codex/catalog/parsing";
 import type { OcxProviderConfig } from "../src/types";
@@ -118,5 +125,31 @@ describe("#1690 retainModels provider configuration", () => {
   test("rejects blank retainModels entries without rejecting a missing optional field", () => {
     expect(nonBlankStringArrayConfigError(undefined, "retainModels")).toBeNull();
     expect(nonBlankStringArrayConfigError(["  "], "retainModels")).toContain("nonblank");
+  });
+
+  test("starts a fresh warning window for a new omission cycle and clears removed models", () => {
+    reconcileProviderFetchWarnings(100);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+    try {
+      recordRetainedOmissionCycle("provider-a", ["model-a"]);
+      warnRetainedModel404Once("provider-a", "model-a");
+      warnRetainedModel404Once("provider-a", "model-a");
+      expect(warnings).toHaveLength(1);
+      recordRetainedOmissionCycle("provider-a", ["model-a"]);
+      warnRetainedModel404Once("provider-a", "model-a");
+      expect(warnings).toHaveLength(2);
+      recordRetainedOmissionCycle("provider-a", []);
+      expect(retainedWithoutDiscoveryRefs.has("provider-a")).toBe(false);
+      expect(warnedRetained404Refs.has("provider-a/model-a")).toBe(false);
+      warnRetainedModel404Once("provider-a", "model-a");
+      expect(warnings).toHaveLength(2);
+      recordRetainedOmissionCycle("provider-b", ["model-b"]);
+      warnRetainedModel404Once("provider-b", "model-b");
+      expect(warnings).toHaveLength(3);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });
