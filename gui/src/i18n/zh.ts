@@ -249,6 +249,8 @@ export const zh: Record<TKey, string> = {
   "dash.updateStatus.restarting": "更新已安装。正在重启代理。",
   "dash.updateStatus.succeeded": "更新完成。",
   "dash.updateStatus.failed": "更新失败。",
+  "dash.updateStatus.cancelled": "更新已取消。",
+  "dash.updateManualRestart": "请手动重启代理以使用新版本。",
 
   // providers
   "prov.subtitle": "配置 opencodex 路由到 Codex 的上游提供方。使用账户登录、添加提供方，或编辑原始配置。",

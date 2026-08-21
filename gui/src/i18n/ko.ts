@@ -249,6 +249,8 @@ export const ko: Record<TKey, string> = {
   "dash.updateStatus.restarting": "업데이트 설치 완료. 프록시를 재시작하는 중입니다.",
   "dash.updateStatus.succeeded": "업데이트가 완료됐습니다.",
   "dash.updateStatus.failed": "업데이트에 실패했습니다.",
+  "dash.updateStatus.cancelled": "업데이트가 취소됐습니다.",
+  "dash.updateManualRestart": "새 버전을 사용하려면 프록시를 수동으로 재시작하세요.",
 
   // providers
   "prov.subtitle": "opencodex가 Codex로 라우팅하는 업스트림 프로바이더를 설정합니다. 계정으로 로그인하거나, 프로바이더를 추가하거나, 원본 설정을 편집하세요.",

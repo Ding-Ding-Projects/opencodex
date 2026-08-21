@@ -86,7 +86,7 @@ export interface ShadowCallData { enabled: boolean; model: string }
 export interface UsageSummary30d { summary: { requests: number; totalTokens: number; coverageRatio: number } }
 export type UpdateChannel = "latest" | "preview";
 export type Installer = "npm" | "bun" | "source";
-export type UpdateJobStatus = "running" | "restarting" | "succeeded" | "failed";
+export type UpdateJobStatus = "running" | "restarting" | "succeeded" | "failed" | "cancelled";
 export interface SyncResult {
   ok: boolean;
   added: number;
@@ -158,6 +158,7 @@ export function updateJobLabel(status: UpdateJobStatus, t: (key: TKey) => string
     case "restarting": return t("dash.updateStatus.restarting");
     case "succeeded": return t("dash.updateStatus.succeeded");
     case "failed": return t("dash.updateStatus.failed");
+    case "cancelled": return t("dash.updateStatus.cancelled");
   }
 }
 

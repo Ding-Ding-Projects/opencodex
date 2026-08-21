@@ -259,6 +259,8 @@ export const en = {
   "dash.updateStatus.restarting": "Update installed. Restarting proxy.",
   "dash.updateStatus.succeeded": "Update finished.",
   "dash.updateStatus.failed": "Update failed.",
+  "dash.updateStatus.cancelled": "Update cancelled.",
+  "dash.updateManualRestart": "Restart the proxy manually to use the new version.",
 
   // providers
   "prov.subtitle": "Configure the upstream providers opencodex routes into Codex. Log in with an account, add a provider, or edit the raw config.",

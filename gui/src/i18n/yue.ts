@@ -291,6 +291,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "dash.updateStatus.restarting": "更新裝好咗。重啟緊 proxy。",
   "dash.updateStatus.succeeded": "更新完成。",
   "dash.updateStatus.failed": "更新失敗。",
+  "dash.updateStatus.cancelled": "更新取消咗。",
+  "dash.updateManualRestart": "要用新版本，請手動重啟 proxy。",
 
   // ---- providers ----
   "prov.subtitle": "設定 opencodex 路由入 Codex 嘅上游供應商。可以用帳戶登入、加供應商，或者直接改原始 config。",
