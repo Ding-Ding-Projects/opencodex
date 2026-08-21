@@ -1,9 +1,11 @@
 import type { AdapterEvent, OcxMessagePhase, OcxProviderContinuationState, OcxUsage } from "./types";
 import { adapterFailureFromMessage, classifyError, CYBER_POLICY_ERROR_CODE, isCyberPolicyCode, type OcxErrorPayload } from "./lib/errors";
+import { repairFreeformToolInput } from "./responses/apply-patch-envelope";
 import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
 import { usageDisplayTotalTokens } from "./usage/totals";
+import { rewriteGrokNativeCallsForCodexExec } from "./adapters/grok-structured-edit";
 
 function uuid(): string {
   return crypto.randomUUID().replace(/-/g, "");
@@ -133,6 +135,8 @@ export function bridgeToResponsesSSE(
      * from this callback instead of re-parsing the bridged SSE.
      */
     onUsage?: (usage: OcxUsage | undefined) => void;
+    /** Exact Grok native tool names introduced for this request. */
+    convertedGrokNativeToolNames?: ReadonlySet<string>;
     /**
      * Test seam for the wire/stall beat loop. Production omits this and uses the
      * global timers; injecting here must not change scheduling semantics.
@@ -143,14 +147,17 @@ export function bridgeToResponsesSSE(
     };
   },
 ): ReadableStream<Uint8Array> {
+  events = rewriteGrokNativeCallsForCodexExec(
+    events,
+    freeformToolNames,
+    undefined,
+    options?.convertedGrokNativeToolNames,
+  );
   const setBeatInterval = options?.timers?.setInterval ?? ((handler: () => void, ms: number) => setInterval(handler, ms));
   const clearBeatInterval = options?.timers?.clearInterval ?? ((id: unknown) => clearInterval(id as ReturnType<typeof setInterval>));
   // Freeform/custom tools (apply_patch) carry their body in `input`; the model is given a
   // function with `{input:string}`, so unwrap it here when relaying back as a custom_tool_call.
-  const freeformInput = (args: string): string => {
-    try { const o = JSON.parse(args); if (o && typeof o.input === "string") return o.input; } catch { /* raw */ }
-    return args;
-  };
+  const freeformInput = (args: string, toolName: string): string => repairFreeformToolInput(args, toolName);
   // Best-effort unwrap of a PARTIAL freeform arg buffer for live input streaming
   // (`response.custom_tool_call_input.delta` — codex-rs uses it for UI preview only;
   // the completed custom_tool_call item stays authoritative). Compact `{"input":"...`
@@ -390,7 +397,7 @@ export function bridgeToResponsesSSE(
         if (currentToolCall.freeform) {
           emit("response.custom_tool_call_input.done", {
             item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex,
-            input: freeformInput(currentToolCall.args),
+            input: freeformInput(currentToolCall.args, currentToolCall.name),
           });
         }
         const item = currentToolCall.toolSearch
@@ -403,7 +410,7 @@ export function bridgeToResponsesSSE(
           ? {
               type: "custom_tool_call", id: currentToolCall.itemId,
               call_id: currentToolCall.callId, name: currentToolCall.name,
-              input: freeformInput(currentToolCall.args), status: "completed",
+              input: freeformInput(currentToolCall.args, currentToolCall.name), status: "completed",
             }
           : {
               type: "function_call", id: currentToolCall.itemId,
@@ -963,10 +970,7 @@ export function buildResponseJSON(
   // Web-search citations awaiting the next assistant message (attached as url_citation annotations).
   let pendingWebSources: { url: string; title?: string }[] = [];
 
-  const freeformInput = (args: string): string => {
-    try { const o = JSON.parse(args); if (o && typeof o.input === "string") return o.input; } catch { /* raw */ }
-    return args;
-  };
+  const freeformInput = (args: string, toolName: string): string => repairFreeformToolInput(args, toolName);
   const parseArgsObj = (args: string): Record<string, unknown> => {
     try { const o = JSON.parse(args); return o && typeof o === "object" ? o : {}; } catch { return {}; }
   };
@@ -1038,7 +1042,7 @@ export function buildResponseJSON(
       output.push({
         type: "custom_tool_call", id: `ctc_${uuid()}`,
         call_id: currentToolCallId, name: realName,
-        input: freeformInput(currentToolCallArgs), status: "completed",
+        input: freeformInput(currentToolCallArgs, realName), status: "completed",
       });
     } else {
       output.push({

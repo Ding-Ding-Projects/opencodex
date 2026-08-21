@@ -10,6 +10,13 @@ import { contentPartsToText } from "./image";
 import { neutralizeIdentity } from "./identity";
 import { buildNonOpenAIToolCatalogNudgeForTools, shouldInjectNonOpenAIToolCatalogNudge } from "./tool-catalog-nudge";
 import { openRouterProviderPayload, resolveOpenRouterRouting } from "../providers/openrouter-routing";
+import {
+  grokFacingTools,
+  grokNativeCatalogTools,
+  reconstructGrokToolCallFromExec,
+  rewriteCodexFileEditGuidanceForGrok,
+} from "./grok-structured-edit";
+import { effectiveInstructionText } from "./tool-catalog-nudge";
 
 // Providers may opt into stripping one trailing "[...]" group from the wire model id.
 // Z.AI needs this because its OpenAI path rejects glm-5.2[1m] with 400 code 1211;
@@ -119,8 +126,17 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
     releaseDeferredBarriers();
   };
 
+  const grokInstructions = effectiveInstructionText(context.messages, context.systemPrompt);
+  const grokTools = grokFacingTools(context.tools, options.toolChoice, provider, grokInstructions);
+  const grokNativeToolNames = new Set(grokNativeCatalogTools(
+    context.tools,
+    options.toolChoice,
+    provider,
+    grokInstructions,
+  ).map(tool => tool.name));
+  const restoreGrokHistory = grokNativeToolNames.size > 0;
   const toolCatalogNudge = shouldInjectNonOpenAIToolCatalogNudge(provider)
-    ? buildNonOpenAIToolCatalogNudgeForTools(context.tools, options.toolChoice)
+    ? buildNonOpenAIToolCatalogNudgeForTools(grokTools ?? context.tools, options.toolChoice)
     : undefined;
   // Chat templates used by LM Studio, llama.cpp, and other strict OpenAI-compatible
   // backends require every system instruction to precede conversation history. Codex can
@@ -131,9 +147,10 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
   const developerSystemParts = context.messages
     .map(developerSystemText)
     .filter((part): part is string => part !== undefined && part.length > 0);
+  const grokEditGuidance = restoreGrokHistory ? rewriteCodexFileEditGuidanceForGrok : (text: string) => text;
   const systemParts = [
-    ...(context.systemPrompt ?? []),
-    ...developerSystemParts,
+    ...(context.systemPrompt ?? []).map(grokEditGuidance),
+    ...developerSystemParts.map(grokEditGuidance),
     ...(toolCatalogNudge ? [toolCatalogNudge] : []),
   ];
   if (systemParts.length > 0) {
@@ -199,11 +216,21 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
           return { tc, id };
         });
         if (wireToolCalls.length > 0) {
-          chatMsg.tool_calls = wireToolCalls.map(({ tc, id }) => ({
-            id,
-            type: "function",
-            function: { name: namespacedToolName(tc.namespace, tc.name), arguments: JSON.stringify(tc.arguments) },
-          }));
+          chatMsg.tool_calls = wireToolCalls.map(({ tc, id }) => {
+            const candidate = restoreGrokHistory && !tc.namespace
+              && (tc.name === "exec" || tc.name.endsWith("__exec"))
+              ? reconstructGrokToolCallFromExec(tc.arguments)
+              : undefined;
+            const reconstructed = candidate && grokNativeToolNames.has(candidate.name) ? candidate : undefined;
+            return {
+              id,
+              type: "function",
+              function: {
+                name: reconstructed?.name ?? namespacedToolName(tc.namespace, tc.name),
+                arguments: JSON.stringify(reconstructed?.arguments ?? tc.arguments),
+              },
+            };
+          });
           // "" instead of null: strict validators (xAI: "Each message must have at least one
           // content element", langchain#34140) reject content-less assistant history entries.
           if (!chatMsg.content) chatMsg.content = "";
@@ -423,9 +450,15 @@ function toolsToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderConfig
   const allowed = isAllowedToolChoice(parsed.options.toolChoice)
     ? new Set(parsed.options.toolChoice.allowedTools)
     : undefined;
-  const tools = allowed
+  const grokTools = grokFacingTools(
+    parsed.context.tools,
+    parsed.options.toolChoice,
+    provider,
+    effectiveInstructionText(parsed.context.messages, parsed.context.systemPrompt),
+  );
+  const tools = grokTools ?? (allowed
     ? parsed.context.tools.filter(t => toolAllowedByChoice(t, allowed))
-    : parsed.context.tools;
+    : parsed.context.tools);
   if (tools.length === 0) return undefined;
   const xaiTarget = isXaiSchemaTarget(provider);
   const kimiTarget = isKimiSchemaTarget(provider);
