@@ -150,7 +150,7 @@ import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
 import { handleSearch } from "./search";
 import { BUILD_STAMP, fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
-import { tenantBoundary } from "./tenant-boundary";
+import { TenantBoundaryStore, tenantBoundary, tenantRequestLedger, type TenantAdmission } from "./tenant-boundary";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -336,6 +336,8 @@ export function startServer(port?: number) {
   void warmDashboardMountModules();
 
   const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()));
+  try { tenantBoundary.configureStored(new TenantBoundaryStore().load()); }
+  catch { throw new Error("tenant boundary configuration is invalid; refusing to start the data plane"); }
   applyProxyEnv(config);
   assertServerAuthConfig(config);
   // Refresh OAuth provider presets (models/noReasoningModels) from the registry so a proxy update
@@ -496,6 +498,21 @@ export function startServer(port?: number) {
         }, 200, req, config);
       }
 
+      let tenantAdmission: TenantAdmission | undefined;
+      if (url.pathname.startsWith("/v1/")) {
+        const tenantResult = tenantBoundary.admit(req);
+        if (tenantResult.kind === "unauthorized" || tenantResult.kind === "forbidden") {
+          return withCors(formatErrorResponse(tenantResult.status, "tenant_admission", tenantResult.message), req, config);
+        }
+        tenantAdmission = tenantResult.kind === "admitted" ? tenantResult.admission : undefined;
+        const requestedModel = await tenantBoundary.modelFromRequest(req);
+        const authorization = tenantBoundary.authorize(req, requestedModel, requestedModel?.includes("/") ? requestedModel.slice(0, requestedModel.indexOf("/")) : undefined);
+        if (authorization.kind === "unauthorized" || authorization.kind === "forbidden") {
+          return withCors(formatErrorResponse(authorization.status, "tenant_authorization", authorization.message), req, config);
+        }
+        if (tenantAdmission) tenantRequestLedger.record({ tenantId: tenantAdmission.tenantId, requestId: req.headers.get("x-request-id")?.slice(0, 200) || `${Date.now()}`, path: url.pathname, ...(requestedModel ? { model: requestedModel } : {}), status: "admitted", recordedAt: new Date().toISOString() });
+      }
+
       if (url.pathname.startsWith("/api/")) {
         // The management plane is intentionally open. Admin-token authentication was removed;
         // data-plane authentication for /v1/* remains enforced separately below.
@@ -515,11 +532,6 @@ export function startServer(port?: number) {
         // remote OpenAI-style bearer clients and Claude gateway discovery (anthropic-version).
         const apiAuthError = requireApiAuth(req, config, "data-plane");
         if (apiAuthError) return withCors(apiAuthError, req, config);
-        const tenantAdmissionResult = tenantBoundary.admit(req);
-        if (tenantAdmissionResult.kind === "unauthorized" || tenantAdmissionResult.kind === "forbidden") {
-          return withCors(formatErrorResponse(tenantAdmissionResult.status, "tenant_admission", tenantAdmissionResult.message), req, config);
-        }
-        const tenantAdmission = tenantAdmissionResult.kind === "admitted" ? tenantAdmissionResult.admission : undefined;
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }

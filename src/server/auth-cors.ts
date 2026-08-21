@@ -185,7 +185,7 @@ export function corsHeaders(req?: Request, config?: OcxConfig): Record<string, s
     // ChatGPT-Account-Id is required for browser/Electron ChatGPT & Codex App voice preflights
     // (direct forward auth matches the bearer to this account id). The OpenAI-Alpha .. X-OAI-Attestation
     // block covers GPT-Live voice protocol headers relayed by the /v1/live call-create path.
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-OpenCodex-API-Key, X-Api-Key, Anthropic-Version, Anthropic-Beta, ChatGPT-Account-Id, OpenAI-Alpha, X-Session-Id, Session-Id, Thread-Id, Originator, X-OAI-Attestation",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-OpenCodex-API-Key, X-OpenCodex-Tenant-Key, X-Api-Key, Anthropic-Version, Anthropic-Beta, ChatGPT-Account-Id, OpenAI-Alpha, X-Session-Id, Session-Id, Thread-Id, Originator, X-OAI-Attestation",
     "Vary": "Origin",
     ...browserSecurityHeaders(),
   };

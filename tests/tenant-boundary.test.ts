@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { TenantBoundary } from "../src/server/tenant-boundary";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { TenantBoundary, TenantBoundaryStore, TenantRequestLedger } from "../src/server/tenant-boundary";
 
 function request(key?: string): Request {
   return new Request("http://127.0.0.1/v1/models", key ? { headers: { "x-opencodex-tenant-key": key } } : undefined);
@@ -40,5 +42,49 @@ describe("data-plane tenant boundary", () => {
     expect(boundary.filterModels(admitted.admission, [{ id: "model-a" }, { id: "model-b" }])).toEqual([{ id: "model-a" }]);
     expect(boundary.requestHistoryKey(admitted.admission, "req-1")).toBe("tenant-a:req-1");
     expect(JSON.stringify(admitted)).not.toContain("admission-a");
+  });
+
+  test("canonicalizes routed aliases and rejects duplicate atomic configuration", () => {
+    const boundary = new TenantBoundary();
+    boundary.configure([{ tenantId: "tenant-a", admissionKey: "admission-a", allowedProviders: ["litellm"], allowedModels: ["litellm/model-a"] }]);
+    expect(boundary.authorize(request("admission-a"), "~LiteLLM/Model-A", "LiteLLM").kind).toBe("allowed");
+    expect(() => boundary.configure([
+      { tenantId: "tenant-a", admissionKey: "one", allowedProviders: [], allowedModels: ["one"] },
+      { tenantId: "tenant-a", admissionKey: "two", allowedProviders: [], allowedModels: ["two"] },
+    ])).toThrow(/tenant policy/);
+    expect(boundary.admit(request("admission-a")).kind).toBe("admitted");
+  });
+
+  test("persists bounded digests atomically and rotates one tenant without exposing the key", () => {
+    const root = mkdtempSync(join(process.env.TEMP ?? ".", "ocx-tenant-store-"));
+    try {
+      const store = new TenantBoundaryStore(join(root, "tenant-boundary.json"));
+      store.save([{ tenantId: "tenant-a", admissionKey: "admission-a", allowedProviders: ["litellm"], allowedModels: ["model-a"] }]);
+      store.rotate("tenant-a", "admission-a-rotated");
+      const rows = store.load();
+      expect(rows).toHaveLength(1);
+      expect(readFileSync(store.path, "utf8")).not.toContain("admission-a-rotated");
+      expect(rows[0]?.admissionKeyDigest).toMatch(/^[0-9a-f]{64}$/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("extracts a bounded model before dispatch for every JSON inference shape", async () => {
+    const boundary = new TenantBoundary();
+    const responses = await boundary.modelFromRequest(new Request("http://127.0.0.1/v1/responses", { method: "POST", body: JSON.stringify({ model: "combo/internal" }) }));
+    const messages = await boundary.modelFromRequest(new Request("http://127.0.0.1/v1/messages", { method: "POST", body: JSON.stringify({ model: "claude-alias" }) }));
+    expect(responses).toBe("combo/internal");
+    expect(messages).toBe("claude-alias");
+  });
+
+  test("persists and filters tenant request history without payloads", () => {
+    const root = mkdtempSync(join(process.env.TEMP ?? ".", "ocx-tenant-history-"));
+    try {
+      const ledger = new TenantRequestLedger(join(root, "history.json"));
+      ledger.record({ tenantId: "tenant-a", requestId: "req-a", path: "/v1/responses", model: "model-a", status: "admitted", recordedAt: new Date().toISOString() });
+      ledger.record({ tenantId: "tenant-b", requestId: "req-b", path: "/v1/chat/completions", model: "model-b", status: "admitted", recordedAt: new Date().toISOString() });
+      expect(ledger.listForTenant("tenant-a")).toHaveLength(1);
+      expect(ledger.listForTenant("tenant-a")[0]?.requestId).toBe("req-a");
+      expect(readFileSync(ledger.path, "utf8")).not.toContain("admission");
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
