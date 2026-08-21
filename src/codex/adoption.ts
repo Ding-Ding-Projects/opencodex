@@ -87,13 +87,12 @@ function consumePositiveAuthority(capability: PositiveAuthority): AdoptionDecisi
     const existing = readAdoptionEvidence(databasePath)
       ? { kind: "already-adopted", databasePath } as AdoptionDecision
       : { kind: "already-coordinated", databasePath } as AdoptionDecision;
-    if (process.env.OCX_DEBUG_ADOPTION === "1") console.error(`adoption-path ${createHash("sha256").update(databasePath).digest("hex").slice(0, 12)} ${existing.kind}`);
     return existing;
   }
   const record = readIntegrationRecord();
   if (record.kind === "invalid") return { kind: "refused", reason: "legacy-record" };
   const residue = classifyNativeRoutedResidue();
-  if (residue.kind === "clean") { if (process.env.OCX_DEBUG_ADOPTION === "1") console.error(`adoption-path ${createHash("sha256").update(databasePath).digest("hex").slice(0, 12)} not-needed`); return { kind: "not-needed" }; }
+  if (residue.kind === "clean") return { kind: "not-needed" };
   if (residue.kind === "indeterminate") return { kind: "refused", reason: "indeterminate-residue" };
   return adoptPreSubstrateHome({
     databasePath,
