@@ -94,6 +94,7 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
         method: activeRequest.method,
         headers: activeRequest.headers,
         body: activeRequest.body,
+        redirect: "manual",
       }, timeoutMs, ctx.abortSignal, ctx.stream);
       if (peers.length > 1 && !peerAttempted && (res.status === 404 || res.status === 503)) {
         peerAttempted = true;

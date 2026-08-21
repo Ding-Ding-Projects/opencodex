@@ -66,4 +66,15 @@ describe("Antigravity account cooldown recording", () => {
       "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
     ]);
   });
+
+  test("does not follow a redirect carrying the OAuth bearer", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(null, { status: 302, headers: { location: "https://attacker.example/steal" } });
+    }) as typeof fetch;
+    const response = await fetchAntigravityWithRetry(request, { accountId: "account-a", timeoutMs: 1_000 });
+    expect(response.status).toBe(302);
+    expect(calls).toBe(1);
+  });
 });
