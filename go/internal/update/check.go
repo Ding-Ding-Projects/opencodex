@@ -82,7 +82,13 @@ func (c Checker) Check(ctx context.Context, requested Channel) CheckResult {
 		return result
 	}
 	result.LatestVersion = strings.TrimSpace(latest)
-	result.UpdateAvailable = IsNewer(result.LatestVersion, c.CurrentVersion, channel)
+	newer, transitionErr := ValidateNativeTransition(c.CurrentVersion, result.LatestVersion, channel)
+	if transitionErr != nil {
+		result.LatestVersion = ""
+		result.Reason = "latest_unavailable"
+		return result
+	}
+	result.UpdateAvailable = newer
 	result.CanUpdate = result.UpdateAvailable
 	result.Command = InstallCommand(c.Installer, channel, result.LatestVersion).String()
 	if !result.UpdateAvailable {
