@@ -55,6 +55,47 @@ export interface HardenOptions {
   timeoutMemoKey?: string;
 }
 
+export interface ExistingAclVerification {
+  compliant: boolean;
+  reason: string;
+}
+
+/**
+ * Parse the complete, read-only `icacls <path>` listing conservatively.
+ *
+ * This is deliberately stricter than a line-layout regex: the first ACE may be
+ * on the same line as the echoed path, localized summary text ends the ACE
+ * region, and inherited markers are never accepted. Any ambiguity falls back
+ * to the existing hardening mutation; it can therefore only save a write, not
+ * turn uncertainty into a security bypass.
+ */
+export function verifyExistingAclOutput(output: string, expectedPrincipal: string): ExistingAclVerification {
+  const principal = expectedPrincipal.trim().toLowerCase();
+  if (!principal) return { compliant: false, reason: "effective ACL principal is unavailable" };
+  const aces: Array<{ principal: string; permissions: string; inherited: boolean }> = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (/^\s*(successfully\s+processed|processed\s+file|files?\s+processed)\b/i.test(line)) break;
+    const matches = line.matchAll(/(?:^|\s)([^:\r\n]+):\(([^)]*)\)(?:\s+\(([^)]*)\))?/gi);
+    for (const match of matches) {
+      const name = match[1]?.trim();
+      const permissions = match[2]?.trim() ?? "";
+      const marker = match[3]?.trim() ?? "";
+      if (!name || !permissions) continue;
+      aces.push({ principal: name.toLowerCase(), permissions, inherited: /\bI\b/i.test(marker) || /\(I\)/i.test(match[0] ?? "") });
+    }
+  }
+  if (aces.length !== 1) return { compliant: false, reason: aces.length === 0 ? "ACL listing contained no parseable ACE" : "ACL listing contained extra or ambiguous ACEs" };
+  const ace = aces[0]!;
+  if (ace.inherited) return { compliant: false, reason: "ACL listing contains an inherited ACE" };
+  if (ace.principal !== principal) return { compliant: false, reason: "ACL listing principal does not match the effective account" };
+  if (!/\bF\b/i.test(ace.permissions) || /[DEN]/i.test(ace.permissions)) return { compliant: false, reason: "ACL listing does not prove explicit Full Control only" };
+  return { compliant: true, reason: "read-only ACL listing proves the explicit owner Full Control policy" };
+}
+
+function verifyExistingAclEnabled(): boolean {
+  return env["OPENCODEX_ACL_VERIFY_EXISTING"]?.trim() === "1";
+}
+
 /**
  * Total icacls budget per harden call — ALL steps share it, including the single
  * timeout retry and the diagnostic verification pass (no per-attempt fresh budget:
@@ -261,6 +302,19 @@ function runIcacls(targetPath: string, directory: boolean, deadline: number): vo
   }
 }
 
+function tryVerifyExistingAcl(targetPath: string, deadline: number): ExistingAclVerification {
+  if (!verifyExistingAclEnabled()) return { compliant: false, reason: "opt-in read verification is disabled" };
+  const remaining = deadline - nowFn();
+  if (remaining <= 0) return { compliant: false, reason: "ACL verification budget exhausted" };
+  try {
+    const result = icaclsRunner([targetPath], remaining);
+    if (!result.success) return { compliant: false, reason: "read-only icacls verification failed" };
+    return verifyExistingAclOutput(result.stdout, currentWindowsUser() ?? "");
+  } catch {
+    return { compliant: false, reason: "read-only icacls verification was ambiguous" };
+  }
+}
+
 /** Async counterpart of runIcacls — same step order and timeout/error classification (#612). */
 async function runIcaclsAsync(targetPath: string, directory: boolean, deadline: number): Promise<void> {
   const user = currentWindowsUser();
@@ -387,6 +441,11 @@ function hardenEntry(
   }
 
   const deadline = nowFn() + resolveHardenDeadlineMs();
+  const existing = tryVerifyExistingAcl(targetPath, deadline);
+  if (existing.compliant) {
+    cache.add(targetPath);
+    return { ok: true, diagnostics: existing.reason };
+  }
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0 && deadline - nowFn() <= 0) break; // retry only while budget remains
@@ -430,6 +489,21 @@ async function hardenEntryAsync(
   }
 
   const deadline = nowFn() + resolveHardenDeadlineMs();
+  if (verifyExistingAclEnabled()) {
+    const remaining = deadline - nowFn();
+    if (remaining > 0) {
+      try {
+        const result = await asyncIcaclsRunner([targetPath], remaining);
+        if (result.success) {
+          const existing = verifyExistingAclOutput(result.stdout, currentWindowsUser() ?? "");
+          if (existing.compliant) {
+            cache.add(targetPath);
+            return { ok: true, diagnostics: existing.reason };
+          }
+        }
+      } catch { /* ambiguous read falls through to mutation */ }
+    }
+  }
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0 && deadline - nowFn() <= 0) break;

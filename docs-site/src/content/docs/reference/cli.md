@@ -192,6 +192,15 @@ refuses stdout, refuses overwrite/symlink replacement, and deletes an empty part
 hardening fails. Store the result encrypted, never commit or upload it, and delete it when no longer
 needed.
 
+On Windows, secret-file ACL hardening normally performs the existing grant, inheritance, and broad
+ACE-removal sequence. Large already-hardened trees may opt into a strict read-before-write proof by
+setting `OPENCODEX_ACL_VERIFY_EXISTING=1` before starting opencodex. The read is accepted only when
+the complete `icacls` listing contains exactly one explicit Full Control ACE for the current account,
+with no inherited marker, extra ACE, localized-summary confusion, or principal mismatch. Any missing,
+localized, SID-shaped, or otherwise ambiguous identity falls back to the existing hardening mutation;
+the optimization never turns uncertainty into an ACL bypass. Remove the variable to return to the
+normal mutation-first path.
+
 ### `ocx host <status|enable|disable>`
 
 Configure trusted-LAN access without putting credentials in command arguments. `enable --yes`

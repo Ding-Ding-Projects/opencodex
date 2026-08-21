@@ -17,6 +17,7 @@ import {
   hardenSecretDir,
   hardenSecretPath,
   hardenSecretPathAsync,
+  verifyExistingAclOutput,
   resetHardenedStateForTests,
   setAsyncIcaclsRunnerForTests,
   setIcaclsRunnerForTests,
@@ -203,6 +204,17 @@ describe("non-Windows determinism", () => {
 // ---------------------------------------------------------------------------
 
 describe("diagnostics sanitization contract", () => {
+  test("read-only ACL verification is strict and accepts only one explicit owner ACE", () => {
+    const compliant = `C:\\Secrets\\token.json DOMAIN\\tester:(F)\nSuccessfully processed 1 files; Failed processing 0 files`;
+    expect(verifyExistingAclOutput(compliant, "DOMAIN\\tester")).toEqual({
+      compliant: true,
+      reason: "read-only ACL listing proves the explicit owner Full Control policy",
+    });
+    expect(verifyExistingAclOutput(`C:\\Secrets\\token.json DOMAIN\\tester:(F) Everyone:(R)\nSuccessfully processed 1 files`, "DOMAIN\\tester").compliant).toBe(false);
+    expect(verifyExistingAclOutput(`C:\\Secrets\\token.json DOMAIN\\tester:(F) (I)`, "DOMAIN\\tester").compliant).toBe(false);
+    expect(verifyExistingAclOutput(compliant, "DOMAIN\\other").compliant).toBe(false);
+  });
+
   test("HardenResult diagnostics field is a plain string when present", () => {
     const filePath = join(testDir, "diag-test.json");
     writeFileSync(filePath, "data", "utf-8");
@@ -445,6 +457,28 @@ describe("icacls failure paths (injected seams)", () => {
 
     expect(hardenSecretPath(secretFile(), { required: true })).toEqual({ ok: true });
     expect(steps).toEqual(["grant-owner", "remove-inheritance", "remove-broad"]);
+  });
+
+  test("opt-in read verification skips the propagating mutation only after a strict proof", () => {
+    const filePath = secretFile("already-hardened.json");
+    const principal = `${process.env.USERDOMAIN ?? "DOMAIN"}\\${process.env.USERNAME ?? "tester"}`;
+    const calls: string[][] = [];
+    const previous = process.env.OPENCODEX_ACL_VERIFY_EXISTING;
+    process.env.OPENCODEX_ACL_VERIFY_EXISTING = "1";
+    try {
+      setIcaclsRunnerForTests(args => {
+        calls.push(args);
+        return { ...ok, stdout: `C:\\Secrets\\already-hardened.json ${principal}:(F)\nSuccessfully processed 1 files` };
+      });
+      const result = hardenSecretPath(filePath, { required: true });
+      expect(result.ok).toBe(true);
+      expect(result.diagnostics).toContain("read-only ACL listing proves");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual([filePath]);
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_ACL_VERIFY_EXISTING;
+      else process.env.OPENCODEX_ACL_VERIFY_EXISTING = previous;
+    }
   });
 
   test("remove:g timeout after owner grant leaves explicit Full Control (#596)", () => {
