@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { validateConfigCandidate } from "../src/config";
 import { salvageSubagentRoles } from "../src/codex/agent-roles";
 import { handleResponses } from "../src/server/responses";
 import { encryptedInput, routedConfig, codexHeaders, providerResponse, originalFetch } from "./helpers/agent-task-recovery";
+import { handleAgentCommand } from "../src/cli/agent";
 
 describe("collaboration parent-review boundaries", () => {
   test("salvage scans invalid persisted role arrays with a hard bound", () => {
@@ -33,6 +37,28 @@ describe("collaboration parent-review boundaries", () => {
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = before ?? originalFetch;
+    }
+  });
+
+  test("role removal CLI performs revision CAS and rejects oversized files before reading", async () => {
+    const requests: Array<{ path: string; body: string | undefined }> = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      requests.push({ path, body: init?.body as string | undefined });
+      return init?.method === "PUT"
+        ? Response.json({ ok: true, roles: [] })
+        : Response.json({ revision: 7, roles: [] });
+    }) as typeof fetch;
+    expect(await handleAgentCommand(["roles", "remove", "reviewer", "--json"], { baseUrl: "http://test", fetchImpl })).toBe(0);
+    expect(JSON.parse(requests[1]!.body!)).toEqual({ remove: "reviewer", revision: 7 });
+
+    const dir = mkdtempSync(join(tmpdir(), "ocx-role-bound-"));
+    try {
+      const file = join(dir, "roles.json");
+      writeFileSync(file, "x".repeat(128 * 1024 + 1));
+      expect(await handleAgentCommand(["roles", "set", "--file", file, "--json"], { baseUrl: "http://test", fetchImpl })).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
