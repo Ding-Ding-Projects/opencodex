@@ -40,25 +40,27 @@ export function detectStaticWindowsSystemProxy(
   platform: NodeJS.Platform = process.platform,
 ): StaticSystemProxy | null {
   if (platform !== "win32") return null;
-  let output: string;
-  try {
-    output = reader("reg.exe", ["query", INTERNET_SETTINGS_KEY, "/v", "ProxyEnable", "/v", "ProxyServer", "/v", "AutoConfigURL"]);
-  } catch {
-    return null;
-  }
-  const enabled = parseRegValue(output, "ProxyEnable");
+  // `reg.exe query` accepts one `/v` value per invocation. Passing several `/v`
+  // switches looks plausible but is rejected by production reg.exe. Probe each
+  // named value separately so an absent optional setting remains an honest absence.
+  const readValue = (name: string): string | undefined => {
+    try { return parseRegValue(reader("reg.exe", ["query", INTERNET_SETTINGS_KEY, "/v", name]), name); }
+    catch { return undefined; }
+  };
+  const enabled = readValue("ProxyEnable");
   if (enabled !== "0x1" && enabled !== "1") return null;
-  // AutoConfigURL is intentionally observed but never followed. A configured PAC
-  // is not a static proxy and must not silently become an unconditional direct route.
-  const pac = parseRegValue(output, "AutoConfigURL");
-  if (pac) return null;
-  const raw = parseRegValue(output, "ProxyServer");
+  // AutoConfigURL is intentionally observed but never followed. AutoDetect is
+  // the WinINet WPAD switch; either enabled route is not a static proxy.
+  const pac = readValue("AutoConfigURL");
+  const autoDetect = readValue("AutoDetect");
+  if (pac || autoDetect === "0x1" || autoDetect === "1") return null;
+  const raw = readValue("ProxyServer");
   if (!raw) return null;
-  const candidates = raw.split(";").flatMap(part => {
-    const separator = part.indexOf("=");
-    return separator >= 0 ? [part.slice(separator + 1)] : [part];
-  });
-  const proxy = normalizeProxyCandidate(candidates.find(Boolean) ?? "");
+  // Per-scheme values (`http=...;https=...`) need two independently validated
+  // routes. Until that contract exists, refusing is safer than silently using
+  // the HTTP value for HTTPS requests.
+  if (raw.includes("=")) return null;
+  const proxy = normalizeProxyCandidate(raw);
   return proxy ? { proxy, source: "windows-static" } : null;
 }
 

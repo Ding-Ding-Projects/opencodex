@@ -1654,11 +1654,18 @@ export function resolveEnvValue(value: string | undefined): string | undefined {
  * CLI's own health checks and running-proxy API calls stay direct. Call once per process entry
  * that makes outbound provider requests (server start, catalog sync).
  */
-export function applyProxyEnv(config: OcxConfig): void {
+export type ProxyEnvApplicationDeps = {
+  detectSystemProxy?: (platform: NodeJS.Platform) => ReturnType<typeof detectStaticWindowsSystemProxy>;
+  platform?: NodeJS.Platform;
+};
+
+export function applyProxyEnv(config: OcxConfig, deps: ProxyEnvApplicationDeps = {}): void {
   let detectedProxy: string | undefined;
   if (config.systemProxy === "static" && !resolveEnvValue(config.proxy)) {
-    detectedProxy = detectStaticWindowsSystemProxy()?.proxy;
-    if (!detectedProxy && process.platform === "win32") throw new StaticSystemProxyUnavailableError();
+    const platform = deps.platform ?? process.platform;
+    const detector = deps.detectSystemProxy ?? ((targetPlatform: NodeJS.Platform) => detectStaticWindowsSystemProxy(undefined, targetPlatform));
+    detectedProxy = detector(platform)?.proxy;
+    if (!detectedProxy) throw new StaticSystemProxyUnavailableError();
   }
   const env = proxyEnvironment({
     proxy: resolveEnvValue(config.proxy),
