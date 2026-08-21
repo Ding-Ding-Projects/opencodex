@@ -365,7 +365,7 @@ ocx account <list|current|use> # list/switch accounts & API-key pools (masked; a
 ocx gui                        # open the web dashboard
 ocx host <status|enable|disable>   # configure trusted-LAN remote access
 ocx export data <dataset>      # export a redacted dashboard dataset
-ocx export <new-file> --yes    # protected full-state backup containing plaintext secrets
+ocx export <new-file> --yes    # protected full-state backup; refused when provider vault mode is enabled
 ocx claude [args...]           # launch Claude Code wired to the proxy (model discovery on)
 ocx claude desktop             # save and apply the Claude Desktop four-family profile
 ocx service [install|start|stop|status|uninstall]   # install/update/start background service
@@ -425,9 +425,11 @@ stable OpenCodex identity health; service starts also require service-owned runt
 verifies the service manager and proxy are actually down before it restores native Codex or removes
 owned state, so a failed manual stop cannot silently leave a supervisor able to respawn the proxy.
 
-Full-state CLI backups require `ocx export <new-file> --yes`. They include plaintext API keys and
-OAuth tokens, are created as a new protected file, refuse stdout, and never overwrite an existing
-path. Redacted dataset exports may still use stdout through `ocx export data`. The dashboard can
+Full-state CLI backups require `ocx export <new-file> --yes`. In ordinary mode they include plaintext
+API keys and OAuth tokens, are created as a new protected file, refuse stdout, and never overwrite an
+existing path. When `providerApiKeyVault: "windows"` is enabled, full-state backup is refused because
+the account-scoped vault ciphertext is omitted; there is no plaintext fallback. Redacted dataset
+exports may still use stdout through `ocx export data`. The dashboard can
 create unencrypted 7z archives when 7-Zip is available, but password encryption is disabled because
 7-Zip accepts its password only through process arguments; it will remain unavailable until a
 protected password-input transport exists.

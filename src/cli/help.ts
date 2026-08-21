@@ -109,11 +109,12 @@ const helpEntries: Record<string, HelpEntry> = {
   },
   export: {
     usage: "ocx export <path> --yes | ocx export --history [--json] | ocx export data <dataset> [--format <format>] [--out <path>] [--list]",
-    summary: "Export data or a full state backup; full state exports contain plaintext secrets.",
+    summary: "Export data or a full state backup; vault mode refuses incomplete full-state backups.",
     details: [
       "data <dataset>    Export a redacted dashboard dataset; use --list to see datasets and formats.",
       "--history         List local account/config snapshots.",
-      "<path> --yes      Export complete config, account, and auth state, including plaintext secrets.",
+      "<path> --yes      Export complete config, account, and auth state in ordinary mode (plaintext secrets included);",
+      "                  providerApiKeyVault=windows refuses because vault ciphertext is omitted.",
       "",
       "The full-state form requires a private mode-0600 file and cannot write to stdout.",
       "Store its output encrypted and never commit or upload it.",
@@ -497,7 +498,7 @@ Usage:
   ocx host <sub>              Expose the proxy to other devices on your network
   ocx launch [target]         Open an agent CLI or desktop app (Codex, Grok, Claude)
   ocx terminal <sub>          Run a command in an opencodex terminal session (list|run)
-  ocx export <path> --yes     Full state backup — config, accounts, auth (secrets included)
+  ocx export <path> --yes     Full state backup — ordinary mode includes secrets; vault mode refuses incomplete backup
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export
                               Network fields include bounded noProxy and opt-in static systemProxy;

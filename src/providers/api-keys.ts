@@ -12,6 +12,12 @@ import { createProviderVaultReference, deleteProviderVaultReference, isProviderV
 import type { OcxConfig, OcxProviderConfig } from "../types";
 
 let saveProviderConfig: typeof saveConfigPreservingClaudeCode = saveConfigPreservingClaudeCode;
+export class ProviderKeyRemovalUnresolvedError extends Error {
+  constructor() {
+    super("provider API-key removal could not delete its vault entry or restore the persisted config reference");
+    this.name = "ProviderKeyRemovalUnresolvedError";
+  }
+}
 export function setProviderApiKeySaveForTests(next: typeof saveConfigPreservingClaudeCode | null): void {
   saveProviderConfig = next ?? saveConfigPreservingClaudeCode;
 }
@@ -195,7 +201,7 @@ export function removeProviderApiKey(config: OcxConfig, name: string, id: string
     } catch {
       restoreConfig(config, snapshot);
       try { saveProviderConfig(config); }
-      catch { /* leave the live snapshot and report non-completion */ }
+      catch { throw new ProviderKeyRemovalUnresolvedError(); }
       return false;
     }
   }

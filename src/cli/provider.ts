@@ -231,8 +231,7 @@ async function handleAdd(args: string[]): Promise<void> {
       restoreConfigSnapshot(config, configBeforeAdd);
       throw new Error(stored.error);
     }
-    try { validateAndSave(config); }
-    catch (error) { restoreConfigSnapshot(config, configBeforeAdd); throw error; }
+    // addProviderApiKey owns the single vault-aware persistence transaction.
   } else {
     try { validateAndSave(config); }
     catch (error) { restoreConfigSnapshot(config, configBeforeAdd); throw error; }

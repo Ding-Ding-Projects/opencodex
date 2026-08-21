@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deleteProviderVaultReference, isProviderVaultReference, providerVaultExportRefusal, providerVaultReferenceId, resolveProviderCredential, setProviderVaultDeleteForTests } from "../src/lib/provider-credentials";
 import { setCredentialVaultSyncSeamForTests } from "../src/lib/os-credential-vault";
-import { addProviderApiKey, listProviderApiKeys, migrateProviderApiKeysToVault, removeProviderApiKey, setActiveProviderApiKey, setProviderApiKeySaveForTests } from "../src/providers/api-keys";
+import { addProviderApiKey, listProviderApiKeys, migrateProviderApiKeysToVault, ProviderKeyRemovalUnresolvedError, removeProviderApiKey, setActiveProviderApiKey, setProviderApiKeySaveForTests } from "../src/providers/api-keys";
 import type { OcxConfig } from "../src/types";
 import { removeTempDir } from "./helpers/temp-dir";
 
@@ -173,4 +173,19 @@ test("remove does not complete when vault deletion fails and restores the config
   expect("id" in stored && removeProviderApiKey(config, "demo", stored.id)).toBe(false);
   expect(config.providers.demo!.apiKey).toBe(ref);
   expect(resolveProviderCredential(ref)).toBe("remove-secret");
+});
+
+test("remove reports an unresolved transaction when the compensating config save also fails", () => {
+  testHome = mkdtempSync(join(tmpdir(), "ocx-vault-remove-unresolved-"));
+  process.env.OPENCODEX_HOME = testHome;
+  setCredentialVaultSyncSeamForTests({ platform: "win32", runner: (script, payload) => script.includes("ProtectedData]::Protect")
+    ? Buffer.from(`cipher:${(JSON.parse(payload) as { plaintextB64: string }).plaintextB64}`).toString("base64")
+    : "" });
+  let saves = 0;
+  setProviderApiKeySaveForTests(() => { saves += 1; if (saves > 2) throw new Error("restore save failed"); });
+  const config = { providerApiKeyVault: "windows", providers: { demo: { adapter: "openai-chat", baseUrl: "https://example.test/v1", authMode: "key" } } } as unknown as OcxConfig;
+  const stored = addProviderApiKey(config, "demo", "unresolved-remove-secret");
+  expect("id" in stored).toBe(true);
+  setProviderVaultDeleteForTests(() => { throw new Error("delete failed"); });
+  expect(() => "id" in stored && removeProviderApiKey(config, "demo", stored.id)).toThrow(ProviderKeyRemovalUnresolvedError);
 });
