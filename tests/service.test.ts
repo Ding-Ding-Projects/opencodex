@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
 import { windowsEnvIndirectBatchValue } from "../src/lib/win-paths";
-import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsServiceScript, buildWindowsTaskXml, deriveWindowsServiceDiagnostic, normalizeServiceSubcommand, parseServiceInstallState, parseWindowsSchedulerRuntimeState, planServiceCommand, probeServiceInstallation, readWindowsSchedulerXmlState, repairService, resolveServiceListenPort, runServiceStopGate, serviceLogPath, serviceStartPostcondition, serviceStartableFromTray, serviceStatusSummary, stopManagerWithVerification, waitForServiceProxy, windowsTaskRegistrationHealthy } from "../src/service";
+import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsServiceScript, buildWindowsTaskXml, deriveWindowsServiceDiagnostic, normalizeServiceSubcommand, parseServiceInstallState, parseWindowsSchedulerRuntimeState, planServiceCommand, probeServiceInstallation, readWindowsSchedulerXmlState, repairService, resolveServiceListenPort, runServiceStopGate, serviceLogPath, serviceStartPostcondition, serviceStartableFromTray, serviceStatusSummary, stopManagerWithVerification, uninstallSchedulerSafely, waitForServiceProxy, windowsTaskRegistrationHealthy } from "../src/service";
 import { serviceApiTokenFilePath } from "../src/lib/service-secrets";
 import type { OcxConfig } from "../src/types";
 import { removeTempDir } from "./helpers/temp-dir";
@@ -72,17 +72,59 @@ describe("service listen-port policy", () => {
 
   test("repair refreshes an installed backend without registration", async () => {
     const calls: string[] = [];
+    let runtime = "running" as "running" | "stopped";
     await repairService({
       platform: "win32",
       diagnose: () => ({ supported: true, installed: true, enabled: true, running: true, viable: true, startable: true, stale: false, conflict: false, backend: "scheduler", summary: "installed" }),
       assertEnv: () => calls.push("env"),
       assertAuth: () => calls.push("auth"),
-      stopScheduler: () => calls.push("stop"),
+      stopScheduler: () => { calls.push("stop"); runtime = "stopped"; },
+      schedulerRuntimeState: () => runtime,
       writeSchedulerAssets: () => calls.push("assets"),
       startScheduler: () => calls.push("start"),
       writeSchedulerState: () => calls.push("state"),
     });
     expect(calls).toEqual(["env", "auth", "stop", "assets", "start", "state"]);
+  });
+
+  test("repair refuses asset mutation when the scheduler stop is not verified", async () => {
+    const calls: string[] = [];
+    await expect(repairService({
+      platform: "win32",
+      diagnose: () => ({ supported: true, installed: true, enabled: true, running: true, viable: true, startable: true, stale: false, conflict: false, backend: "scheduler", summary: "installed" }),
+      assertEnv: () => {},
+      assertAuth: () => {},
+      stopScheduler: () => { calls.push("stop"); throw new Error("stop denied"); },
+      schedulerRuntimeState: () => "running",
+      writeSchedulerAssets: () => calls.push("assets"),
+      startScheduler: () => calls.push("start"),
+    })).rejects.toThrow(/stop command failed|did not reach/);
+    expect(calls).toEqual(["stop"]);
+  });
+
+  test("scheduler uninstall retains assets when deletion or post-probe is uncertain", () => {
+    let assets = 0;
+    expect(() => uninstallSchedulerSafely({
+      probe: () => ({ status: "unknown", detail: "query denied" }),
+      removeAssets: () => { assets += 1; },
+    })).toThrow(/unknown/);
+    expect(assets).toBe(0);
+
+    let probes = 0;
+    expect(() => uninstallSchedulerSafely({
+      probe: () => (++probes === 1 ? { status: "present" } : { status: "unknown", detail: "post-query denied" }),
+      removeRegistration: () => {},
+      removeAssets: () => { assets += 1; },
+    })).toThrow(/absence could not be verified/);
+    expect(assets).toBe(0);
+
+    probes = 0;
+    uninstallSchedulerSafely({
+      probe: () => (++probes === 1 ? { status: "present" } : { status: "absent" }),
+      removeRegistration: () => {},
+      removeAssets: () => { assets += 1; },
+    });
+    expect(assets).toBe(1);
   });
 
   test("resolveServiceListenPort uses only an explicit/update pin, never config.port", () => {
@@ -318,6 +360,22 @@ describe("service install auth preflight", () => {
       providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
       defaultProvider: "openai",
     } as OcxConfig);
+
+    expect(() => assertServiceAuthEnvironment()).not.toThrow();
+  });
+
+  test("allows a non-loopback repair when the protected persisted service token is present", () => {
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    writeFileSync(serviceApiTokenFilePath(), "persisted-token\n");
 
     expect(() => assertServiceAuthEnvironment()).not.toThrow();
   });
@@ -751,9 +809,9 @@ describe("service lifecycle cleanup ordering", () => {
 
   test("Windows service install ends the running task before rewriting its assets, with write retry", async () => {
     const service = await readText("src/service.ts");
-    const installWindows = service.slice(service.indexOf("function installWindows()"), service.indexOf("function startWindows()"));
+    const installWindows = service.slice(service.indexOf("function installWindows()"), service.indexOf("async function installWindowsNative()"));
 
-    const stopAt = installWindows.indexOf("stopWindows();");
+    const stopAt = installWindows.indexOf("stopManagerWithVerification({");
     const scriptWriteAt = installWindows.indexOf("writeServiceAssetWithRetry(script");
     const xmlWriteAt = installWindows.indexOf("writeServiceAssetWithRetry(windowsTaskXmlPath()");
     expect(stopAt).toBeGreaterThan(-1);
@@ -768,7 +826,7 @@ describe("service lifecycle cleanup ordering", () => {
 
   test("Windows service uninstall removes generated task XML", async () => {
     const service = await readText("src/service.ts");
-    const uninstallWindows = service.slice(service.indexOf("function uninstallWindows()"), service.indexOf("function serviceDiagnosticsSummary()"));
+    const uninstallWindows = service.slice(service.indexOf("export function uninstallSchedulerSafely"), service.indexOf("function serviceDiagnosticsSummary()"));
 
     expect(uninstallWindows).toContain("windowsServiceScriptPath()");
     expect(uninstallWindows).toContain("windowsTaskXmlPath()");

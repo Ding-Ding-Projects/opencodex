@@ -16,7 +16,7 @@ import { stripGrokConfig } from "./grok/inject";
 import { isWslRuntime } from "./codex/home";
 import { durableBunPath, durableBunRuntime } from "./lib/bun-runtime";
 import { isProcessAlive, stopProxy } from "./lib/process-control";
-import { serviceApiTokenFilePath } from "./lib/service-secrets";
+import { loadServiceTokenFromFile, serviceApiTokenFilePath } from "./lib/service-secrets";
 import { randomUUID } from "node:crypto";
 import {
   ELEVATION_REQUEST_TIMEOUT_MS,
@@ -250,9 +250,19 @@ export function assertServiceAuthEnvironment(): void {
   const config = loadConfig();
   if (isLoopbackHostname(config.hostname)) return;
   if (process.env.OPENCODEX_API_AUTH_TOKEN?.trim()) return;
+  const persisted = serviceApiTokenFilePath();
+  try {
+    // The file is written with owner-only permissions and Windows ACL hardening by
+    // writeServiceApiTokenFile. Re-validate that boundary before trusting a token
+    // left by an earlier installation when the current shell has no token.
+    hardenSecretPath(persisted, { required: true });
+    if (loadServiceTokenFromFile({ OCX_API_TOKEN_FILE: persisted })) return;
+  } catch {
+    // Fall through to the same actionable refusal without exposing token material.
+  }
   throw new Error(
-    "OPENCODEX_API_AUTH_TOKEN is required before installing a service for non-loopback hostname. " +
-      "Set it in the same shell, then rerun `ocx service install`.",
+    "OPENCODEX_API_AUTH_TOKEN or a validated persisted service token is required before installing a service for non-loopback hostname. " +
+      "Set it in the same shell, or repair the persisted service token, then rerun `ocx service install`.",
   );
 }
 
@@ -1326,7 +1336,22 @@ function installWindows(): void {
   }
   // End a running task BEFORE rewriting the assets it is executing — cmd.exe reading the
   // script mid-rewrite runs a torn batch file, and its open handle can fail the write.
-  try { stopWindows(); } catch { /* not running */ }
+  // A failed or unknown stop is a hard refusal: mutating the assets would race a live wrapper.
+  const schedulerProbe = probeWindowsSchedulerTask();
+  if (schedulerProbe.status === "unknown") {
+    throw new Error(`Task Scheduler state is unknown; refusing to rewrite service assets. ${schedulerProbe.detail}`);
+  }
+  if (schedulerProbe.status === "present") {
+    stopManagerWithVerification({
+      installed: true,
+      label: "Task Scheduler service",
+      runtimeState: () => {
+        const state = windowsSchedulerRuntimeState();
+        return state === "not-running" ? "stopped" : state;
+      },
+      stop: stopWindows,
+    });
+  }
   writeWindowsSchedulerAssets();
   schtasks(buildWindowsSchtasksCreateArgs(windowsServiceScriptPath()));
   schtasks(["/run", "/tn", TASK]);
@@ -1349,6 +1374,7 @@ export interface RepairServiceDeps {
   assertAuth?: () => void;
   writeSchedulerAssets?: () => void;
   stopScheduler?: () => void;
+  schedulerRuntimeState?: () => ServiceManagerRuntimeState;
   startScheduler?: () => void;
   writeSchedulerState?: () => void;
   writeNativeState?: () => void;
@@ -1376,7 +1402,15 @@ export async function repairService(deps: RepairServiceDeps = {}): Promise<void>
       (deps.writeNativeState ?? (() => writeServiceInstallState("native")))();
       return;
     }
-    try { (deps.stopScheduler ?? stopWindows)(); } catch { /* not running */ }
+    const stopScheduler = deps.stopScheduler ?? stopWindows;
+    const schedulerRuntimeState = deps.schedulerRuntimeState
+      ?? (deps.stopScheduler
+        ? (() => "running" as ServiceManagerRuntimeState)
+        : () => {
+          const state = windowsSchedulerRuntimeState();
+          return state === "not-running" ? "stopped" : state;
+        });
+    stopManagerWithVerification({ installed: true, label: "Task Scheduler service", runtimeState: schedulerRuntimeState, stop: stopScheduler });
     (deps.writeSchedulerAssets ?? writeWindowsSchedulerAssets)();
     (deps.startScheduler ?? startWindows)();
     (deps.writeSchedulerState ?? (() => writeServiceInstallState("scheduler")))();
@@ -1438,11 +1472,39 @@ function prepareWindowsNativeStart(): void {
 }
 function stopWindows(): void { schtasks(["/end", "/tn", TASK]); }
 function statusWindows(): string { try { return schtasks(["/query", "/tn", TASK]); } catch { return ""; } }
+export interface SchedulerUninstallDeps {
+  probe?: () => WindowsSchedulerTaskProbe;
+  removeRegistration?: () => void;
+  removeAssets?: () => void;
+}
+
+/** Delete a scheduler registration only after the post-delete absence is proven. */
+export function uninstallSchedulerSafely(deps: SchedulerUninstallDeps = {}): void {
+  const probe = deps.probe ?? (() => probeWindowsSchedulerTask());
+  const removeRegistration = deps.removeRegistration ?? (() => { schtasks(["/delete", "/tn", TASK, "/f"]); });
+  const removeAssets = deps.removeAssets ?? (() => {
+    if (existsSync(windowsServiceScriptPath())) unlinkSync(windowsServiceScriptPath());
+    if (existsSync(windowsLauncherVbsPath())) unlinkSync(windowsLauncherVbsPath());
+    if (existsSync(windowsTaskXmlPath())) unlinkSync(windowsTaskXmlPath());
+  });
+  const before = probe();
+  if (before.status === "unknown") {
+    throw new Error(`Task Scheduler state is unknown; uninstall aborted and service assets were retained. ${before.detail}`);
+  }
+  if (before.status === "present") {
+    try { removeRegistration(); } catch { /* post-probe decides whether it is gone */ }
+  }
+  const after = probe();
+  if (after.status !== "absent") {
+    throw new Error(after.status === "unknown"
+      ? `Task Scheduler absence could not be verified; uninstall aborted and service assets were retained. ${after.detail}`
+      : "Task Scheduler task is still present after uninstall; service assets were retained.");
+  }
+  removeAssets();
+}
+
 function uninstallWindows(): void {
-  try { schtasks(["/delete", "/tn", TASK, "/f"]); } catch { /* absent */ }
-  if (existsSync(windowsServiceScriptPath())) unlinkSync(windowsServiceScriptPath());
-  if (existsSync(windowsLauncherVbsPath())) unlinkSync(windowsLauncherVbsPath());
-  if (existsSync(windowsTaskXmlPath())) unlinkSync(windowsTaskXmlPath());
+  uninstallSchedulerSafely();
 }
 
 /**
