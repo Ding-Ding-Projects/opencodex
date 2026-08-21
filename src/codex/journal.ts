@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { atomicWriteFile, atomicWriteFileAsync } from "../config";
 import { hasInjectedCodexRouting } from "./injected-marker";
 import { CODEX_HOME, CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "./paths";
+import { isProcessIdentity, readProcessIdentity, sameProcessIdentity, type ProcessIdentity } from "../lib/process-identity";
 
 const JOURNAL_PATH = join(CODEX_HOME, "opencodex-journal.json");
 
@@ -14,6 +15,8 @@ interface Journal {
   injectedConfigHash?: string;
   injectedProfileHash?: string | null;
   pid: number;
+  /** PID-reuse protection; old version-1 journals may not have this field. */
+  ownerIdentity?: ProcessIdentity;
   timestamp: string;
 }
 
@@ -76,6 +79,7 @@ export function writeJournal(options: WriteJournalOptions = {}): void {
     originalConfig: Buffer.from(config).toString("base64"),
     originalProfile: profile ? Buffer.from(profile).toString("base64") : null,
     pid: process.pid,
+    ownerIdentity: readProcessIdentity(process.pid) ?? undefined,
     timestamp: new Date().toISOString(),
   };
   atomicWriteFile(JOURNAL_PATH, JSON.stringify(journal));
@@ -99,6 +103,7 @@ function readJournal(): Journal | null {
   try {
     const journal = JSON.parse(readFileSync(JOURNAL_PATH, "utf-8")) as Journal;
     if (journal.version !== 1) throw new Error("unknown version");
+    if (journal.ownerIdentity !== undefined && !isProcessIdentity(journal.ownerIdentity)) throw new Error("invalid owner identity");
     return journal;
   } catch {
     removeJournal();
@@ -158,17 +163,34 @@ export function restoreJournal(): boolean {
   return restoreJournalState().complete;
 }
 
-export function reconcileJournal(): boolean {
-  const journal = readJournal();
-  if (!journal) return false;
+export interface JournalReconcileOptions {
+  /** Injectable identity reader for deterministic lifecycle regressions. */
+  readIdentity?: (pid: number) => ProcessIdentity | null;
+}
+
+function journalOwnerIsStillLive(journal: Journal, readIdentity: (pid: number) => ProcessIdentity | null): boolean {
   try {
     process.kill(journal.pid, 0);
-    return false;
-  } catch (e: unknown) {
-    if ((e as NodeJS.ErrnoException).code === "EPERM") {
-      return false;
-    }
+  } catch (error: unknown) {
+    // ESRCH is the only proof that the PID is gone. Access-denied and every
+    // other result are uncertain and must preserve the journal.
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    return true;
   }
+
+  const current = readIdentity(journal.pid);
+  // A live PID without an identity snapshot cannot be classified safely. This
+  // is the compatibility path for old journals: preserve rather than restore.
+  if (!current || !journal.ownerIdentity) return true;
+  // A different live process now owns the numeric PID. It cannot block
+  // recovery of the old proxy's ownership-bounded journal.
+  return sameProcessIdentity(journal.ownerIdentity, current);
+}
+
+export function reconcileJournal(options: JournalReconcileOptions = {}): boolean {
+  const journal = readJournal();
+  if (!journal) return false;
+  if (journalOwnerIsStillLive(journal, options.readIdentity ?? readProcessIdentity)) return false;
   const restored = restoreJournalState();
   if (!restored.configRestored && !restored.profileRestored) return false;
   console.error(`⚠️  Previous session (PID ${journal.pid}) did not shut down cleanly. Codex state restored from journal.`);
@@ -182,15 +204,10 @@ export function reconcileJournal(): boolean {
  * deliberately available for exit/signal cleanup, where awaiting a child would
  * be unsafe during process teardown.
  */
-export async function reconcileJournalAsync(): Promise<boolean> {
+export async function reconcileJournalAsync(options: JournalReconcileOptions = {}): Promise<boolean> {
   const journal = readJournal();
   if (!journal) return false;
-  try {
-    process.kill(journal.pid, 0);
-    return false;
-  } catch (e: unknown) {
-    if ((e as NodeJS.ErrnoException).code === "EPERM") return false;
-  }
+  if (journalOwnerIsStillLive(journal, options.readIdentity ?? readProcessIdentity)) return false;
   const restored = await restoreJournalStateAsync();
   if (!restored.configRestored && !restored.profileRestored) return false;
   console.error(`⚠️  Previous session (PID ${journal.pid}) did not shut down cleanly. Codex state restored from journal.`);

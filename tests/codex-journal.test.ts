@@ -177,6 +177,36 @@ describe("codex-journal", () => {
     expect(existsSync(journalPath)).toBe(true);
   });
 
+  test("reconcileJournal recovers when a live PID is now an unrelated process", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const original = "# original owner\n";
+    writeFileSync(join(testDir, "config.toml"), "# stale injected owner\n", "utf8");
+    // The test runner PID is definitely live, but the recorded start identity
+    // belongs to the old proxy lifetime. The injected reader models PID reuse
+    // by returning a different live identity for that same number.
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(original).toString("base64"),
+      originalProfile: null,
+      pid: process.pid,
+      ownerIdentity: { pid: process.pid, startIdentity: "old-proxy-start", executablePath: "C:/old/ocx.exe" },
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournal } = require("./src/codex/journal");
+      const journalPid = ${process.pid};
+      const result = reconcileJournal({
+        readIdentity: () => ({ pid: journalPid, startIdentity: "unrelated-live-start", executablePath: "C:/other.exe" }),
+      });
+      console.log(JSON.stringify({ restored: result }));
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(true);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+  }, 15_000);
+
   test("removeJournal cleans up", () => {
     const journalPath = join(testDir, "opencodex-journal.json");
     writeFileSync(journalPath, "{}", "utf8");
