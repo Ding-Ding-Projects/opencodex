@@ -14,7 +14,6 @@
  * behavior at its own commit, which a runtime placeholder here would break.
  */
 import type { OcxConfig } from "../types";
-import type { ProviderModelDiscoveryFilter } from "../providers/registry";
 
 /**
  * The non-CAS JSON record for the Codex integration.
@@ -34,7 +33,7 @@ export interface CodexIntegrationRecord {
 }
 
 export interface CodexHistoryState {
-  status: "converged" | "pending" | "running" | "blocked" | "unknown" | "not-evaluated";
+  status: "adoption-pending" | "converged" | "pending" | "running" | "blocked" | "unknown" | "not-evaluated";
   /**
    * Why it is not converged, when it is not. These are terminal observations
    * for one attempt, not reasons to collapse the durable retry schedule.
@@ -424,7 +423,7 @@ export interface CatalogProviderDiscoveryPolicySnapshot {
   }>;
   readonly finalMethod: "GET";
   readonly finalUrl: string;
-  readonly filter: CatalogDiscoveryPolicyField<ProviderModelDiscoveryFilter | undefined>;
+  readonly filter: CatalogDiscoveryPolicyField<Readonly<Record<string, unknown>> | undefined>;
   readonly maxResponseBytes: number;
   readonly maxModels: number;
   readonly trustedOpenAiApi: CatalogTrustedOpenAiApiPolicySnapshot;

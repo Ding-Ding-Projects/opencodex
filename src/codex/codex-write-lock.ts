@@ -363,6 +363,59 @@ export async function withCodexWriteLock<T>(
   }
 }
 
+/**
+ * Synchronous companion for the legacy restore/stop entrypoint. Restore is
+ * intentionally synchronous for process-shutdown callers, so it cannot await
+ * the retrying API above; it still takes the same N->C transaction boundary.
+ */
+export function withCodexWriteLockSync<T>(
+  options: Omit<CodexWriteLockOptions, "timeoutMs"> & { timeoutMs?: number },
+  commit: (context: CodexWriteCommitContext) => Synchronous<T>,
+): CodexWriteLockResult<T> {
+  const ambient = canonicalizeCodexHome(getCodexHome());
+  if (!ambient.ok) return refuse(ambient.reason, ambient.message);
+  if (options.codexHome !== undefined) {
+    const explicit = canonicalizeCodexHome(options.codexHome.trim());
+    if (!explicit.ok) return refuse(explicit.reason, explicit.message);
+    if (explicit.home.path !== ambient.home.path) return refuse("authority_not_proven", "The requested CODEX_HOME is not the ambient home.");
+  }
+  const held = heldHomes.getStore();
+  if (held?.has(ambient.home.lockId)) return refuse("reentrant", "This task already holds the Codex write lock for this CODEX_HOME.");
+  let databasePath: string;
+  try { databasePath = resolveCodexCoordinatorDatabasePath(resolveEffectiveUserIdentity(), ambient.home.path); }
+  catch (error) { return refuse("namespace_unsafe", error instanceof Error ? error.message : "The lock namespace could not be resolved."); }
+  let transaction: ReturnType<typeof openCodexCoordinatorTransaction> | undefined;
+  try {
+    transaction = openCodexCoordinatorTransaction(databasePath);
+    const expectation = transaction.expectation();
+    const version = transaction.version();
+    const nextHeld = new Set(held ?? []);
+    nextHeld.add(ambient.home.lockId);
+    const value = heldHomes.run(nextHeld, () => withConfigMutationLockSync(() => {
+      const current = options.readAdmissionUnderLock();
+      if (current.authoritySnapshotId !== options.admitted.authoritySnapshotId) throw new CodexWriteLockStaleAdmission();
+      const result = commit({
+        canonicalCodexHome: ambient.home.path,
+        lockId: ambient.home.lockId,
+        admission: current,
+        expectation,
+        currentTxId: version.currentTxId,
+        coordinator: transaction!.capability,
+      });
+      if (result && typeof (result as { then?: unknown }).then === "function") throw new TypeError("The Codex write-lock commit callback must be synchronous.");
+      return result;
+    }));
+    transaction.assertPublished(expectation);
+    transaction.commit();
+    return { status: "acquired", value: value as T, waitedMs: 0, lockId: ambient.home.lockId };
+  } catch (error) {
+    transaction?.rollback();
+    if (error instanceof CodexWriteLockStaleAdmission) return refuse("authority_not_proven", "The admitted state changed before the commit could be made under the lock.");
+    if (isBusyError(error)) return { status: "busy", reason: "deadline", retryable: true, waitedMs: 0 };
+    throw error;
+  } finally { transaction?.close(); }
+}
+
 /** Internal: the under-lock re-read disagreed with what was admitted. */
 class CodexWriteLockStaleAdmission extends Error {
   constructor() {

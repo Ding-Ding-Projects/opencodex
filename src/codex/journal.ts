@@ -5,7 +5,7 @@ import { atomicWriteFile, atomicWriteFileAsync } from "../config";
 import { hasInjectedCodexRouting } from "./injected-marker";
 import { CODEX_HOME, CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "./paths";
 
-const JOURNAL_PATH = join(CODEX_HOME, "opencodex-journal.json");
+export const JOURNAL_PATH = join(CODEX_HOME, "opencodex-journal.json");
 
 interface Journal {
   version: 1;

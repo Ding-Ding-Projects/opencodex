@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
+import { closeSync, fsyncSync, openSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 import * as z from "zod/v4";
 import { bumpConfigGenerationAtPath, bumpCurrentConfigGeneration, initializeConfigGeneration, readConfigGenerationAtPath } from "./codex/generation";
@@ -1328,13 +1330,63 @@ function configMutationDatabasePath(): string {
   return join(dir, CONFIG_MUTATION_DB_FILENAME);
 }
 
+function fsyncConfigPath(path: string): void {
+  const fd = openSync(path, "r");
+  try { fsyncSync(fd); } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    if (code !== "EPERM" && code !== "ENOTSUP") throw error;
+  } finally { closeSync(fd); }
+}
+
+function openConfigMutationDatabase(): Database {
+  const finalPath = configMutationDatabasePath();
+  if (!existsSync(finalPath)) {
+    const tempPath = `${finalPath}.${randomUUID()}.tmp`;
+    const temp = new Database(tempPath, { create: true });
+    try {
+      temp.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA user_version=1; BEGIN IMMEDIATE;");
+      initializeConfigGeneration(temp);
+      temp.exec("COMMIT");
+    } catch (error) {
+      try { temp.exec("ROLLBACK"); } catch { /* close below */ }
+      temp.close();
+      try { unlinkSync(tempPath); } catch { /* unpublished temp */ }
+      throw error;
+    }
+    temp.close();
+    try { chmodSync(tempPath, 0o600); } catch { /* Windows ACL helper owns the boundary */ }
+    hardenSecretPath(tempPath, { required: true, timeoutMemoKey: tempPath });
+    fsyncConfigPath(tempPath);
+    if (process.platform === "win32") {
+      const quote = (value: string) => value.replaceAll("'", "''");
+      const script = [
+        "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class OcxMoveConfig { [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string existing, string destination, int flags); }'",
+        `$ok=[OcxMoveConfig]::MoveFileEx('${quote(tempPath)}','${quote(finalPath)}',8)`,
+        "if(-not $ok){ exit [Runtime.InteropServices.Marshal]::GetLastWin32Error() }",
+      ].join("; ");
+      const encoded = Buffer.from(script, "utf16le").toString("base64");
+      const moved = Bun.spawnSync(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
+      if (!moved.success && moved.exitCode !== 183) throw new Error("config mutation database publication failed");
+    } else {
+      try { linkSync(tempPath, finalPath); }
+      catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+        if (code !== "EEXIST") throw error;
+      }
+    }
+    try { fsyncConfigPath(dirname(finalPath)); } catch { /* parent fsync is unsupported on Windows */ }
+    try { unlinkSync(tempPath); } catch { /* final inode is authoritative */ }
+  }
+  return new Database(finalPath, { readwrite: true, create: false });
+}
+
 /** Synchronous, fail-fast C lock used by cooperating config and Codex writers. */
 export function withConfigMutationLockSync<T>(fn: () => T): T {
   if (configMutationDepth > 0) {
     configMutationDepth += 1;
     try { return fn(); } finally { configMutationDepth -= 1; }
   }
-  const database = new Database(configMutationDatabasePath(), { create: true });
+  const database = openConfigMutationDatabase();
   try {
     try { chmodSync(configMutationDatabasePath(), 0o600); } catch { /* Windows ACL helper owns this boundary */ }
     database.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE;");

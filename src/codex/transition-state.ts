@@ -37,7 +37,7 @@ import {
 } from "./user-identity";
 
 const COORDINATOR_SCHEMA_VERSION = 1;
-const DURABLE_HISTORY_STATUSES = new Set(["converged", "pending", "running", "blocked", "unknown"]);
+const DURABLE_HISTORY_STATUSES = new Set(["adoption-pending", "converged", "pending", "running", "blocked", "unknown"]);
 const DURABLE_HISTORY_REASONS = new Set([
   "db-busy",
   "permission",
@@ -65,7 +65,7 @@ const CREATE_TRANSITION_TABLE = `
     history_pending_rows INTEGER,
     history_backup_entries INTEGER,
     updated_at TEXT NOT NULL,
-    CHECK (history_status IN ('converged', 'pending', 'running', 'blocked', 'unknown')),
+    CHECK (history_status IN ('adoption-pending', 'converged', 'pending', 'running', 'blocked', 'unknown')),
     CHECK (history_reason IS NULL OR history_reason IN
       ('db-busy', 'permission', 'unreadable', 'schema', 'timeout',
        'shutdown-cancelled', 'worker-died', 'overtaken', 'record-write-failed')),
@@ -74,6 +74,11 @@ const CREATE_TRANSITION_TABLE = `
     CHECK ((native_generation = 0 AND current_tx_id IS NULL)
         OR (native_generation > 0 AND length(trim(current_tx_id)) > 0)),
     CHECK ((native_generation = 0
+            AND history_status = 'adoption-pending'
+            AND history_tx_id IS NOT NULL
+            AND history_direction IS NOT NULL
+            AND length(trim(history_authority_snapshot_id)) > 0)
+        OR (native_generation = 0
             AND history_tx_id IS NULL
             AND history_direction IS NULL
             AND history_authority_snapshot_id IS NULL)
@@ -82,7 +87,7 @@ const CREATE_TRANSITION_TABLE = `
             AND history_direction IS NOT NULL
             AND length(trim(history_authority_snapshot_id)) > 0)),
     CHECK (native_generation > 0 OR
-      (history_status = 'unknown'
+      (history_status IN ('unknown', 'adoption-pending')
        AND history_reason IS NULL
        AND history_attempts = 0
        AND history_next_retry_at IS NULL

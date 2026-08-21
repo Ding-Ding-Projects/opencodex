@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { adoptPreSubstrateHome, readAdoptionEvidence } from "../src/codex/adoption";
 
@@ -54,6 +54,37 @@ describe("pre-substrate Codex home adoption", () => {
     expect(first.kind).toBe("adopted");
     expect(second).toEqual({ kind: "already-adopted", databasePath: fx.db });
     expect(readAdoptionEvidence(fx.db)?.historyOperation).toBe("apply-opencodex");
+  });
+
+  test("two child processes publish one winner without clobbering", async () => {
+    const fx = fixture();
+    const child = join(import.meta.dir, "helpers", "adoption-child.ts");
+    const resultA = join(fx.root, "a.json");
+    const resultB = join(fx.root, "b.json");
+    const env = (resultPath: string) => ({ ...process.env, OCX_ADOPTION_DATABASE: fx.db, OCX_ADOPTION_RESULT: resultPath, OCX_ADOPTION_TEST_CHILD_RACE: "1" });
+    const a = Bun.spawn([process.execPath, child], { env: env(resultA), stdout: "ignore", stderr: "ignore" });
+    const b = Bun.spawn([process.execPath, child], { env: env(resultB), stdout: "ignore", stderr: "ignore" });
+    await Promise.all([a.exited, b.exited]);
+    const childResults = [JSON.parse(readFileSync(resultA, "utf8")), JSON.parse(readFileSync(resultB, "utf8"))];
+    const outcomes = childResults.map(result => result.kind).sort();
+    if (childResults.filter(result => result.kind === "refused" && result.reason === "publication-race").length !== 1) throw new Error(`unexpected child race result: ${JSON.stringify(childResults)}`);
+    expect(outcomes).toEqual(["adopted", "refused"]);
+    expect(readAdoptionEvidence(fx.db)?.historyStatus).toBe("adoption-pending");
+  });
+
+  test("a child crash after complete temp creation leaves no final authority", async () => {
+    const fx = fixture();
+    const child = join(import.meta.dir, "helpers", "adoption-child.ts");
+    const resultPath = join(fx.root, "crash.json");
+    const proc = Bun.spawn([process.execPath, child], {
+      env: { ...process.env, OCX_ADOPTION_DATABASE: fx.db, OCX_ADOPTION_RESULT: resultPath, OCX_ADOPTION_TEST_CRASH_CHECKPOINT: "after-temp" },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await proc.exited).toBe(97);
+    expect(existsSync(fx.db)).toBe(false);
+    const retry = adoptPreSubstrateHome({ databasePath: fx.db, residue: "routed", intent: { kind: "retained-apply", operation: "apply-opencodex" } });
+    expect(retry.kind).toBe("adopted");
   });
 
   test("clean homes do not get a row", () => {
