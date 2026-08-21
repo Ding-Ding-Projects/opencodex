@@ -56,6 +56,7 @@ import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
 import { applySystemEnvToggle } from "../system-env";
 import { parseSubagentRoles, routedOnV2Warnings, unionRoleModelsIntoRoster } from "../../codex/agent-roles";
+import { agentTaskRecoveryState } from "../responses/agent-task-recovery";
 import { CODEX_REASONING_LEVELS } from "../../reasoning-effort";
 
 import { isPlainRecord, parseDebugLogQuery, tokPerSecondResult, unavailableCostReason, costResult, requestLogDto, stripRegistryOnlyStaticHeaders, fetchAllModels, fetchGrokCandidateModels, buildClaudeDesktopState } from "./shared";
@@ -359,11 +360,14 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     const routed = uniqueCatalogModelsForPublicList(models)
       .filter(model => !disabled.has(catalogModelSlug(model)))
       .map(model => ({ provider: model.provider, model: model.id, namespaced: catalogModelSlug(model) }));
+    const roles = config.subagentRoles ?? [];
+    const hasRoutedV2Child = config.multiAgentMode === "v2" && roles.some(role => role.enabled !== false && role.model.includes("/"));
     return jsonResponse({
-      roles: config.subagentRoles ?? [],
+      roles,
       revision: config.subagentRolesRevision ?? 0,
       efforts: CODEX_REASONING_LEVELS.map(level => level.effort),
       available: [...native, ...routed],
+      compatibility: agentTaskRecoveryState(config, hasRoutedV2Child),
     });
   }
   if (url.pathname === "/api/subagent-roles" && req.method === "PUT") {
@@ -392,13 +396,15 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
       await refreshCodexCatalogBestEffort();
       await syncClaudeAgentDefsBestEffort();
       await autoApplyDesktopBestEffort();
-      return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, warnings });
+      return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, warnings,
+        compatibility: agentTaskRecoveryState(config, config.multiAgentMode === "v2" && parsed.roles.some(role => role.enabled !== false && role.model.includes("/"))) });
     }
     saveConfigPreservingClaudeCode(config);
     await refreshCodexCatalogBestEffort();
     await syncClaudeAgentDefsBestEffort();
     await autoApplyDesktopBestEffort();
-    return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, removed: body.remove });
+    return jsonResponse({ ok: true, roles: config.subagentRoles, revision: config.subagentRolesRevision, removed: body.remove,
+      compatibility: agentTaskRecoveryState(config, config.multiAgentMode === "v2" && (config.subagentRoles ?? []).some(role => role.enabled !== false && role.model.includes("/"))) });
   }
 
   // Priority-ordered subagent model fallback chain for quota-aware spawn routing.

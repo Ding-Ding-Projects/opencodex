@@ -691,6 +691,7 @@ const configSchema = z.object({
   syncCodexSubagentDefaults: z.boolean().optional().catch(undefined),
   // Validate at the explicit boundary below while preserving unrelated config when loading.
   subagentRoles: z.unknown().optional(),
+  agentTaskRecovery: z.unknown().optional(),
   codexShimAutoRestore: z.boolean().optional(),
   pausedCodexAccountIds: z.array(z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/)).optional(),
   codexAccountNamespaces: codexAccountNamespacesSchema.optional(),
@@ -1085,6 +1086,40 @@ function subagentRolesError(value: unknown): string | null {
   return parsed.ok ? null : `schema_invalid: ${parsed.error}`;
 }
 
+const agentTaskRecoverySchema = z.object({
+  enabled: z.boolean().optional(),
+  model: z.string().trim().min(1).optional(),
+  timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
+  cacheEntries: z.number().int().min(1).max(512).optional(),
+}).strict();
+
+function normalizeAgentTaskRecovery(config: OcxConfig, rawParsed: unknown): OcxConfig {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "agentTaskRecovery")) return config;
+  const parsed = agentTaskRecoverySchema.safeParse(raw.agentTaskRecovery);
+  if (parsed.success) return { ...config, agentTaskRecovery: parsed.data as OcxConfig["agentTaskRecovery"] };
+  const next = { ...config };
+  delete next.agentTaskRecovery;
+  return next;
+}
+
+function warnDegradedAgentTaskRecovery(rawParsed: unknown): void {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "agentTaskRecovery")) return;
+  if (!agentTaskRecoverySchema.safeParse(raw.agentTaskRecovery).success) {
+    console.warn("⚠️  config.json agentTaskRecovery ignored: invalid experimental recovery configuration. Other settings were preserved.");
+  }
+}
+
+function agentTaskRecoveryError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "agentTaskRecovery")) return null;
+  const result = agentTaskRecoverySchema.safeParse(raw.agentTaskRecovery);
+  if (result.success) return null;
+  const field = result.error.issues[0]?.path.join(".");
+  return `schema_invalid: agentTaskRecovery${field ? `.${field}` : ""}: ${result.error.issues[0]?.message ?? "invalid configuration"}`;
+}
+
 type NativeSubagentPersistedField = "injectionModel" | "injectionEffort" | "syncCodexSubagentDefaults";
 
 function rawConfigRecord(rawParsed: unknown): Record<string, unknown> | null {
@@ -1162,8 +1197,9 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
       warnDegradedSubagentRoles(parsed);
+      warnDegradedAgentTaskRecovery(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
-      return normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed);
+      return normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed);
     }
     // Schema validation failed — merge defaults into the raw object instead of
     // discarding it entirely, so pool accounts and providers survive a missing
@@ -1181,8 +1217,9 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
       warnDegradedSubagentRoles(parsed);
+      warnDegradedAgentTaskRecovery(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
-      return normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed);
+      return normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed);
     }
     // Merge couldn't fix it — truly broken config
     warnAndBackupInvalidConfig(configPath, result.error);
@@ -1218,12 +1255,16 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   // ordinary save persists the normalized absence.
   const syncDisabledReason = nativeSubagentSyncDisabledReason(config, rawParsed);
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
-  const normalized = normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed), rawParsed);
+  const normalized = normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed), rawParsed), rawParsed);
   const warnings = configPlaceholderWarnings(normalized);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {
     warnings.push(`claudeCode.subagentEffort ignored: expected one of ${CLAUDE_SUBAGENT_EFFORTS.join(", ")}`);
   }
   warnings.push(...salvageSubagentRoles((rawConfigRecord(rawParsed) ?? {}).subagentRoles).warnings);
+  const rawRecovery = rawConfigRecord(rawParsed)?.agentTaskRecovery;
+  if (rawRecovery !== undefined && !agentTaskRecoverySchema.safeParse(rawRecovery).success) {
+    warnings.push("agentTaskRecovery ignored: invalid experimental recovery configuration");
+  }
   warnings.push(...malformedNativeSubagentFields(rawParsed).map(malformedNativeSubagentFieldWarning));
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
@@ -1285,7 +1326,7 @@ function claudeSubagentEffortError(value: unknown): string | null {
 
 /** Validate an in-memory config candidate without touching disk. Used by headless CLI import/set. */
 export function validateConfigCandidate(value: unknown): { ok: true; config: OcxConfig } | { ok: false; error: string } {
-  const boundaryError = blankHostnameError(value) ?? claudeSubagentEffortError(value) ?? subagentRolesError(value);
+  const boundaryError = blankHostnameError(value) ?? claudeSubagentEffortError(value) ?? subagentRolesError(value) ?? agentTaskRecoveryError(value);
   if (boundaryError) return { ok: false, error: boundaryError };
   const result = configSchema.safeParse(value);
   if (result.success) {

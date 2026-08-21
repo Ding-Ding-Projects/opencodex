@@ -8,6 +8,7 @@ import {
   SUBAGENT_ROLE_MODEL_MAX,
 } from "../src/codex/agent-roles";
 import { multiAgentGuidanceText } from "../src/server/responses/collaboration";
+import { agentTaskRecoveryState } from "../src/server/responses/agent-task-recovery";
 
 const role = (id: string, model = "gpt-5.6-luna") => ({
   id,
@@ -64,5 +65,12 @@ describe("named subagent roles", () => {
     });
     expect(text).toContain("reviewer");
     expect(text).not.toContain("developerInstructions");
+  });
+
+  test("reports honest off/on/ineligible compatibility states without exposing task data", () => {
+    const base = { port: 10100, providers: {}, defaultProvider: "openai", multiAgentMode: "v2" } as any;
+    expect(agentTaskRecoveryState(base, false)).toMatchObject({ state: "ineligible", enabled: false, eligible: false });
+    expect(agentTaskRecoveryState(base, true)).toMatchObject({ state: "off", enabled: false, eligible: true });
+    expect(agentTaskRecoveryState({ ...base, agentTaskRecovery: { enabled: true } }, true)).toMatchObject({ state: "on", enabled: true, eligible: true });
   });
 });
