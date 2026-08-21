@@ -172,6 +172,19 @@ describe("doctor", () => {
     }
   });
 
+  test("stale removed status with a present replacement shim is never reported as removed", () => {
+    const binDir = join(TEST_OPENCODEX_HOME, "cli-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "ocx.cmd"), "replacement\r\n");
+    writeFileSync(
+      join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
+      JSON.stringify({ action: "uninstall", ok: true, owned: true, removed: true, binDir, at: "2026-08-21T00:00:00.000Z" }),
+    );
+    const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
+    expect(status).toMatchObject({ present: true, shimPresent: true, state: "unresolved" });
+    if (status.present) expect(status.state).not.toBe("removed");
+  });
+
   test("desktop CLI PATH status tolerates a corrupt file rather than throwing", () => {
     writeFileSync(join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME), "{not json");
     expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toEqual({ present: false });

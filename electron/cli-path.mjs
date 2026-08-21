@@ -186,25 +186,25 @@ export function installCliOnPath(execPath, deps = {}) {
   const result = runPowerShell(plan.scriptPath, plan.binDir, { action: "install" });
   if (result.error) {
     const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, result);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `could not run the PATH-repair helper: ${result.error.message}`,
       manualCommand: plan.manualCommand,
-      transactionRecovered: false,
-      rollbackFailed: rollback.rollbackFailed,
+      ...combined,
     };
   }
   if (result.status !== 0) {
     const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, result);
     const stderrTail = String(result.stderr ?? "").trim().slice(0, 500);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `the PATH-repair helper exited ${result.status}${stderrTail ? `: ${stderrTail}` : ""}`,
       manualCommand: plan.manualCommand,
-      transactionRecovered: false,
-      rollbackFailed: rollback.rollbackFailed,
+      ...combined,
     };
   }
 
@@ -213,25 +213,25 @@ export function installCliOnPath(execPath, deps = {}) {
     parsed = JSON.parse(String(result.stdout ?? "").trim());
   } catch {
     const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, result);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: "the PATH-repair helper produced output that could not be parsed",
       manualCommand: plan.manualCommand,
-      transactionRecovered: false,
-      rollbackFailed: rollback.rollbackFailed,
+      ...combined,
     };
   }
 
   if (!parsed || parsed.ok !== true) {
     const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, parsed);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: typeof parsed?.reason === "string" ? parsed.reason : "the PATH-repair helper reported failure",
       manualCommand: plan.manualCommand,
-      transactionRecovered: parsed?.transactionRecovered === true ? parsed.transactionRecovered : false,
-      rollbackFailed: parsed?.rollbackFailed === true || rollback.rollbackFailed,
+      ...combined,
     };
   }
 
@@ -296,6 +296,32 @@ function restoreShim(plan, before, binDirExisted, deps) {
     rollbackFailed = true;
   }
   return { transactionRecovered: !rollbackFailed, rollbackFailed };
+}
+
+/**
+ * Combine helper-side rollback evidence with the local shim restoration. A
+ * missing mutationState is conservative: the helper may have changed PATH,
+ * so local shim recovery alone cannot claim the whole transaction recovered.
+ */
+function combineRollback(local, helper) {
+  const mutationState = helper?.mutationState === "none" || helper?.mutationState === "made" || helper?.mutationState === "unknown"
+    ? helper.mutationState
+    : helper?.helperMutation === false
+      ? "none"
+      : helper?.helperMutation === true || typeof helper?.transactionRecovered === "boolean" || typeof helper?.rollbackFailed === "boolean"
+        ? "made"
+        : "unknown";
+  const helperFailed = helper?.rollbackFailed === true;
+  if (mutationState === "none") {
+    return { transactionRecovered: local.transactionRecovered === true, rollbackFailed: local.rollbackFailed === true };
+  }
+  if (mutationState === "made") {
+    return {
+      transactionRecovered: helper?.transactionRecovered === true && local.transactionRecovered === true,
+      rollbackFailed: helperFailed || local.rollbackFailed === true,
+    };
+  }
+  return { transactionRecovered: false, rollbackFailed: helperFailed || local.rollbackFailed === true };
 }
 
 /**

@@ -174,21 +174,21 @@ describe("installCliOnPath", () => {
   test("fails closed when PowerShell itself could not be launched", () => {
     const result = installCliOnPath(
       EXEC,
-      baseDeps({ runPowerShell: () => ({ status: null, stdout: "", stderr: "", error: new Error("spawn ENOENT") }) }),
+      baseDeps({ runPowerShell: () => ({ status: null, stdout: "", stderr: "", error: new Error("spawn ENOENT"), mutationState: "none" }) }),
     );
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("ENOENT");
-    expect(result).toMatchObject({ transactionRecovered: false, rollbackFailed: false });
+    expect(result).toMatchObject({ transactionRecovered: true, rollbackFailed: false });
   });
 
   test("fails closed and surfaces stderr when the PATH-repair script exits non-zero", () => {
     const result = installCliOnPath(
       EXEC,
-      baseDeps({ runPowerShell: () => ({ status: 1, stdout: "", stderr: "access denied", error: undefined }) }),
+      baseDeps({ runPowerShell: () => ({ status: 1, stdout: "", stderr: "access denied", error: undefined, mutationState: "none" }) }),
     );
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("access denied");
-    expect(result).toMatchObject({ transactionRecovered: false, rollbackFailed: false });
+    expect(result).toMatchObject({ transactionRecovered: true, rollbackFailed: false });
   });
 
   test("fails closed when the PATH-repair script's own JSON reports ok:false", () => {
@@ -197,7 +197,7 @@ describe("installCliOnPath", () => {
       baseDeps({
         runPowerShell: () => ({
           status: 0,
-          stdout: JSON.stringify({ ok: false, reason: "access denied writing HKCU\\Environment", transactionRecovered: true, rollbackFailed: false }),
+          stdout: JSON.stringify({ ok: false, reason: "access denied writing HKCU\\Environment", mutationState: "none" }),
           stderr: "",
         }),
       }),
@@ -206,11 +206,33 @@ describe("installCliOnPath", () => {
     expect(result).toMatchObject({ transactionRecovered: true, rollbackFailed: false });
   });
 
+  test("keeps helper mutation unknown conservative when no helper evidence is returned", () => {
+    const result = installCliOnPath(
+      EXEC,
+      baseDeps({ runPowerShell: () => ({ status: 1, stdout: "", stderr: "helper stopped", error: undefined }) }),
+    );
+    expect(result).toMatchObject({ ok: false, transactionRecovered: false, rollbackFailed: false });
+  });
+
+  test("combines known helper rollback failure with successful local shim restoration", () => {
+    const result = installCliOnPath(
+      EXEC,
+      baseDeps({
+        runPowerShell: () => ({
+          status: 0,
+          stdout: JSON.stringify({ ok: false, reason: "PATH rollback failed", mutationState: "made", transactionRecovered: false, rollbackFailed: true }),
+          stderr: "",
+        }),
+      }),
+    );
+    expect(result).toMatchObject({ ok: false, transactionRecovered: false, rollbackFailed: true });
+  });
+
   test("fails closed rather than throwing when the PATH-repair script prints unparseable output", () => {
-    const result = installCliOnPath(EXEC, baseDeps({ runPowerShell: () => ({ status: 0, stdout: "not json", stderr: "" }) }));
+    const result = installCliOnPath(EXEC, baseDeps({ runPowerShell: () => ({ status: 0, stdout: "not json", stderr: "", mutationState: "none" }) }));
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("could not be parsed");
-    expect(result).toMatchObject({ transactionRecovered: false, rollbackFailed: false });
+    expect(result).toMatchObject({ transactionRecovered: true, rollbackFailed: false });
   });
 
   test("rolls the shim back to its exact prior bytes when PATH repair fails", () => {

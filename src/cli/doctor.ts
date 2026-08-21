@@ -284,7 +284,7 @@ export function collectDesktopCliPathStatus(configDir: string = getConfigDir()):
         ? "rollback-failed"
         : raw.ok === false && transactionRecovered === true
           ? "rollback-recovered"
-          : action === "uninstall" && removed === true
+          : action === "uninstall" && removed === true && !shimPresent
             ? "removed"
             : action === "install" && raw.ok === true && shimPresent
               ? "installed"
