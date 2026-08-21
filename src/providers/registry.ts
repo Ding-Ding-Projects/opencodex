@@ -1,4 +1,5 @@
-import type { CodexAccountMode, OcxProviderConfig } from "../types";
+import type { CodexAccountMode, OcxProviderConfig, ResponsesTerminalRepairPolicy } from "../types";
+import { resolveCustomResponsesTerminalRepair } from "./terminal-repair";
 import { KIRO_MODELS, KIRO_MODEL_CONTEXT_WINDOWS, KIRO_MODEL_REASONING_EFFORTS } from "./kiro-models";
 import { ANTIGRAVITY_MODELS, ANTIGRAVITY_MODEL_CONTEXT_WINDOWS, ANTIGRAVITY_MODEL_EFFORTS } from "./antigravity-models";
 import type { ProviderBaseUrlChoice } from "./base-url-choices";
@@ -61,6 +62,8 @@ export interface ProviderRegistryEntry {
   modelDefaultReasoningEfforts?: Record<string, string>;
   reasoningEffortMap?: Record<string, string>;
   modelReasoningEffortMap?: Record<string, Record<string, string>>;
+  /** Registry-only repair for a model whose native Responses stream may omit its terminal. */
+  modelResponsesTerminalRepair?: Record<string, ResponsesTerminalRepairPolicy>;
   noVisionModels?: string[];
   noReasoningModels?: string[];
   noTemperatureModels?: string[];
@@ -1118,6 +1121,27 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
 
 export function getProviderRegistryEntry(id: string): ProviderRegistryEntry | undefined {
   return PROVIDER_REGISTRY.find(entry => entry.id === id);
+}
+
+/** Resolve explicit custom or registry-owned terminal repair only after the effective wire is known. */
+export function providerModelResponsesTerminalRepair(
+  id: string,
+  provider: Pick<OcxProviderConfig, "baseUrl" | "adapter" | "authMode" | "modelResponsesTerminalRepair">,
+  modelId: string,
+): ResponsesTerminalRepairPolicy | undefined {
+  const custom = resolveCustomResponsesTerminalRepair(provider, modelId);
+  if (custom) return custom;
+  const entry = getProviderRegistryEntry(id);
+  if (!entry?.modelResponsesTerminalRepair || provider.adapter !== "openai-responses") return undefined;
+  const configuredBase = provider.baseUrl.trim().replace(/\/+$/, "").toLowerCase();
+  const registryBase = entry.baseUrl.trim().replace(/\/+$/, "").toLowerCase();
+  if (configuredBase !== registryBase) return undefined;
+  const policy = Object.entries(entry.modelResponsesTerminalRepair)
+    .find(([key]) => key.toLowerCase() === modelId.toLowerCase())?.[1];
+  const graceMs = policy?.graceMs;
+  return typeof graceMs === "number" && Number.isInteger(graceMs) && graceMs > 0
+    ? { graceMs }
+    : undefined;
 }
 
 /**

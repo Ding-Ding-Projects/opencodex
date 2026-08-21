@@ -117,18 +117,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function normalizedBaseUrl(value: string): string {
+function normalizedQuotaBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase();
 }
 
 function isZaiQuotaBaseUrl(baseUrl: string): boolean {
-  const normalized = normalizedBaseUrl(baseUrl);
+  const normalized = normalizedQuotaBaseUrl(baseUrl);
   return normalized === ZAI_BASE_URL
     || normalized === `${ZAI_BASE_URL}/api/coding/paas/v4`;
 }
 
 function isBigModelQuotaBaseUrl(baseUrl: string): boolean {
-  const normalized = normalizedBaseUrl(baseUrl);
+  const normalized = normalizedQuotaBaseUrl(baseUrl);
   return normalized === BIGMODEL_BASE_URL
     || normalized === `${BIGMODEL_BASE_URL}/api/paas/v4`
     || normalized === `${BIGMODEL_BASE_URL}/api/coding/paas/v4`;

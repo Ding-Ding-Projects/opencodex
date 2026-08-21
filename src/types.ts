@@ -922,6 +922,11 @@ export interface ResponsesItemIdRepairConfig {
   repairMissingTerminalIds?: boolean;
 }
 
+export interface ResponsesTerminalRepairPolicy {
+  /** Grace period after a structurally complete output graph before synthetic completion. */
+  graceMs?: number;
+}
+
 export interface OcxProviderConfig {
   adapter: string;
   /** Optional OAuth account-pool controls for this provider. */
@@ -1096,6 +1101,8 @@ export interface OcxProviderConfig {
    * Disabled by default; function_call ids and call_id pairing are never rewritten.
    */
   responsesItemIdRepair?: ResponsesItemIdRepairConfig;
+  /** Explicit per-model compatibility escape hatch for custom Responses gateways. */
+  modelResponsesTerminalRepair?: Record<string, ResponsesTerminalRepairPolicy>;
   /** Model ids whose tool_choice only accepts `auto` or `none`; forced/named choices are downgraded. */
   autoToolChoiceOnlyModels?: string[];
   /** Model ids that expect prior assistant `reasoning_content` to be preserved in chat history. */
