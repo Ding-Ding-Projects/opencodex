@@ -50,6 +50,9 @@ func runService(args []string, streams IO) error {
 		if err := prepareServiceToken(*cfg); err != nil {
 			return err
 		}
+		if readServiceInstallState() != nil && installedBackend == backend {
+			if _, err := service.RequireKnownStatus(manager, "install"); err != nil { return err }
+		}
 		if serviceRuntimeGOOS == "windows" && readServiceInstallState() != nil && installedBackend != backend {
 			current, managerErr := serviceManagerForBackend(*cfg, installedBackend)
 			if managerErr != nil {
@@ -66,6 +69,7 @@ func runService(args []string, streams IO) error {
 		}
 		fmt.Fprintf(streams.Out, "Service installed and started: %s\n", manager.ArtifactPath())
 	case "start":
+		if _, err := service.RequireKnownStatus(manager, "start"); err != nil { return err }
 		return manager.Start()
 	case "restart":
 		if err := assertServiceEnvironmentOwnedHere(); err != nil {
