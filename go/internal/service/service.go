@@ -45,8 +45,12 @@ type Status struct {
 	Running   bool
 	Viable    bool
 	Stale     bool
-	Backend   string
-	Detail    string
+	// Unknown means the manager could not answer the status query. It is
+	// intentionally distinct from an absent service; callers must not start,
+	// stop, or uninstall on an unverified negative.
+	Unknown bool
+	Backend string
+	Detail  string
 }
 
 type Manager interface {
@@ -127,6 +131,13 @@ func ParseArgs(args []string, goos string) (ParsedArgs, error) {
 			}
 			parsed.Backend = BackendScheduler
 		default:
+			if arg == "refresh" {
+				if commandSet || parsed.Backend != "" {
+					return ParsedArgs{}, fmt.Errorf("unknown service option %q", arg)
+				}
+				parsed.Command, commandSet = "status", true
+				continue
+			}
 			if strings.HasPrefix(arg, "--") || commandSet {
 				return ParsedArgs{}, fmt.Errorf("unknown service option %q", arg)
 			}

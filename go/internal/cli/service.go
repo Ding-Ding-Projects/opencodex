@@ -108,7 +108,13 @@ func runService(args []string, streams IO) error {
 		if statusErr != nil {
 			return statusErr
 		}
-		fmt.Fprintf(streams.Out, "installed=%t running=%t artifact=%s\n", status.Installed, status.Running, manager.ArtifactPath())
+		state := "absent"
+		if status.Unknown {
+			state = "unknown"
+		} else if status.Installed {
+			state = "installed"
+		}
+		fmt.Fprintf(streams.Out, "state=%s installed=%t enabled=%t running=%t artifact=%s\n", state, status.Installed, status.Enabled, status.Running, manager.ArtifactPath())
 		if status.Detail != "" {
 			fmt.Fprintln(streams.Out, status.Detail)
 		}
