@@ -312,16 +312,19 @@ function combineRollback(local, helper) {
         ? "made"
         : "unknown";
   const helperFailed = helper?.rollbackFailed === true;
+  const localFailed = local.rollbackFailed === true;
   if (mutationState === "none") {
-    return { transactionRecovered: local.transactionRecovered === true, rollbackFailed: local.rollbackFailed === true };
+    const rollbackFailed = helperFailed || localFailed;
+    return { transactionRecovered: !rollbackFailed && local.transactionRecovered === true, rollbackFailed };
   }
   if (mutationState === "made") {
+    const rollbackFailed = helperFailed || localFailed;
     return {
-      transactionRecovered: helper?.transactionRecovered === true && local.transactionRecovered === true,
-      rollbackFailed: helperFailed || local.rollbackFailed === true,
+      transactionRecovered: !rollbackFailed && helper?.transactionRecovered === true && local.transactionRecovered === true,
+      rollbackFailed,
     };
   }
-  return { transactionRecovered: false, rollbackFailed: helperFailed || local.rollbackFailed === true };
+  return { transactionRecovered: false, rollbackFailed: helperFailed || localFailed };
 }
 
 /**

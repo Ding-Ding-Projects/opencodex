@@ -228,6 +228,34 @@ describe("installCliOnPath", () => {
     expect(result).toMatchObject({ ok: false, transactionRecovered: false, rollbackFailed: true });
   });
 
+  test("none mutation state still reports an observed helper rollback failure", () => {
+    const result = installCliOnPath(
+      EXEC,
+      baseDeps({
+        runPowerShell: () => ({
+          status: 0,
+          stdout: JSON.stringify({ ok: false, reason: "helper rollback failed", mutationState: "none", transactionRecovered: true, rollbackFailed: true }),
+          stderr: "",
+        }),
+      }),
+    );
+    expect(result).toMatchObject({ ok: false, transactionRecovered: false, rollbackFailed: true });
+  });
+
+  test("made mutation state cannot report recovered together with rollbackFailed", () => {
+    const result = installCliOnPath(
+      EXEC,
+      baseDeps({
+        runPowerShell: () => ({
+          status: 0,
+          stdout: JSON.stringify({ ok: false, reason: "contradictory helper evidence", mutationState: "made", transactionRecovered: true, rollbackFailed: true }),
+          stderr: "",
+        }),
+      }),
+    );
+    expect(result).toMatchObject({ ok: false, transactionRecovered: false, rollbackFailed: true });
+  });
+
   test("fails closed rather than throwing when the PATH-repair script prints unparseable output", () => {
     const result = installCliOnPath(EXEC, baseDeps({ runPowerShell: () => ({ status: 0, stdout: "not json", stderr: "", mutationState: "none" }) }));
     expect(result).toMatchObject({ ok: false });
