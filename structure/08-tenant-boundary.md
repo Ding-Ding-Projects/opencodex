@@ -17,28 +17,33 @@ registry or its credentials.
 
 ## Authorization and catalog projection
 
-When the registry is enabled, `GET /v1/models` requires the dedicated tenant key and filters every
-catalog shape (OpenAI list, Codex client catalog, and Anthropic model information) through the
-tenant's model allowlist. Provider authorization is available through the same boundary for the
-next data-plane request slices. A missing key is `401`; an invalid key or disallowed model/provider
-is `403`; neither response contains a credential or request payload.
+When the registry is enabled, every `/v1/*` request requires the dedicated tenant key before
+dispatch. JSON inference bodies are bounded and inspected from a clone before routing; the
+canonical model/provider identity is checked against the tenant policy. `GET /v1/models` filters
+every catalog shape (OpenAI list, Codex client catalog, and Anthropic model information) through
+the same allowlist. A missing key is `401`; an invalid key or disallowed model/provider is `403`;
+neither response contains a credential or request payload. The WebSocket upgrade path applies the
+same admission check before the upgrade.
 
 ## History isolation
 
 `requestHistoryKey` prefixes a bounded request identifier with the admitted tenant id. The prefix
-is an attribution key, not a payload or credential. Full request/usage storage and management-plane
-projection remain separate implementation rows below and are not claimed by this slice.
+is an attribution key, not a payload or credential. `TenantRequestLedger` persists bounded scalar
+admission records and filters them by tenant. Ledger failure is observability-only and cannot fail
+the admitted data-plane request. Full usage aggregation and management-plane projection remain
+separate implementation rows below and are not claimed by this slice.
 
 ## Explicit remaining rows
 
 - [x] Versioned tenant identity/admission type and dedicated credential channel.
 - [x] Negative cross-tenant admission/model tests.
+- [x] Tenant admission before every `/v1/*` dispatch and WebSocket upgrade.
 - [x] Tenant-filtered `/v1/models` projection for all three catalog shapes.
 - [x] Tenant-scoped request-history key primitive.
+- [x] Bounded tenant request ledger with atomic writes and tenant filtering.
+- [x] Durable versioned operator policy file with duplicate-safe save and key rotation.
 - [ ] Operator configuration persistence and rotation.
-- [ ] Authorization on every inference endpoint (the `/v1/models` projection is the only wired
-  route in this slice).
-- [ ] Tenant-attributed request/usage persistence and operator filtering.
+- [ ] Tenant-attributed usage aggregation and operator filtering.
 - [ ] Tenant account-pool, affinity, quota, and concurrency isolation.
 - [ ] Trusted-proxy identity contract and centrally hosted deployment guide.
 

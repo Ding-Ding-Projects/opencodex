@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { markActivity } from "../lib/sidecar-tracker";
 import {
   buildWarmupCompletionFrames,
@@ -151,6 +152,7 @@ import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveS
 import { handleSearch } from "./search";
 import { BUILD_STAMP, fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
 import { TenantBoundaryStore, tenantBoundary, tenantRequestLedger, type TenantAdmission } from "./tenant-boundary";
+import { readCodexTransitionState } from "../codex/transition-state";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -458,6 +460,10 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
+        const tenantWs = tenantBoundary.admit(req);
+        if (tenantWs.kind === "unauthorized" || tenantWs.kind === "forbidden") {
+          return withCors(formatErrorResponse(tenantWs.status, "tenant_admission", tenantWs.message), req, config);
+        }
         const apiAuthError = requireResponsesApiAuth(req, config);
         if (apiAuthError) return withCors(apiAuthError, req, config);
         if (!isAllowedRequestOrigin(req, config)) {
@@ -486,6 +492,10 @@ export function startServer(port?: number) {
         // it, and with only `version` to go on it could not tell the previous
         // version of itself from the copy it had just installed — so an updated
         // app served the old dashboard. See `electron/proxy-adoption.mjs`.
+        const coordinator = (() => {
+          try { return readCodexTransitionState().kind === "ready" ? "ready" : "unavailable"; }
+          catch { return "unavailable"; }
+        })();
         return jsonResponse({
           status: "ok",
           service: "opencodex",
@@ -495,6 +505,7 @@ export function startServer(port?: number) {
           uptime: process.uptime(),
           pid: process.pid,
           port: listenPort,
+          coordinator,
         }, 200, req, config);
       }
 
@@ -510,7 +521,10 @@ export function startServer(port?: number) {
         if (authorization.kind === "unauthorized" || authorization.kind === "forbidden") {
           return withCors(formatErrorResponse(authorization.status, "tenant_authorization", authorization.message), req, config);
         }
-        if (tenantAdmission) tenantRequestLedger.record({ tenantId: tenantAdmission.tenantId, requestId: req.headers.get("x-request-id")?.slice(0, 200) || `${Date.now()}`, path: url.pathname, ...(requestedModel ? { model: requestedModel } : {}), status: "admitted", recordedAt: new Date().toISOString() });
+        if (tenantAdmission) {
+          try { tenantRequestLedger.record({ tenantId: tenantAdmission.tenantId, requestId: req.headers.get("x-request-id")?.slice(0, 200) || randomUUID(), path: url.pathname, ...(requestedModel ? { model: requestedModel } : {}), status: "admitted", recordedAt: new Date().toISOString() }); }
+          catch { /* history is observability only; admission and dispatch remain authoritative */ }
+        }
       }
 
       if (url.pathname.startsWith("/api/")) {

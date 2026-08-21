@@ -186,7 +186,9 @@ export class TenantBoundaryStore {
   load(): TenantStoredPolicy[] {
     if (!existsSync(this.path)) return [];
     const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
-    const rows = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>).policies : undefined;
+    const container = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+    if (container?.version !== 1) throw new Error("tenant boundary store version is unsupported");
+    const rows = container.policies;
     if (!Array.isArray(rows) || rows.length > 64) throw new Error("tenant boundary store is invalid");
     return rows.map(value => {
       if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("tenant policy record is invalid");

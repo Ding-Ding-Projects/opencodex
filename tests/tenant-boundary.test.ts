@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TenantBoundary, TenantBoundaryStore, TenantRequestLedger } from "../src/server/tenant-boundary";
+import { selectForwardHeaders } from "../src/server/ws-bridge";
 
 function request(key?: string): Request {
   return new Request("http://127.0.0.1/v1/models", key ? { headers: { "x-opencodex-tenant-key": key } } : undefined);
@@ -86,5 +87,11 @@ describe("data-plane tenant boundary", () => {
       expect(ledger.listForTenant("tenant-a")[0]?.requestId).toBe("req-a");
       expect(readFileSync(ledger.path, "utf8")).not.toContain("admission");
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("never forwards the tenant admission key upstream", () => {
+    const selected = selectForwardHeaders(new Headers({ authorization: "Bearer provider", "x-opencodex-tenant-key": "tenant-secret" }));
+    expect(selected.get("authorization")).toBe("Bearer provider");
+    expect(selected.get("x-opencodex-tenant-key")).toBeNull();
   });
 });
