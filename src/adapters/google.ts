@@ -26,6 +26,7 @@ import { resolveAntigravityEffortWireModel } from "../providers/antigravity-mode
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { mapReasoningEffort } from "../reasoning-effort";
 import { repairGoogleToolPairs, stripTrailingClaudePrefill } from "./google-antigravity-tools";
+import { assertAntigravityBearerUrl } from "../providers/antigravity-trust";
 
 // Google-family models (Gemini/Vertex/Antigravity) tend to emit long running commentary between
 // tool calls. This steers them to keep the BETWEEN-STEP text to one line and reason internally
@@ -331,6 +332,7 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         const base = provider.baseUrl?.trim();
         if (!base) throw new Error("google-antigravity requires a non-empty baseUrl");
         const url = `${base}/v1internal:${method}${streamParam}`;
+        assertAntigravityBearerUrl(url);
         const project = provider.project;
         if (!project) throw new Error("Antigravity requires a discovered Cloud Code Assist project id (re-run `ocx login google-antigravity`).");
         const sessionId = antigravitySessionId(parsed);
@@ -365,11 +367,17 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         // Compile names before replay: signatures are keyed by the exact provider-visible name.
         if (Array.isArray((request as { contents?: unknown[] }).contents)) {
           const contents = (request as { contents: unknown[] }).contents;
-          if (/claude/i.test(wireModelId)) stripTrailingClaudePrefill(contents);
+          const strippedModelTail = /claude/i.test(wireModelId) ? stripTrailingClaudePrefill(contents) : false;
           if (antigravityUsesReplayCache(wireModelId)) {
             applyAntigravityReplay(wireModelId, sessionId, contents);
           } else {
             sanitizeAntigravityClaudeSignatures(contents);
+          }
+          if (/claude/i.test(wireModelId)) {
+            const last = contents.at(-1) as { role?: string } | undefined;
+            if (strippedModelTail || !last || last.role === "model") {
+              contents.push({ role: "user", parts: [{ text: "(continue)" }] });
+            }
           }
         }
         const envelope = {
@@ -544,25 +552,17 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const incomingBytes = value?.byteLength ?? 0;
-          if (bufferBytes + incomingBytes > sseFrameMaxBytes) {
-            yield { type: "error", message: `upstream SSE data frame exceeds ${sseFrameMaxBytes} bytes` };
-            try { await reader.cancel(); } catch { /* ignore */ }
-            return;
-          }
           buffer += decoder.decode(value, { stream: true });
           // Cap incomplete frames before waiting for a newline — otherwise a single
           // unterminated data: payload can grow without bound.
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
           bufferBytes = encoder.encode(buffer).byteLength;
           if (bufferBytes > sseFrameMaxBytes) {
             yield { type: "error", message: `upstream SSE data frame exceeds ${sseFrameMaxBytes} bytes` };
             try { await reader.cancel(); } catch { /* ignore */ }
             return;
           }
-
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          bufferBytes = encoder.encode(buffer).byteLength;
 
           let sawLiveness = false;
           let sawContentEvent = false;

@@ -35,11 +35,13 @@ export function repairGoogleToolPairs(messages: readonly OcxMessage[]): OcxMessa
 }
 
 /** Claude-on-CCA treats a trailing model turn as a prefill; remove only trailing model turns. */
-export function stripTrailingClaudePrefill(contents: unknown[]): unknown[] {
+export function stripTrailingClaudePrefill(contents: unknown[]): boolean {
+  let stripped = false;
   while (contents.length >= 2) {
     const last = contents[contents.length - 1];
     if (!last || typeof last !== "object" || (last as { role?: unknown }).role !== "model") break;
     contents.pop();
+    stripped = true;
   }
-  return contents;
+  return stripped;
 }

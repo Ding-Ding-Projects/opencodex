@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createGoogleAdapter } from "../src/adapters/google";
+import { createGoogleAdapter, setGoogleSseFrameMaxBytesForTests } from "../src/adapters/google";
 import { antigravitySessionId, isLikelyRealThoughtSignature } from "../src/adapters/google-antigravity-wire";
 import { ANTIGRAVITY_MODELS, ANTIGRAVITY_MODEL_EFFORTS, canonicalAntigravityUsageModel } from "../src/providers/antigravity-models";
 import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig } from "../src/types";
@@ -91,6 +91,32 @@ describe("antigravity CCA envelope", () => {
     const env = JSON.parse((await createGoogleAdapter(provider).buildRequest(withOrphans)).body);
     expect(env.request.contents.some((turn: { role?: string }) => turn.role === "model")).toBe(false);
     expect(JSON.stringify(env.request)).not.toContain("orphan-result");
+  });
+
+  test("Claude prefill repair appends one continue user turn only after removing a model tail", async () => {
+    const claude = {
+      ...provider,
+      modelReasoningEfforts: ANTIGRAVITY_MODEL_EFFORTS,
+    } as OcxProviderConfig;
+    const withTail = {
+      modelId: "claude-opus-4-6-thinking",
+      stream: false,
+      context: { messages: [
+        { role: "user", content: "go" },
+        { role: "assistant", content: [{ type: "text", text: "working" }] },
+      ], systemPrompt: [], tools: [] },
+      options: {},
+    } as unknown as OcxParsedRequest;
+    const tailEnv = JSON.parse((await createGoogleAdapter(claude).buildRequest(withTail)).body);
+    expect(tailEnv.request.contents.at(-1)).toEqual({ role: "user", parts: [{ text: "(continue)" }] });
+
+    const alreadyUser = { ...withTail, context: { ...withTail.context, messages: [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "text", text: "working" }] },
+      { role: "user", content: "keep going" },
+    ] } } as unknown as OcxParsedRequest;
+    const userEnv = JSON.parse((await createGoogleAdapter(claude).buildRequest(alreadyUser)).body);
+    expect(userEnv.request.contents.at(-1)).toEqual({ role: "user", parts: [{ text: "keep going" }] });
   });
 
   test("exposes only Gemini 3.6 Flash tiers while hidden compatibility aliases resolve to them", async () => {
@@ -331,6 +357,22 @@ function sseResponse(chunks: unknown[]): Response {
 }
 
 describe("antigravity parseStream unwraps response", () => {
+  test("caps each parsed frame rather than rejecting a chunk containing several small frames", async () => {
+    setGoogleSseFrameMaxBytesForTests(128);
+    try {
+      const body = [
+        `data: ${JSON.stringify({ response: { candidates: [{ finishReason: "STOP" }] } })}\n\n`,
+        `data: ${JSON.stringify({ response: { candidates: [{ finishReason: "STOP" }] } })}\n\n`,
+      ].join("");
+      const events: AdapterEvent[] = [];
+      for await (const event of createGoogleAdapter(provider).parseStream(new Response(body, { headers: { "content-type": "text/event-stream" } }))) events.push(event);
+      expect(events.some(event => event.type === "done")).toBe(true);
+      expect(events.some(event => event.type === "error" && /exceeds/.test(event.message))).toBe(false);
+    } finally {
+      setGoogleSseFrameMaxBytesForTests();
+    }
+  });
+
   test("reads response.candidates and response.usageMetadata", async () => {
     const adapter = createGoogleAdapter(provider);
     const chunks = [
