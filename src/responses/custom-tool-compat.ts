@@ -96,9 +96,9 @@ export function collectRoutedCustomToolNames(
   supportsResponsesCustomTools?: boolean,
 ): Set<string> {
   const names = new Set<string>();
-  const visit = (value: unknown): void => {
+  const visit = (value: unknown, namespace?: string): void => {
     if (Array.isArray(value)) {
-      for (const entry of value) visit(entry);
+      for (const entry of value) visit(entry, namespace);
       return;
     }
     if (!isPlainObject(value)) return;
@@ -108,8 +108,13 @@ export function collectRoutedCustomToolNames(
       && !routedCustomToolPassesThrough(value.name, supportsResponsesCustomTools)
     ) {
       names.add(value.name);
+      if (namespace) names.add(customToolWireName(namespace, value.name));
     }
-    for (const entry of Object.values(value)) visit(entry);
+    if (value.type === "namespace" && typeof value.name === "string" && Array.isArray(value.tools)) {
+      for (const entry of value.tools) visit(entry, value.name);
+      return;
+    }
+    for (const entry of Object.values(value)) visit(entry, namespace);
   };
   visit(body);
   return names;
@@ -140,6 +145,18 @@ function rewriteForUpstream(
   if (Array.isArray(value)) return value.map(entry => rewriteForUpstream(entry, names, callIds));
   if (!isPlainObject(value)) return value;
 
+  if (value.type === "namespace" && typeof value.name === "string" && Array.isArray(value.tools)) {
+    const tools = value.tools.map(child => {
+      if (!isPlainObject(child) || typeof child.name !== "string") return rewriteForUpstream(child, names, callIds);
+      return rewriteForUpstream({
+        ...child,
+        ...(child.type === "custom" ? { name: customToolWireName(value.name, child.name) } : {}),
+      }, names, callIds);
+    });
+    const changed = tools.some((entry, index) => entry !== value.tools[index]);
+    return changed ? { ...value, tools } : value;
+  }
+
   if (value.type === "custom" && typeof value.name === "string" && names.has(value.name)) {
     const { format: _format, ...rest } = value;
     const isDefinition = typeof value.description === "string"
@@ -151,6 +168,7 @@ function rewriteForUpstream(
       : "Raw input for this client-executed custom tool.";
     return {
       ...rest,
+      ...(typeof value.namespace === "string" ? { name: customToolWireName(value.namespace, value.name) } : {}),
       type: "function",
       parameters: {
         type: "object",
@@ -169,12 +187,20 @@ function rewriteForUpstream(
   if (
     value.type === "custom_tool_call"
     && typeof value.name === "string"
-    && names.has(value.name)
+    && (names.has(value.name) || (typeof value.namespace === "string" && names.has(customToolWireName(value.namespace, value.name))))
   ) {
-    const { input, id: _id, ...rest } = value;
+    const { input, namespace: _namespace, ...rest } = value;
+    const wireName = typeof value.namespace === "string"
+      ? customToolWireName(value.namespace, value.name)
+      : value.name;
+    const id = typeof value.id === "string" && value.id.startsWith("ctc_")
+      ? `fc_${value.id.slice(4)}`
+      : value.id;
     return {
       ...rest,
       type: "function_call",
+      ...(id !== undefined ? { id } : {}),
+      name: wireName,
       arguments: JSON.stringify({ input: typeof input === "string" ? input : "" }),
     };
   }
@@ -240,6 +266,11 @@ export function restoreRoutedCustomCalls(
     restored.type = "custom_tool_call";
     restored.id = customToolItemId(value.id);
     restored.input = customToolInput(value.arguments);
+    if (wireName.includes("__")) {
+      const separator = wireName.lastIndexOf("__");
+      restored.namespace = wireName.slice(0, separator);
+      restored.name = wireName.slice(separator + 2);
+    }
     delete restored.arguments;
     changed = true;
   }

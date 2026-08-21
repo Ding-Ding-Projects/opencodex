@@ -67,6 +67,45 @@ describe("Grok structured edit tools", () => {
     expect(openaiBody.tools.map(tool => tool.function.name)).toEqual(["exec"]);
   });
 
+  test("request-local Grok projection does not leak from provider A into provider B", async () => {
+    const parsed = {
+      modelId: "grok-4.5",
+      context: { messages: [], tools: [codeModeExec(liveCodexExecHelper)] },
+      stream: true,
+      options: {},
+    } as Parameters<ReturnType<typeof createOpenAIChatAdapter>["buildRequest"]>[0];
+    const xaiRequest = await createOpenAIChatAdapter({
+      adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", apiKey: "test-key",
+    }).buildRequest(parsed);
+    expect(xaiRequest.body).toContain("search_replace");
+    expect(xaiRequest.body).toContain("run_terminal_command");
+
+    const callerOwnedTools: OcxTool[] = [
+      { name: "write", description: "Caller write tool", parameters: {} },
+      { name: "search_replace", description: "Caller replacement tool", parameters: {} },
+    ];
+    const nonXaiRequest = await createOpenAIChatAdapter({
+      adapter: "openai-chat", baseUrl: "https://provider.example/v1", apiKey: "test-key",
+    }).buildRequest({
+      modelId: "provider-model",
+      context: {
+        tools: callerOwnedTools,
+        messages: [{
+          role: "developer",
+          content: "Use apply_patch for local file edits.",
+          timestamp: 0,
+        }],
+      },
+      stream: true,
+      options: {},
+    });
+    expect(nonXaiRequest.body).toContain("Caller write tool");
+    expect(nonXaiRequest.body).toContain("Caller replacement tool");
+    expect(nonXaiRequest.body).not.toContain("Grok Build");
+    expect(nonXaiRequest.body).not.toContain("OpenCodex converts those calls into Codex apply_patch");
+    expect(nonXaiRequest.body).not.toContain("run_terminal_command");
+  });
+
   test("rewrites Codex apply_patch edit constraints to Grok write/search_replace", () => {
     const codex = [
       "## File editing constraints",

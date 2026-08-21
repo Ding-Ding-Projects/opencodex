@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { rewriteRoutedCustomToolsForUpstream } from "../src/responses/custom-tool-compat";
+import {
+  restoreRoutedCustomCallsInJson,
+  rewriteRoutedCustomToolsForUpstream,
+} from "../src/responses/custom-tool-compat";
 
 function convertedInputDescription(name: string): string | undefined {
   const result = rewriteRoutedCustomToolsForUpstream({
@@ -65,6 +68,52 @@ describe("routed custom-tool compatibility", () => {
     });
   });
 
+  test("round-trips a generic declaration, call, and paired output only with request authorization", () => {
+    const raw = {
+      tools: [{ type: "custom", name: "review_patch", description: "Review", format: { type: "text" } }],
+      input: [
+        { type: "custom_tool_call", id: "ctc_review", call_id: "call_review", name: "review_patch", input: "inspect" },
+        { type: "custom_tool_call_output", call_id: "call_review", output: "approved" },
+      ],
+    };
+    const lowered = rewriteRoutedCustomToolsForUpstream(raw, false);
+    const upstream = JSON.stringify(lowered.body);
+    const restored = JSON.parse(restoreRoutedCustomCallsInJson(upstream, lowered.names)) as typeof raw;
+    expect(restored.input).toEqual(raw.input);
+    expect((restored.tools?.[0] as { type: string }).type).toBe("function");
+
+    const undeclared = JSON.stringify({
+      type: "function_call",
+      id: "fc_foreign",
+      call_id: "call_foreign",
+      name: "review_patch",
+      arguments: JSON.stringify({ input: "do not reinterpret" }),
+    });
+    expect(restoreRoutedCustomCallsInJson(undeclared, new Set(["other_tool"]))).toBe(undeclared);
+  });
+
+  test("keeps namespaced same-name custom tools distinct through lowering and restoration", () => {
+    const raw = {
+      tools: [{
+        type: "namespace", name: "alpha", tools: [{ type: "custom", name: "edit", description: "A", format: { type: "text" } }],
+      }, {
+        type: "namespace", name: "beta", tools: [{ type: "custom", name: "edit", description: "B", format: { type: "text" } }],
+      }],
+      input: [
+        { type: "custom_tool_call", id: "ctc_a", call_id: "call_a", namespace: "alpha", name: "edit", input: "a" },
+        { type: "custom_tool_call", id: "ctc_b", call_id: "call_b", namespace: "beta", name: "edit", input: "b" },
+      ],
+    };
+    const lowered = rewriteRoutedCustomToolsForUpstream(raw, false);
+    expect(lowered.names).toEqual(new Set(["alpha__edit", "beta__edit"]));
+    const tools = (lowered.body as { tools: Array<{ tools: Array<{ name: string }> }> }).tools;
+    expect(tools.map(group => group.tools[0]!.name)).toEqual(["alpha__edit", "beta__edit"]);
+    const input = (lowered.body as { input: Array<{ name: string }> }).input;
+    expect(input.map(item => item.name)).toEqual(["alpha__edit", "beta__edit"]);
+    const restored = JSON.parse(restoreRoutedCustomCallsInJson(JSON.stringify(lowered.body), lowered.names)) as typeof raw;
+    expect(restored.input).toEqual(raw.input);
+  });
+
   test.each([undefined, true, false])("keeps lowering other custom tools when support is %p", support => {
     const rewritten = rewriteRoutedCustomToolsForUpstream({
       tools: [{ type: "custom", name: "review_patch", description: "Review", format: { type: "text" } }],
@@ -88,4 +137,3 @@ describe("routed custom-tool compatibility", () => {
       .toBe("Raw input for this client-executed custom tool.");
   });
 });
-
