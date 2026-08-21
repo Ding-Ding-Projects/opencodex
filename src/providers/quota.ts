@@ -256,9 +256,10 @@ async function fetchAnthropicQuota(provider: string): Promise<ProviderQuotaRepor
   // Share the active-account probe with the per-account cache so Providers-page
   // loads do not double-hit Anthropic's rate-limited usage endpoint.
   if (probedAccountId) {
-    const stillOwnsToken = getAccountCredential("anthropic", probedAccountId)?.access === accessToken;
+    const owner = getAccountCredential("anthropic", probedAccountId);
+    const stillOwnsToken = owner?.access === accessToken;
     if (stillOwnsToken) {
-      accountQuotaCache.set(accountCacheKey("anthropic", probedAccountId), { ts: Date.now(), quota });
+      accountQuotaCache.set(accountCacheKey("anthropic", probedAccountId, "", credentialGeneration(owner!)), { ts: Date.now(), quota });
     }
   }
   return report(provider, "anthropic:oauth-usage", quota);

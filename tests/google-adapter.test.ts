@@ -153,6 +153,8 @@ describe("google adapter — tool-call ids on the wire", () => {
         { type: "toolCall", id: "call:a", name: "bash", arguments: {} },
         { type: "toolCall", id: "call/a", name: "bash", arguments: {} },
       ] },
+      { role: "toolResult", toolCallId: "call:a", toolName: "bash", content: "ok", isError: false },
+      { role: "toolResult", toolCallId: "call/a", toolName: "bash", content: "ok", isError: false },
     ]));
     const ids = contents.find(c => c.role === "model")!.parts
       .filter(p => "functionCall" in p)
