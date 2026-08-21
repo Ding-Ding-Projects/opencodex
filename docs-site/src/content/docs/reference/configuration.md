@@ -405,6 +405,38 @@ The local port does not have to match the remote one. opencodex treats any reque
 `Host` resolves to `localhost`, `127.0.0.1`, or `::1` as loopback regardless of port, so
 `http://localhost:20100/v1` works for Codex CLI, Claude Code, the dashboard, and `curl`.
 
+### Keep the local Codex login while using a remote proxy
+
+Use a dedicated provider entry for the forwarded proxy; do not replace Codex's built-in `openai`
+provider with `model_provider = "opencodex"` globally. The latter is a single-provider switch and
+is why a remote setup can appear to make the third-party models work while the local Codex login
+seems to disappear.
+
+On the remote host, log in to the providers that the proxy itself owns (`ocx login <provider>`),
+leave its listener on loopback, and keep the SSH forward open. In the local `CODEX_HOME/config.toml`,
+add a provider that retains Codex's incoming login headers and points at the forwarded address:
+
+```toml
+[model_providers.opencodex_remote]
+name = "OpenCodex Remote"
+base_url = "http://127.0.0.1:20100/v1"
+wire_api = "responses"
+requires_openai_auth = true
+```
+
+Keep the normal `openai` provider as the default for native Codex-login sessions. Select the
+`opencodex_remote` route only when you want a model served by the remote proxy. If the remote bind
+is intentionally non-loopback instead, create a data-plane key with `ocx host enable --new-key
+--yes`, send it through the documented `x-opencodex-api-key` environment-header mapping, and never
+put the key in the TOML or a shell history. The remote management API has no admin-token boundary,
+so SSH forwarding is the safer default for this workflow.
+
+Provider OAuth callbacks are still owned by the host where `ocx login` runs. A local browser cannot
+complete a callback listening only on the remote host unless the callback port is forwarded too;
+run the login on the remote host or add the provider's documented callback forward. This recipe
+preserves the local Codex login and the remote provider logins as two explicit, separate ownership
+boundaries.
+
 Point the client at the forwarded port yourself — `ocx` only ever writes `127.0.0.1` with the
 local default port into client config, so a forwarded setup needs the base URL set by hand.
 

@@ -45,10 +45,11 @@ const helpEntries: Record<string, HelpEntry> = {
     ],
   },
   service: {
-    usage: "ocx service [install|start|stop|status|uninstall|remove]",
+    usage: "ocx service [install|repair|restart|start|stop|status|uninstall|remove]",
     summary: "Run as a background service.",
     details: [
-      "With no subcommand, installs/updates and starts the background service.",
+      "With no subcommand, installs when absent or repairs/restarts an existing service.",
+      "`restart` is an alias of `repair` and does not re-register an installed service.",
       "Use `ocx service status` to see diagnostics and log paths.",
     ],
   },
@@ -457,7 +458,7 @@ Usage:
   ocx recover-history --legacy-openai
                                Explicitly recover pre-backup syncResumeHistory rows
   ocx uninstall               Remove service/shim/config and restore native Codex (alias: remove)
-  ocx service [sub]           Run as a background service (default: install/update/start)
+  ocx service [sub]           Run as a background service (default: install-if-absent/repair-if-installed)
   ocx codex-shim <sub>        Auto-start proxy when \`codex\` launches (install|status|uninstall|remove)
   ocx tray <sub>              Windows status tray (install|start|stop|status|uninstall)
   ocx ensure                  Ensure the proxy is running and Codex config/cache are current

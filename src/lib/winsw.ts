@@ -23,6 +23,8 @@ import { recordOwnedConfigPath } from "./config-ownership";
 import { durableBunPath } from "./bun-runtime";
 import { serviceApiTokenFilePath } from "./service-secrets";
 import { serviceStartArgv } from "./proxy-launch";
+import { resolveTrustedWindowsPowerShellExe } from "./windows-elevation";
+import { resolveCurrentWindowsPrincipal } from "./windows-user-principal";
 
 export const WINSW_VERSION = "2.12.0";
 export const WINSW_URL = `https://github.com/winsw/winsw/releases/download/v${WINSW_VERSION}/WinSW.NET461.exe`;
@@ -166,6 +168,54 @@ function scQc(): string {
   });
 }
 
+export interface WinswServiceIdentity {
+  startName: string;
+  sid: string;
+}
+
+const SERVICE_IDENTITY_SID_COMMAND =
+  `$s=Get-CimInstance Win32_Service -Filter \"Name='${WINSW_SERVICE_ID}'\" -ErrorAction Stop; `
+  + `if($null -eq $s){exit 3}; `
+  + `$sid=(New-Object System.Security.Principal.NTAccount($s.StartName)).Translate([System.Security.Principal.SecurityIdentifier]).Value; `
+  + `Write-Output (\"$($s.StartName)|$sid\")`;
+
+export function winswServiceIdentityPowerShellCommandForTests(): string[] {
+  return [resolveTrustedWindowsPowerShellExe(), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", SERVICE_IDENTITY_SID_COMMAND];
+}
+
+export function parseWinswServiceIdentity(output: string): WinswServiceIdentity {
+  const line = output.trim().split(/\r?\n/).map(value => value.trim()).filter(Boolean).at(-1) ?? "";
+  const separator = line.lastIndexOf("|");
+  const startName = separator >= 0 ? line.slice(0, separator).trim() : "";
+  const sid = separator >= 0 ? line.slice(separator + 1).trim() : "";
+  if (!startName || !/^S-1-(?:\d+-)+\d+$/i.test(sid)) {
+    throw new Error("Native service account identity query returned malformed output.");
+  }
+  return { startName, sid: sid.toUpperCase() };
+}
+
+function queryWinswServiceIdentity(): WinswServiceIdentity {
+  const result = Bun.spawnSync(winswServiceIdentityPowerShellCommandForTests(), {
+    stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 5_000, windowsHide: true,
+  });
+  if (!result.success) throw new Error("Native service account identity query failed.");
+  return parseWinswServiceIdentity(result.stdout?.toString() ?? "");
+}
+
+export interface WinswServiceIdentityVerificationDeps {
+  currentPrincipal?: () => string;
+  queryIdentity?: () => WinswServiceIdentity;
+}
+
+/** Verify SCM identity against the same effective SID used by ACL hardening. */
+export function verifyWinswServiceIdentity(deps: WinswServiceIdentityVerificationDeps = {}): void {
+  const expected = (deps.currentPrincipal ?? (() => resolveCurrentWindowsPrincipal(5_000)))().replace(/^\*/u, "").toUpperCase();
+  const actual = (deps.queryIdentity ?? queryWinswServiceIdentity)();
+  if (actual.sid.toUpperCase() !== expected) {
+    throw new Error(`Native service account identity mismatch for ${actual.startName || "unknown"}; refusing to run under an unverified SCM account.`);
+  }
+}
+
 export type WinswStatus = "started" | "stopped" | "nonexistent" | "unknown";
 
 /** WinSW v2 `status` prints exactly Started / Stopped / NonExistent. */
@@ -242,16 +292,21 @@ function queryScmForService(): string {
  * Verify the installed SCM service runs as the intended user, not LocalSystem (WinSW's
  * default when the XML account section is ignored/malformed). Rolls back on mismatch.
  */
-function assertServiceAccountApplied(env: NodeJS.ProcessEnv = process.env): void {
+function assertServiceAccountApplied(): void {
   const qc = scQc();
   const startName = /SERVICE_START_NAME\s*:\s*(.+)/i.exec(qc)?.[1]?.trim() ?? "";
-  const user = env.USERNAME?.trim() ?? "";
-  if (/localsystem/i.test(startName) || (user && !startName.toLowerCase().includes(user.toLowerCase()))) {
+  if (/localsystem/i.test(startName)) {
     try { runWinsw(["uninstall"]); } catch { /* rollback is best-effort */ }
     throw new Error(
-      `Native service was registered as "${startName || "unknown"}" instead of the current user; ` +
+      `Native service was registered as "${startName || "unknown"}" instead of a verified current-user account; ` +
         "rolled back. Re-run `ocx service install --native` and enter the account credentials when prompted.",
     );
+  }
+  try {
+    verifyWinswServiceIdentity();
+  } catch (error) {
+    try { runWinsw(["uninstall"]); } catch { /* rollback is best-effort */ }
+    throw new Error(`${error instanceof Error ? error.message : String(error)} Rolled back the native service.`);
   }
 }
 
@@ -291,13 +346,15 @@ export async function installWinswService(entry: WinswEntry, deps: WinswInstallD
     // v2.12 recognizes prompting only as args[1]: `install /p` (XML is auto-discovered
     // as the same-basename file next to the exe).
     interactive(["install", "/p"]);
-    verifyAccount();
   } else {
     // Use `stopwait` (not `stop`) so the SCM service fully stops before `start` — bare
     // `stop` only sends the stop request; `start` against a STOP_PENDING service fails.
     try { run(["stopwait"]); } catch { /* already stopped */ }
   }
   run(["start"]);
+  // Existing-service repair also proves the SCM identity after restart; a
+  // successful start command alone does not establish which account runs it.
+  verifyAccount();
 }
 
 export function startWinswService(): void { runWinsw(["start"]); }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildWinswXml, ensureWinswBinary, parseWinswStatus, probeScmRegistration, sha256Hex, installWinswService, statusWinswRaw, WINSW_SHA256, WINSW_SERVICE_ID } from "../src/lib/winsw";
+import { buildWinswXml, ensureWinswBinary, installWinswService, parseWinswServiceIdentity, parseWinswStatus, probeScmRegistration, sha256Hex, statusWinswRaw, verifyWinswServiceIdentity, winswServiceIdentityPowerShellCommandForTests, WINSW_SHA256, WINSW_SERVICE_ID } from "../src/lib/winsw";
 import { parseServiceArgs, serviceReinstallArgs } from "../src/service";
 import { loadServiceTokenFromFile } from "../src/lib/service-secrets";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -50,6 +50,34 @@ describe("winsw xml", () => {
     const xml = buildWinswXml(entry, { ...env, OCX_BAKE_PORT: "14444" });
     expect(xml).toContain("start --port 14444");
     expect(buildWinswXml(entry, { ...env, OCX_BAKE_PORT: "14444" }, null)).not.toContain("start --port");
+  });
+});
+
+describe("winsw effective service identity", () => {
+  test("uses a direct hidden PowerShell SID query, not a user-name guess", () => {
+    const command = winswServiceIdentityPowerShellCommandForTests();
+    expect(command).toContain("-WindowStyle");
+    expect(command).toContain("Hidden");
+    expect(command.at(-1)).toContain("Get-CimInstance Win32_Service");
+    expect(command.at(-1)).toContain("NTAccount");
+    expect(command.at(-1)).toContain("SecurityIdentifier");
+  });
+
+  test("parses a valid SCM account and SID, but rejects errors and malformed output", () => {
+    expect(parseWinswServiceIdentity("DOMAIN\\jun|S-1-5-21-1-2-3-1001\n")).toEqual({ startName: "DOMAIN\\jun", sid: "S-1-5-21-1-2-3-1001" });
+    expect(() => parseWinswServiceIdentity("Get-CimInstance : access denied")).toThrow(/malformed/);
+    expect(() => parseWinswServiceIdentity("DOMAIN\\jun|not-a-sid")).toThrow(/malformed/);
+  });
+
+  test("fails closed when SCM identity differs from the effective ACL SID", () => {
+    expect(() => verifyWinswServiceIdentity({
+      currentPrincipal: () => "*S-1-5-21-1-2-3-1001",
+      queryIdentity: () => ({ startName: "LOCAL\\other", sid: "S-1-5-21-9-9-9-1001" }),
+    })).toThrow(/identity mismatch/);
+    expect(() => verifyWinswServiceIdentity({
+      currentPrincipal: () => "*S-1-5-21-1-2-3-1001",
+      queryIdentity: () => ({ startName: "DOMAIN\\jun", sid: "S-1-5-21-1-2-3-1001" }),
+    })).not.toThrow();
   });
 });
 
@@ -167,7 +195,7 @@ describe("winsw install flow", () => {
       status: () => "nonexistent",
     });
 
-    expect(calls).toEqual([["interactive", "install", "/p"], ["verify"], ["run", "start"]]);
+    expect(calls).toEqual([["interactive", "install", "/p"], ["run", "start"], ["verify"]]);
   });
 
   test("repair over an existing service rewrites assets and restarts without re-prompting", async () => {
@@ -182,7 +210,7 @@ describe("winsw install flow", () => {
     });
 
     // Uses stopwait (not stop) so the service fully stops before start — avoids STOP_PENDING race.
-    expect(calls).toEqual([["xml"], ["run", "stopwait"], ["run", "start"]]);
+    expect(calls).toEqual([["xml"], ["run", "stopwait"], ["run", "start"], ["verify"]]);
   });
 });
 
