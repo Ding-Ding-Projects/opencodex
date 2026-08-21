@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fetchAntigravityWithRetry } from "../src/adapters/google-http";
 import { getAntigravityAccountCooldown, clearAntigravityAccountCooldown } from "../src/oauth/antigravity-routing";
+import { assertAntigravityBearerUrl } from "../src/providers/antigravity-trust";
 import type { AdapterRequest } from "../src/adapters/base";
 
 const originalFetch = globalThis.fetch;
@@ -17,6 +18,11 @@ afterEach(() => {
 });
 
 describe("Antigravity account cooldown recording", () => {
+  test("rejects arbitrary, private, and metadata bearer destinations before dispatch", () => {
+    expect(() => assertAntigravityBearerUrl("https://attacker.example/v1internal:streamGenerateContent?alt=sse")).toThrow(/known HTTPS/);
+    expect(() => assertAntigravityBearerUrl("https://127.0.0.1/v1internal:streamGenerateContent?alt=sse")).toThrow(/known HTTPS/);
+    expect(() => assertAntigravityBearerUrl("https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?foo=bar")).toThrow(/known HTTPS/);
+  });
   test("records hard quota exhaustion and does not retry the paid POST", async () => {
     let calls = 0;
     globalThis.fetch = (async () => {

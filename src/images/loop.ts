@@ -198,6 +198,8 @@ class LoopError extends Error {
 }
 
 export interface ImageBridgeDeps {
+  /** OAuth account identity for provider-local cooldown selection. */
+  accountId?: string;
   parsed: OcxParsedRequest;
   adapter: ProviderAdapter;
   plan?: ImageBridgePlan;
@@ -423,6 +425,7 @@ export async function runWithImageBridge(deps: ImageBridgeDeps): Promise<Respons
               timeoutMs: connectTimeoutMs,
               returnRawErrors: true,
               stream: true,
+              ...(deps.accountId ? { accountId: deps.accountId } : {}),
             })
           : await fetchWithResetRetry(
               () => {

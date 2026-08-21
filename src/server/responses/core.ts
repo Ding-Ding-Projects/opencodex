@@ -1968,7 +1968,8 @@ export async function handleResponses(
       && (tc.name === "image_generation" || imgPlan.toolNames.has(tc.name))) {
       parsed.options.toolChoice = { ...tc, name: IMAGE_GEN_TOOL_NAME };
     }
-    const imgResponse = await runWithImageBridge({
+  const imgResponse = await runWithImageBridge({
+    ...(providerAccountId ? { accountId: providerAccountId } : {}),
       parsed, adapter,
       ...(imgPlan ? { plan: imgPlan } : {}),
       ...(vidPlan ? { videoPlan: vidPlan } : {}),
@@ -2041,7 +2042,8 @@ export async function handleResponses(
   if (canRunWebSearch && wsPlan) {
     parsed.context.tools = [...(parsed.context.tools ?? []), buildWebSearchTool()];
     noteAttemptSend(logCtx.activeAttempt, logCtx.usageLogInputTokens);
-    const wsResponse = await runWithWebSearch({
+  const wsResponse = await runWithWebSearch({
+    ...(providerAccountId ? { accountId: providerAccountId } : {}),
       parsed, adapter,
       backend: wsPlan.backend,
       forwardProvider: wsPlan.forwardSidecar?.provider,

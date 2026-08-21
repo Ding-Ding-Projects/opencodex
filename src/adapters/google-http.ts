@@ -11,6 +11,8 @@ import {
 } from "../lib/upstream-retry";
 import { recordAntigravityCooldown } from "../oauth/antigravity-routing";
 import { antigravityHostCandidates } from "./google-antigravity-hosts";
+import { resolveAntigravityBearerDestination } from "../providers/antigravity-trust";
+import { recordOAuthAccountCooldown } from "../oauth/provider-pool";
 
 const GOOGLE_RETRY_ATTEMPTS = 3;
 const GOOGLE_RETRY_BASE_MS = 250;
@@ -48,11 +50,15 @@ async function recordAntigravityHttpCooldown(response: Response, accountId: stri
   if (!accountId || (response.status !== 429 && response.status !== 403)) return false;
   const payload = await readDisplaySafeErrorPayloadText(response.clone());
   if (response.status === 429) {
-    recordAntigravityCooldown(accountId, isQuotaExhaustedBody(payload) ? "quota_exhausted" : "rate_limited", retryAfterMs(response.headers.get("retry-after")));
+    const exhausted = isQuotaExhaustedBody(payload);
+    const retry = retryAfterMs(response.headers.get("retry-after"));
+    recordAntigravityCooldown(accountId, exhausted ? "quota_exhausted" : "rate_limited", retry);
+    recordOAuthAccountCooldown("google-antigravity", accountId, response.headers.get("retry-after"), Date.now(), exhausted ? 24 * 60 * 60_000 : retry);
     return true;
   }
   if (isAntigravityGeoBlockedBody(payload)) {
     recordAntigravityCooldown(accountId, "geo_blocked");
+    recordOAuthAccountCooldown("google-antigravity", accountId, null, Date.now(), 24 * 60 * 60_000);
     return true;
   }
   return false;
@@ -83,6 +89,7 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
   for (let attempt = 0; attempt < GOOGLE_RETRY_ATTEMPTS; attempt++) {
     if (ctx.abortSignal?.aborted) throw abortError(ctx.abortSignal);
     try {
+      if (label === "Antigravity") await resolveAntigravityBearerDestination(activeRequest.url);
       const res = await fetchWithAttemptDeadline(activeRequest.url, {
         method: activeRequest.method,
         headers: activeRequest.headers,

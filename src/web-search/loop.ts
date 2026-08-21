@@ -162,6 +162,8 @@ class LoopError extends Error {
 }
 
 export interface WebSearchLoopDeps {
+  /** OAuth account identity for provider-local cooldown selection. */
+  accountId?: string;
   parsed: OcxParsedRequest;
   adapter: ProviderAdapter;
   /** Which executor runs searches. Defaults to "openai" so existing callers keep the ChatGPT path (audit F4). */
@@ -284,6 +286,7 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
               timeoutMs: connectTimeoutMs,
               returnRawErrors: true,
               stream: true,
+              ...(deps.accountId ? { accountId: deps.accountId } : {}),
             })
           : await fetchWithResetRetry(
               () => {
