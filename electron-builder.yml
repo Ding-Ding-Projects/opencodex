@@ -129,3 +129,12 @@ squirrelWindows:
   # at a URL that 404s puts a broken icon in the user's control panel forever.
   # electron-builder falls back to its own default, which is honest about being a
   # default. Set this once a hosted .ico exists.
+
+# The installed shell consumes these GitHub release assets through Electron's
+# built-in Squirrel updater. Publication remains owned by the release workflow;
+# this metadata records the allowlisted project identity for packaging tools.
+publish:
+  provider: github
+  owner: Ding-Ding-Projects
+  repo: opencodex
+  releaseType: release

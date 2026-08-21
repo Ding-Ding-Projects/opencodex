@@ -11,7 +11,7 @@
  * management-auth session bootstrap works unchanged.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,6 +20,7 @@ import { handleSquirrelEvent, planSquirrelEvent } from "./squirrel.mjs";
 import { readBuildStamp } from "./build-stamp.mjs";
 import { describeConflict, planProxyAdoption } from "./proxy-adoption.mjs";
 import { installCliOnPath, recordDesktopCliPathStatus } from "./cli-path.mjs";
+import { createDesktopAutoUpdater, DEFAULT_DESKTOP_UPDATE_FEED } from "./auto-updater.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
@@ -89,6 +90,7 @@ let proxy = null;
 let proxyPort = DEFAULT_PORT;
 /** True once the user has chosen Quit, so window-close stops meaning "hide to tray". */
 let quitting = false;
+let desktopUpdater = null;
 /** A build conflict found during a `--hidden` start, asked about when a window first opens. */
 let deferredConflict = null;
 
@@ -274,6 +276,32 @@ function stopProxy() {
   setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already gone */ } }, 5000).unref?.();
 }
 
+function broadcastDesktopUpdateState(state) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("desktop-update:state", state);
+  }
+}
+
+/** Start Electron's built-in Squirrel updater only for the installed artifact. */
+function startDesktopUpdater() {
+  if (!app.isPackaged || process.platform !== "win32") return;
+  const feedUrl = process.env.OPENCODEX_UPDATE_FEED_URL
+    || `${DEFAULT_DESKTOP_UPDATE_FEED}${encodeURIComponent(appVersion())}`;
+  desktopUpdater = createDesktopAutoUpdater({
+    updater: autoUpdater,
+    feedUrl,
+    packaged: true,
+    onState: broadcastDesktopUpdateState,
+  });
+  void desktopUpdater.start().catch(error => {
+    broadcastDesktopUpdateState({
+      ...desktopUpdater.snapshot(),
+      status: "failed",
+      error: String(error?.message ?? error),
+    });
+  });
+}
+
 /* ------------------------------------------------------------ window IPC -- */
 
 /**
@@ -403,6 +431,37 @@ function registerWindowIpc() {
       // act on rather than a stack frame.
       return { ok: false, error: String(error?.message ?? error) };
     }
+  });
+
+  ipcMain.handle("desktop-update:state", () => desktopUpdater?.snapshot() ?? {
+    status: "current",
+    version: appVersion(),
+    progress: 0,
+    releaseNotesUrl: "https://github.com/Ding-Ding-Projects/opencodex/releases/latest",
+    error: null,
+  });
+  ipcMain.handle("desktop-update:start", async () => desktopUpdater ? desktopUpdater.start() : {
+    status: "current",
+    version: appVersion(),
+    progress: 0,
+    releaseNotesUrl: "https://github.com/Ding-Ding-Projects/opencodex/releases/latest",
+    error: null,
+  });
+  ipcMain.handle("desktop-update:check", async () => desktopUpdater ? desktopUpdater.check() : null);
+  ipcMain.handle("desktop-update:cancel", () => desktopUpdater?.cancel() ?? null);
+  ipcMain.handle("desktop-update:install", async event => {
+    if (!desktopUpdater) return { ok: false, reason: "desktop_updater_unavailable" };
+    const window = windowFor(event);
+    const decision = await dialog.showMessageBox(window, {
+      type: "warning",
+      title: "Restart to install update",
+      message: "Save any work before restarting to install the downloaded update.",
+      buttons: ["Restart to install update", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    return desktopUpdater.install({ confirm: async () => decision.response === 0 });
   });
 
   ipcMain.handle("downloads:open-popup", (_event, payload) => {
@@ -707,6 +766,7 @@ app.whenReady().then(async () => {
   }
 
   registerWindowIpc();
+  startDesktopUpdater();
   buildAppMenu();
   buildTray();
   // `--hidden` is what the login item passes, so an auto-start boots to the tray.
@@ -720,6 +780,6 @@ app.on("window-all-closed", () => {
 
 app.on("activate", showWindow);
 
-app.on("before-quit", () => { quitting = true; });
+app.on("before-quit", () => { quitting = true; desktopUpdater?.stop(); });
 app.on("will-quit", stopProxy);
 process.on("exit", stopProxy);
