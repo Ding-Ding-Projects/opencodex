@@ -83,4 +83,20 @@ describe("#820 memory recall soak probe helpers", () => {
     expect(maxFinite([1, 9, 3])).toBe(9);
     expect(maxFinite([])).toBeNull();
   });
+
+  test("runs one bounded real --quick child smoke and emits a structured summary", async () => {
+    const proc = Bun.spawn([process.execPath, "scripts/memory-recall-soak.ts", "--quick", "--sessions", "1", "--rounds", "1", "--waves", "2", "--burst-sessions", "1", "--burst-rounds", "1", "--fault-sessions", "0", "--idle-deadline-ms", "5000", "--sample-interval-ms", "25"], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const outputPromise = new Response(proc.stdout).text();
+    const errorPromise = new Response(proc.stderr).text();
+    const exit = await Promise.race([proc.exited, Bun.sleep(30_000).then(() => null)]);
+    if (exit === null) {
+      try { proc.kill(); } catch { /* bounded smoke teardown */ }
+      throw new Error("quick recall child smoke exceeded 30 seconds");
+    }
+    const output = await outputPromise;
+    const error = await errorPromise;
+    if (!output) throw new Error(`quick recall child produced no summary: ${error.slice(0, 500)}`);
+    expect(output).toContain('"type":"SUMMARY"');
+    expect(output).toMatch(/"outcome":"(PASS|FAIL)"/);
+  }, { timeout: 35_000 });
 });

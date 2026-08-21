@@ -73,6 +73,7 @@ interface WaveResult {
   failedSessions: number;
   requestCount: number;
   toolCallCount: number;
+  toolResultCount: number;
   peaks: MetricPeaks;
   idle: ProbeMetrics;
   durationMs: number;
@@ -84,6 +85,7 @@ interface SessionState {
   slow: boolean;
   requests: number;
   toolCalls: number;
+  toolResults: number;
   failure?: string;
 }
 
@@ -97,6 +99,7 @@ type CompletedResponse = {
 
 const encoder = new TextEncoder();
 const args = Bun.argv.slice(2);
+const quickProfile = args.includes("--quick");
 if (args.includes("--help")) {
   console.log(memoryRecallSoakUsage());
   process.exit(0);
@@ -548,6 +551,7 @@ function makeSessionState(workloadKey: string, index: number): SessionState {
     slow: deterministicPercent(id, "slow", options.seed) < options.slowConsumerPercent,
     requests: 0,
     toolCalls: 0,
+    toolResults: 0,
   };
 }
 
@@ -585,15 +589,15 @@ async function runSessionRound(state: SessionState, round: number, proxyBase: UR
     throw new Error(`round ${round} produced missing or duplicate call ids`);
   }
   state.toolCalls += calls.length;
-  for (const item of calls) appendRecallOutput(state.input, item, round);
-
-  // Tool execution is external to OpenCodex. Model 1..N parallel tool calls by
-  // delaying the recall by the slowest deterministic synthetic tool in this round.
-  const parallelToolLatencyMs = calls.reduce((maximum, _item, index) => Math.max(
-    maximum,
-    10 + (stableHash(`tool-latency:${state.id}:${round}:${index}`, options.seed) % 491),
-  ), 0);
-  if (parallelToolLatencyMs > 0) await Bun.sleep(parallelToolLatencyMs);
+  // External tool/MCP work is real bounded parallel work in this probe. Each
+  // result is produced independently, then all results are recalled together.
+  const toolResults = await Promise.all(calls.map(async (item, index) => {
+    const latency = 10 + (stableHash(`tool-latency:${state.id}:${round}:${index}`, options.seed) % 491);
+    await Bun.sleep(latency);
+    return { item, index };
+  }));
+  for (const { item } of toolResults) appendRecallOutput(state.input, item, round);
+  state.toolResults += toolResults.length;
 }
 
 async function sampleMetrics(controlBase: URL): Promise<ProbeMetrics> {
@@ -607,8 +611,9 @@ async function sampleMetrics(controlBase: URL): Promise<ProbeMetrics> {
 
 function idleInvariant(metrics: ProbeMetrics): boolean {
   if (metrics.activeTurnCount !== 0) return false;
-  return Object.values(metrics.appOwnedBytes.observedInFlight)
-    .every(row => row.currentBytes === 0 && row.active === 0);
+  if (metrics.appOwnedBytes.retainedBytes !== 0 || metrics.appOwnedBytes.pinnedBytes !== 0 || metrics.appOwnedBytes.overBudgetBytes !== 0) return false;
+  if (metrics.responseState.count !== 0 || metrics.responseState.totalBytes !== 0 || metrics.responseState.largestBytes !== 0) return false;
+  return Object.values(metrics.appOwnedBytes.observedInFlight).every(row => row.currentBytes === 0 && row.active === 0);
 }
 
 async function waitForIdle(controlBase: URL): Promise<ProbeMetrics> {
@@ -674,6 +679,7 @@ async function runWave(
     failedSessions,
     requestCount: states.reduce((sum, state) => sum + state.requests, 0),
     toolCallCount: states.reduce((sum, state) => sum + state.toolCalls, 0),
+    toolResultCount: states.reduce((sum, state) => sum + state.toolResults, 0),
     peaks: metricPeaks(samples),
     idle,
     durationMs: Date.now() - started,
@@ -687,6 +693,7 @@ async function runWave(
     failedSessions,
     requestCount: result.requestCount,
     toolCallCount: result.toolCallCount,
+    toolResultCount: result.toolResultCount,
     peaks: result.peaks,
     idleRss: idle.rss,
     idleRetainedBytes: idle.appOwnedBytes.retainedBytes,
@@ -696,6 +703,29 @@ async function runWave(
     firstFailure: states.find(state => state.failure)?.failure,
   });
   return result;
+}
+
+async function sameSessionOverlapCell(proxyBase: URL): Promise<{ status: "passed" | "failed"; statuses: number[]; detail: string }> {
+  const body = JSON.stringify({
+    model: "mock/test-model",
+    stream: true,
+    store: false,
+    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: `${sessionMarker("same-session-overlap")} run the synthetic tools` }] }],
+    tools: tools(),
+    tool_choice: "auto",
+  });
+  const headers = { "content-type": "application/json", "x-session-id": "same-session-overlap" };
+  const responses = await Promise.all([
+    fetch(new URL("/v1/responses", proxyBase), { method: "POST", headers, body, signal: AbortSignal.timeout(options.idleDeadlineMs) }),
+    fetch(new URL("/v1/responses", proxyBase), { method: "POST", headers, body, signal: AbortSignal.timeout(options.idleDeadlineMs) }),
+  ]);
+  await Promise.all(responses.map(response => response.body?.cancel()));
+  const statuses = responses.map(response => response.status).sort((a, b) => a - b);
+  const accepted = statuses.filter(status => status === 200).length;
+  const rejected = statuses.some(status => status === 409 || status === 429 || status === 503);
+  return accepted === 1 && rejected
+    ? { status: "passed", statuses, detail: "same-session overlap rejected without a queued turn" }
+    : { status: "failed", statuses, detail: "same-session overlap did not prove one active turn and zero queue" };
 }
 
 async function cancelOneResponse(sessionId: string, proxyBase: URL): Promise<string> {
@@ -810,22 +840,30 @@ try {
     proxyBase,
     controlBase,
   );
+  const emergency = quickProfile ? null : await runWave("emergency-96", "emergency-96", 96, 1, proxyBase, controlBase);
+  const sameSession = await sameSessionOverlapCell(proxyBase);
   const faultOutcomes = await runFaultWave(proxyBase, controlBase);
   const final = await waitForIdle(controlBase);
 
-  const failedBaselineSessions = sustained.reduce((sum, wave) => sum + wave.failedSessions, 0) + burst.failedSessions;
+  const failedBaselineSessions = sustained.reduce((sum, wave) => sum + wave.failedSessions, 0) + burst.failedSessions + (emergency?.failedSessions ?? 0) + (sameSession.status === "passed" ? 0 : 1);
+  const protocolOutcome = failedBaselineSessions === 0 && sustained.concat([burst, ...(emergency ? [emergency] : [])]).every(wave => wave.toolCallCount === wave.toolResultCount) ? "PASS" : "FAIL";
+  const memoryOutcome = idleInvariant(final) ? "PASS" : "FAIL";
   const idleRss = sustained.map(wave => wave.idle.rss);
   const idleRetained = sustained.map(wave => wave.idle.appOwnedBytes.retainedBytes);
   const peaks = mergePeaks([...sustained.map(wave => wave.peaks), burst.peaks]);
   emit({
     type: "SUMMARY",
-    outcome: failedBaselineSessions === 0 ? "PASS" : "FAIL",
+    outcome: protocolOutcome === "PASS" && memoryOutcome === "PASS" ? "PASS" : "FAIL",
+    protocol: { outcome: protocolOutcome, failedBaselineSessions, sameSessionOverlap: sameSession.status, emergencyPressure: emergency ? "observed" : "not-run" },
+    memoryLeases: { outcome: memoryOutcome, activeTurnCount: final.activeTurnCount, retainedBytes: final.appOwnedBytes.retainedBytes, pinnedBytes: final.appOwnedBytes.pinnedBytes, overBudgetBytes: final.appOwnedBytes.overBudgetBytes, responseState: final.responseState },
     seed: options.seed,
     algorithm: "stable-fnv1a32",
     platform: ready.platform,
     bunVersion: ready.bunVersion,
     bunRevision: ready.bunRevision,
     sustainedWaves: options.sustainedWaves,
+    emergencyPressure: emergency ? { sessions: 96, failedSessions: emergency.failedSessions, idle: emergency.idle.appOwnedBytes } : { status: "not-run", reason: "quick profile" },
+    sameSessionOverlap: sameSession,
     failedBaselineSessions,
     peaks,
     initialRss: initial.rss,
