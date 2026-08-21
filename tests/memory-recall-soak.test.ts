@@ -9,6 +9,7 @@ import {
   parseMemoryRecallSoakOptions,
   stableHash,
 } from "../scripts/memory-recall-soak-lib";
+import { admitSessionTurn, releaseSessionTurn } from "../src/server/lifecycle";
 
 describe("#820 memory recall soak probe helpers", () => {
   test("full defaults preserve the acceptance workload contract", () => {
@@ -82,6 +83,15 @@ describe("#820 memory recall soak probe helpers", () => {
     expect(linearSlope([100, 100, 100])).toBe(0);
     expect(maxFinite([1, 9, 3])).toBe(9);
     expect(maxFinite([])).toBeNull();
+  });
+
+  test("production session correlation admits one turn and rejects overlap without a queue", () => {
+    const session = `recall-test-${Date.now()}`;
+    expect(admitSessionTurn(session)).toBe(true);
+    expect(admitSessionTurn(session)).toBe(false);
+    releaseSessionTurn(session);
+    expect(admitSessionTurn(session)).toBe(true);
+    releaseSessionTurn(session);
   });
 
   test("runs one bounded real --quick child smoke and emits a structured summary", async () => {
