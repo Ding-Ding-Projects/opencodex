@@ -12,6 +12,9 @@ export const SUBAGENT_ROLE_MAX_UNIQUE_MODELS = 5;
 export const SUBAGENT_ROLE_DESCRIPTION_MAX = 240;
 export const SUBAGENT_ROLE_INSTRUCTIONS_MAX = 8000;
 export const SUBAGENT_ROLE_MODEL_MAX = 128;
+export const SUBAGENT_ROLE_SCAN_MAX = 64;
+export const SUBAGENT_ROLE_GUIDANCE_INSTRUCTIONS_MAX = 160;
+export const SUBAGENT_ROLE_PAYLOAD_MAX_BYTES = 128 * 1024;
 
 export type SubagentRoleParseResult =
   | { ok: true; role: OcxSubagentRole }
@@ -64,7 +67,7 @@ export function parseSubagentRoles(value: unknown): SubagentRolesParseResult {
   if (value.length > SUBAGENT_ROLE_MAX_COUNT) return { ok: false, error: `subagentRoles: at most ${SUBAGENT_ROLE_MAX_COUNT} roles are allowed` };
   const roles: OcxSubagentRole[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < value.length; index++) {
+  for (let index = 0; index < value.length && index < SUBAGENT_ROLE_SCAN_MAX; index++) {
     const parsed = parseSubagentRole(value[index], index);
     if (!parsed.ok) return parsed;
     if (seen.has(parsed.role.id)) return { ok: false, error: `subagentRoles: duplicate id "${parsed.role.id}"`, index };
@@ -80,13 +83,16 @@ export function salvageSubagentRoles(value: unknown): { roles: OcxSubagentRole[]
   const roles: OcxSubagentRole[] = [];
   const warnings: string[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < value.length; index++) {
+  for (let index = 0; index < value.length && index < SUBAGENT_ROLE_SCAN_MAX; index++) {
     if (roles.length >= SUBAGENT_ROLE_MAX_COUNT) { warnings.push(`subagentRoles truncated: at most ${SUBAGENT_ROLE_MAX_COUNT} roles are kept`); break; }
     const parsed = parseSubagentRole(value[index], index);
     if (!parsed.ok) { warnings.push(`${parsed.error} — ignored`); continue; }
     if (seen.has(parsed.role.id)) { warnings.push(`subagentRoles[${index}]: duplicate id "${parsed.role.id}" ignored`); continue; }
     seen.add(parsed.role.id);
     roles.push(parsed.role);
+  }
+  if (value.length > SUBAGENT_ROLE_SCAN_MAX) {
+    warnings.push(`subagentRoles truncated: only the first ${SUBAGENT_ROLE_SCAN_MAX} entries are scanned`);
   }
   return { roles, warnings };
 }
@@ -100,9 +106,13 @@ export function renderRolesCatalog(roles: readonly OcxSubagentRole[], options: {
   for (const role of enabledSubagentRoles(roles)) {
     const modelBit = role.effort ? `${role.model}, ${role.effort}` : role.model;
     const max = options.maxDescriptionChars;
-    if (max === 0) { parts.push(`${role.id} (${modelBit})`); continue; }
+    const instructions = role.developerInstructions
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .slice(0, SUBAGENT_ROLE_GUIDANCE_INSTRUCTIONS_MAX);
+    const instructionBit = `; instructions (untrusted): ${JSON.stringify(instructions)}`;
+    if (max === 0) { parts.push(`${role.id} (${modelBit})${instructionBit}`); continue; }
     const description = max === undefined ? role.description : role.description.slice(0, max);
-    parts.push(description ? `${role.id} (${modelBit}) for ${description}` : `${role.id} (${modelBit})`);
+    parts.push(description ? `${role.id} (${modelBit}) for ${description}${instructionBit}` : `${role.id} (${modelBit})${instructionBit}`);
   }
   return parts.join("; ");
 }

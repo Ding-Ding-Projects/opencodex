@@ -29,6 +29,7 @@ import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "./pr
 import { parseDesktopProfile } from "./claude/desktop-profile";
 import { isCodexReasoningEffort, modelRecordValue } from "./reasoning-effort";
 import { parseSubagentRoles, salvageSubagentRoles } from "./codex/agent-roles";
+import { modelAutoCompactTokenLimitsConfigError } from "./providers/auto-compact-budget";
 
 let _atomicSeq = 0;
 
@@ -691,6 +692,7 @@ const configSchema = z.object({
   syncCodexSubagentDefaults: z.boolean().optional().catch(undefined),
   // Validate at the explicit boundary below while preserving unrelated config when loading.
   subagentRoles: z.unknown().optional(),
+  subagentRolesRevision: z.unknown().optional(),
   agentTaskRecovery: z.unknown().optional(),
   codexShimAutoRestore: z.boolean().optional(),
   pausedCodexAccountIds: z.array(z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/)).optional(),
@@ -1086,9 +1088,72 @@ function subagentRolesError(value: unknown): string | null {
   return parsed.ok ? null : `schema_invalid: ${parsed.error}`;
 }
 
+function validSubagentRolesRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function normalizeSubagentRolesRevision(config: OcxConfig, rawParsed: unknown): OcxConfig {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "subagentRolesRevision")) return config;
+  if (validSubagentRolesRevision(raw.subagentRolesRevision)) return { ...config, subagentRolesRevision: raw.subagentRolesRevision };
+  const next = { ...config };
+  delete next.subagentRolesRevision;
+  return next;
+}
+
+function warnDegradedSubagentRolesRevision(rawParsed: unknown): void {
+  const raw = rawConfigRecord(rawParsed);
+  if (raw && Object.hasOwn(raw, "subagentRolesRevision") && !validSubagentRolesRevision(raw.subagentRolesRevision)) {
+    console.warn("⚠️  config.json subagentRolesRevision ignored: expected a non-negative safe integer. Other settings were preserved.");
+  }
+}
+
+function subagentRolesRevisionError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "subagentRolesRevision") || raw.subagentRolesRevision === undefined) return null;
+  return validSubagentRolesRevision(raw.subagentRolesRevision)
+    ? null
+    : "schema_invalid: subagentRolesRevision: must be a non-negative safe integer";
+}
+
+function modelAutoCompactConfigError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  const providers = raw?.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return null;
+  for (const [name, provider] of Object.entries(providers as Record<string, unknown>)) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+    const map = (provider as Record<string, unknown>).modelAutoCompactTokenLimits;
+    const error = modelAutoCompactTokenLimitsConfigError(map, { requireNativeIds: name === "openai" });
+    if (error) return `schema_invalid: providers.${name}.${error}`;
+  }
+  return null;
+}
+
+function normalizeModelAutoCompactConfig(config: OcxConfig, rawParsed: unknown): OcxConfig {
+  const raw = rawConfigRecord(rawParsed);
+  const providers = raw?.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return config;
+  const next = { ...config, providers: { ...config.providers } };
+  for (const [name, provider] of Object.entries(providers as Record<string, unknown>)) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+    const map = (provider as Record<string, unknown>).modelAutoCompactTokenLimits;
+    if (map !== undefined && modelAutoCompactTokenLimitsConfigError(map, { requireNativeIds: name === "openai" })) {
+      if (!next.providers[name]) continue;
+      next.providers[name] = { ...next.providers[name] };
+      delete next.providers[name].modelAutoCompactTokenLimits;
+    }
+  }
+  return next;
+}
+
+function warnDegradedModelAutoCompactConfig(rawParsed: unknown): void {
+  const error = modelAutoCompactConfigError(rawParsed);
+  if (error) console.warn(`⚠️  config.json ${error.replace(/^schema_invalid: /, "")}. Other settings were preserved.`);
+}
+
 const agentTaskRecoverySchema = z.object({
   enabled: z.boolean().optional(),
-  model: z.string().trim().min(1).optional(),
+  model: z.string().trim().min(1).max(128).optional(),
   timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
   cacheEntries: z.number().int().min(1).max(512).optional(),
 }).strict();
@@ -1197,9 +1262,11 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
       warnDegradedSubagentRoles(parsed);
+      warnDegradedSubagentRolesRevision(parsed);
+      warnDegradedModelAutoCompactConfig(parsed);
       warnDegradedAgentTaskRecovery(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
-      return normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed);
+      return normalizeModelAutoCompactConfig(normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed), parsed), parsed);
     }
     // Schema validation failed — merge defaults into the raw object instead of
     // discarding it entirely, so pool accounts and providers survive a missing
@@ -1217,9 +1284,11 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
       warnDegradedSubagentRoles(parsed);
+      warnDegradedSubagentRolesRevision(parsed);
+      warnDegradedModelAutoCompactConfig(parsed);
       warnDegradedAgentTaskRecovery(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
-      return normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed);
+      return normalizeModelAutoCompactConfig(normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed), parsed), parsed);
     }
     // Merge couldn't fix it — truly broken config
     warnAndBackupInvalidConfig(configPath, result.error);
@@ -1255,12 +1324,16 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   // ordinary save persists the normalized absence.
   const syncDisabledReason = nativeSubagentSyncDisabledReason(config, rawParsed);
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
-  const normalized = normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed), rawParsed), rawParsed);
+  const normalized = normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed), rawParsed), rawParsed), rawParsed);
   const warnings = configPlaceholderWarnings(normalized);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {
     warnings.push(`claudeCode.subagentEffort ignored: expected one of ${CLAUDE_SUBAGENT_EFFORTS.join(", ")}`);
   }
   warnings.push(...salvageSubagentRoles((rawConfigRecord(rawParsed) ?? {}).subagentRoles).warnings);
+  if (rawConfigRecord(rawParsed)?.subagentRolesRevision !== undefined && !validSubagentRolesRevision(rawConfigRecord(rawParsed)?.subagentRolesRevision)) {
+    warnings.push("subagentRolesRevision ignored: expected a non-negative safe integer");
+  }
+  if (modelAutoCompactConfigError(rawParsed)) warnings.push("modelAutoCompactTokenLimits ignored: invalid persisted model budget map");
   const rawRecovery = rawConfigRecord(rawParsed)?.agentTaskRecovery;
   if (rawRecovery !== undefined && !agentTaskRecoverySchema.safeParse(rawRecovery).success) {
     warnings.push("agentTaskRecovery ignored: invalid experimental recovery configuration");
@@ -1326,7 +1399,7 @@ function claudeSubagentEffortError(value: unknown): string | null {
 
 /** Validate an in-memory config candidate without touching disk. Used by headless CLI import/set. */
 export function validateConfigCandidate(value: unknown): { ok: true; config: OcxConfig } | { ok: false; error: string } {
-  const boundaryError = blankHostnameError(value) ?? claudeSubagentEffortError(value) ?? subagentRolesError(value) ?? agentTaskRecoveryError(value);
+  const boundaryError = blankHostnameError(value) ?? claudeSubagentEffortError(value) ?? subagentRolesError(value) ?? subagentRolesRevisionError(value) ?? modelAutoCompactConfigError(value) ?? agentTaskRecoveryError(value);
   if (boundaryError) return { ok: false, error: boundaryError };
   const result = configSchema.safeParse(value);
   if (result.success) {
@@ -1336,6 +1409,10 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
       const parsed = parseSubagentRoles(raw.subagentRoles);
       if (!parsed.ok) return { ok: false, error: `schema_invalid: ${parsed.error}` };
       config.subagentRoles = parsed.roles;
+    }
+    if (raw && Object.hasOwn(raw, "subagentRolesRevision")) {
+      if (!validSubagentRolesRevision(raw.subagentRolesRevision)) return { ok: false, error: "schema_invalid: subagentRolesRevision: must be a non-negative safe integer" };
+      config.subagentRolesRevision = raw.subagentRolesRevision;
     }
     return { ok: true, config };
   }

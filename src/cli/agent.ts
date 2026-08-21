@@ -12,7 +12,8 @@ import {
   takeOption,
   type RuntimeApiDeps,
 } from "./runtime-api";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { SUBAGENT_ROLE_PAYLOAD_MAX_BYTES } from "../codex/agent-roles";
 
 const USAGE = `Usage:
   ocx agent [status] [--json]
@@ -157,7 +158,11 @@ async function roles(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     const id = args.shift();
     if (!id) throw new CliUsageError("role id is required", USAGE);
     rejectArgs(args, USAGE);
-    const result = await runtimeRequest("/api/subagent-roles", { method: "PUT", body: JSON.stringify({ remove: id }) }, deps);
+    const state = await runtimeRequest("/api/subagent-roles", {}, deps) as { revision?: unknown };
+    if (typeof state?.revision !== "number" || !Number.isSafeInteger(state.revision) || state.revision < 0) {
+      throw new CliUsageError("role catalog revision is missing or invalid; refresh the role catalog", USAGE);
+    }
+    const result = await runtimeRequest("/api/subagent-roles", { method: "PUT", body: JSON.stringify({ remove: id, revision: state.revision }) }, deps);
     printData(result, wantsJson, [`Subagent role removed: ${id}`]);
     return;
   }
@@ -165,12 +170,29 @@ async function roles(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const file = takeOption(args, "--file");
   rejectArgs(args, USAGE);
   let payload: string;
-  if (file) payload = readFileSync(file, "utf8");
+  if (file) {
+    const size = statSync(file).size;
+    if (size > SUBAGENT_ROLE_PAYLOAD_MAX_BYTES) throw new CliUsageError(`roles JSON exceeds ${SUBAGENT_ROLE_PAYLOAD_MAX_BYTES} bytes`, USAGE);
+    payload = readFileSync(file, "utf8");
+  }
   else {
     const input = deps.stdinImpl ?? process.stdin;
     if ((input as NodeJS.ReadStream).isTTY) throw new CliUsageError("--file or piped JSON is required", USAGE);
     const chunks: Buffer[] = [];
-    for await (const chunk of input as AsyncIterable<Uint8Array | string>) chunks.push(Buffer.from(chunk));
+    let total = 0;
+    try {
+      for await (const chunk of input as AsyncIterable<Uint8Array | string>) {
+        const bytes = Buffer.from(chunk);
+        total += bytes.byteLength;
+        if (total > SUBAGENT_ROLE_PAYLOAD_MAX_BYTES) {
+          (input as { destroy?: (error?: Error) => void }).destroy?.(new Error("role payload exceeds byte limit"));
+          throw new CliUsageError(`roles JSON exceeds ${SUBAGENT_ROLE_PAYLOAD_MAX_BYTES} bytes`, USAGE);
+        }
+        chunks.push(bytes);
+      }
+    } finally {
+      if (total > SUBAGENT_ROLE_PAYLOAD_MAX_BYTES) (input as { destroy?: () => void }).destroy?.();
+    }
     payload = Buffer.concat(chunks).toString("utf8");
   }
   try { JSON.parse(payload); } catch { throw new CliUsageError("roles JSON must be valid", USAGE); }

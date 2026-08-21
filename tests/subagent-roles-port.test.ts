@@ -64,7 +64,8 @@ describe("named subagent roles", () => {
       }),
     });
     expect(text).toContain("reviewer");
-    expect(text).not.toContain("developerInstructions");
+    expect(text).toContain("instructions (untrusted)");
+    expect(text).toContain("Use the supplied task text");
   });
 
   test("reports honest off/on/ineligible compatibility states without exposing task data", () => {

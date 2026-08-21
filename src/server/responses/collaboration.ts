@@ -259,7 +259,7 @@ export async function multiAgentGuidanceText(
       : "";
     if (!injectionModel && roster === "" && fallbackGuidance === "" && rolesText === "" && depthGuidance === "") return null;
     if (injectionPrompt) {
-      return `<multi_agent_mode>${applyInjectionPlaceholders(injectionPrompt, injectionModel, injectionEffort, roster, fallbackGuidance, rolesText, depth)}</multi_agent_mode>`;
+      return `<multi_agent_mode>${applyInjectionPlaceholders(injectionPrompt, injectionModel, injectionEffort, roster, fallbackGuidance, depth, rolesText)}</multi_agent_mode>`;
     }
     if (!preferred && roster === "" && fallbackGuidance === "" && rolesText === "" && depthGuidance === "") return null;
     let text = "When the active spawn_agent tool supports optional \"model\" or \"reasoning_effort\" overrides, "
@@ -314,18 +314,18 @@ export function applyInjectionPlaceholders(
   effort?: string,
   roster?: string,
   fallback?: string,
-  roles?: string,
   depth?: { depth: number; maxDepth: number; remainingChildren: number; remainingSessionSpawns: number },
+  roles?: string,
 ): string {
   return prompt
     .replaceAll("{{model}}", model ?? "")
     .replaceAll("{{effort}}", effort ?? "")
     .replaceAll("{{roster}}", roster ?? "")
     .replaceAll("{{fallback}}", fallback ?? "")
-    .replaceAll("{{roles}}", roles ?? "")
     .replaceAll("{{depth}}", depth ? String(depth.depth) : "")
     .replaceAll("{{maxdepth}}", depth ? String(depth.maxDepth) : "")
-    .replaceAll("{{remaining}}", depth ? String(depth.remainingChildren) : "");
+    .replaceAll("{{remaining}}", depth ? String(depth.remainingChildren) : "")
+    .replaceAll("{{roles}}", roles ?? "");
 }
 
 

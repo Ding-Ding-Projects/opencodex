@@ -375,7 +375,10 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     try { body = await req.json(); } catch { return jsonResponse({ error: "invalid JSON body" }, 400); }
     const currentRevision = config.subagentRolesRevision ?? 0;
     if (typeof body.remove === "string") {
-      if (body.revision !== undefined && (typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision !== currentRevision)) {
+      if (body.revision === undefined) {
+        return jsonResponse({ error: "revision is required when removing a subagent role", revision: currentRevision }, 400);
+      }
+      if (typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 0 || body.revision !== currentRevision) {
         return jsonResponse({ error: "stale subagent role revision", revision: currentRevision }, 409);
       }
       const next = (config.subagentRoles ?? []).filter(role => role.id !== body.remove);

@@ -24,6 +24,10 @@ const OPENAI_TOKEN_AUDIENCE = "https://api.openai.com/v1";
 const MAX_CIPHERTEXT_BYTES = 2 * 1024 * 1024;
 const MAX_ASSIGNMENT_BYTES = 2 * 1024 * 1024;
 const MAX_RECOVERY_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_RECOVERY_MODEL_BYTES = 128;
+const MAX_ENVELOPE_HEADER_BYTES = 4096;
+const MAX_ENVELOPE_FIELD_BYTES = 256;
+const MAX_ENVELOPE_TOTAL_BYTES = 2 * 1024 * 1024 + MAX_ENVELOPE_HEADER_BYTES;
 const CACHE_SCOPE_KEY = randomBytes(32);
 
 export interface AgentTaskRecoveryOptions {
@@ -54,7 +58,7 @@ export function agentTaskRecoveryConfig(config: OcxConfig): AgentTaskRecoveryOpt
   return {
     enabled: true,
     model: typeof raw.model === "string" && raw.model.trim().length > 0
-      ? raw.model.trim()
+      ? raw.model.trim().slice(0, MAX_RECOVERY_MODEL_BYTES)
       : "gpt-5.6-sol",
     timeoutMs: Number.isFinite(raw.timeoutMs) && (raw.timeoutMs ?? 0) >= 1_000
       ? Math.min(120_000, Math.floor(raw.timeoutMs!))
@@ -135,6 +139,8 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
     }
   }
 
+  const itemRecord = item as { author?: unknown; recipient?: unknown };
+  if (typeof itemRecord.author !== "string" || typeof itemRecord.recipient !== "string") return null;
   if (
     !headerText
     || !messageType
@@ -145,10 +151,16 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
     || ciphertextCount !== 1
     || (content[encryptedIndex] as { encrypted_content?: unknown }).encrypted_content !== ciphertext
     || Buffer.byteLength(ciphertext) > MAX_CIPHERTEXT_BYTES
+    || Buffer.byteLength(headerText) > MAX_ENVELOPE_HEADER_BYTES
+    || Buffer.byteLength(taskName) > MAX_ENVELOPE_FIELD_BYTES
+    || Buffer.byteLength(sender) > MAX_ENVELOPE_FIELD_BYTES
+    || Buffer.byteLength(itemRecord.author as string) > MAX_ENVELOPE_FIELD_BYTES
+    || Buffer.byteLength(itemRecord.recipient as string) > MAX_ENVELOPE_FIELD_BYTES
+    || Buffer.byteLength(headerText) + Buffer.byteLength(taskName) + Buffer.byteLength(sender)
+      + Buffer.byteLength(itemRecord.author as string) + Buffer.byteLength(itemRecord.recipient as string)
+      + Buffer.byteLength(ciphertext) > MAX_ENVELOPE_TOTAL_BYTES
   ) return null;
 
-  const itemRecord = item as { author?: unknown; recipient?: unknown };
-  if (typeof itemRecord.author !== "string" || typeof itemRecord.recipient !== "string") return null;
   if (itemRecord.author !== sender || itemRecord.recipient !== taskName) return null;
 
   return {
@@ -413,7 +425,12 @@ async function requestRecovery(
       redirect: "error",
     });
     if (!response.ok) {
-      try { await response.body?.cancel(); } catch { /* already closed */ }
+      const cancel = response.body?.cancel();
+      if (cancel) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([cancel.catch(() => undefined), new Promise<void>(resolve => { timer = setTimeout(resolve, 250); })]);
+        if (timer) clearTimeout(timer);
+      }
       return null;
     }
     const body = await readBoundedResponseBody(response, {

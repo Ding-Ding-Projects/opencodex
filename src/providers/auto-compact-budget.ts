@@ -3,6 +3,8 @@ import { redactSecretString } from "../lib/redact";
 const SUPPORTED_NATIVE_OPENAI_SLUGS = new Set(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 
 const RESERVED_OBJECT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+export const MODEL_AUTO_COMPACT_LIMITS_MAX_ENTRIES = 128;
+export const MODEL_AUTO_COMPACT_LIMITS_MAX_KEY_LENGTH = 128;
 
 function positiveSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -24,9 +26,12 @@ export function modelAutoCompactTokenLimitsConfigError(value: unknown, options: 
   if (!value || typeof value !== "object" || Array.isArray(value)) return `${field} must be a plain object${options.allowTombstones ? " or null" : ""}`;
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return `${field} must be a plain object with own properties`;
-  for (const [modelId, entry] of Object.entries(value as Record<string, unknown>)) {
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > MODEL_AUTO_COMPACT_LIMITS_MAX_ENTRIES) return `${field} must contain at most ${MODEL_AUTO_COMPACT_LIMITS_MAX_ENTRIES} entries`;
+  for (const [modelId, entry] of entries) {
     const safeModelId = JSON.stringify(redactSecretString(modelId));
     if (!modelId.trim()) return `${field} keys must be nonblank model ids`;
+    if (modelId.length > MODEL_AUTO_COMPACT_LIMITS_MAX_KEY_LENGTH) return `${field} keys must be at most ${MODEL_AUTO_COMPACT_LIMITS_MAX_KEY_LENGTH} characters`;
     if (RESERVED_OBJECT_KEYS.has(modelId)) return `${field} key ${safeModelId} is reserved`;
     if (options.requireNativeIds && (modelId.includes("/") || !SUPPORTED_NATIVE_OPENAI_SLUGS.has(modelId))) return `${field} key ${safeModelId} must be an exact supported native model id`;
     if (options.allowTombstones && entry === null) continue;
