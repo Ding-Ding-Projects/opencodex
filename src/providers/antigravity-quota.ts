@@ -2,6 +2,7 @@ import { antigravityHostCandidates, isAntigravityHttpsHost } from "../adapters/g
 import { antigravityUserAgent } from "../adapters/client-fingerprint";
 import { readBoundedResponseBody, BOUNDED_BODY_MAX_BYTES } from "../lib/bounded-body";
 import type { ProviderQuota, ProviderQuotaWindow } from "./quota";
+import { resolveAntigravityBearerDestination } from "./antigravity-trust";
 
 export const ANTIGRAVITY_QUOTA_RESPONSE_MAX_BYTES = BOUNDED_BODY_MAX_BYTES;
 const LIVE_QUOTA_PATH = "/v1internal:retrieveUserQuota";
@@ -166,6 +167,7 @@ export async function fetchAntigravityLiveQuota(args: AntigravityLiveQuotaArgs):
   for (const host of antigravityHostCandidates(args.baseUrl)) {
     if (!isAntigravityHttpsHost(host)) continue;
     try {
+      await resolveAntigravityBearerDestination(host);
       const quota = await fetchHostLive(fetchImpl, host, args);
       if (quota) return quota;
     } catch (error) {
@@ -182,6 +184,7 @@ export async function fetchAntigravityAccountQuota(args: AntigravityLiveQuotaArg
   for (const host of antigravityHostCandidates(args.baseUrl)) {
     if (!isAntigravityHttpsHost(host)) continue;
     try {
+      await resolveAntigravityBearerDestination(host);
       const response = await fetchImpl(`${host}${CATALOG_PATH}`, {
         method: "POST",
         headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": antigravityUserAgent(), Authorization: `Bearer ${args.accessToken}` },
