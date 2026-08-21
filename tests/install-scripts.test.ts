@@ -252,6 +252,42 @@ describe("install scripts", () => {
     expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Recovered: true, User: "C:\\Other", Process: "C:\\Other" });
   });
 
+  test.skipIf(process.platform !== "win32")("desktop PATH apply uses compare-before-write and reports a concurrent write", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Other'; Process = 'C:\\Other' }
+      $result = Add-DesktopCliPath -BinDir 'C:\\Stable\\cli-bin' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p + ';C:\\Concurrent' } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadMachinePath { '' } -ResolvedOcxPaths @()
+      [pscustomobject]@{ Ok = $result.Ok; Conflict = $result.PathConflict; RollbackFailed = $result.RollbackFailed; User = $state.User } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Conflict: true, RollbackFailed: true, User: "C:\\Other;C:\\Stable\\cli-bin;C:\\Concurrent" });
+  });
+
+  test.skipIf(process.platform !== "win32")("desktop PATH rollback uses compare-before-restore and preserves a concurrent edit", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Other'; Process = 'C:\\Other'; UserWrites = 0 }
+      $result = Add-DesktopCliPath -BinDir 'C:\\Stable\\cli-bin' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.UserWrites++; if ($state.UserWrites -gt 1) { $state.User = 'C:\\Concurrent' } else { $state.User = $p } } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadMachinePath { '' } -ResolvedOcxPaths @() -ForceFailure
+      [pscustomobject]@{ Ok = $result.Ok; Recovered = $result.TransactionRecovered; RollbackFailed = $result.RollbackFailed; User = $state.User } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Recovered: false, RollbackFailed: true, User: "C:\\Concurrent" });
+  });
+
   test.skipIf(process.platform !== "win32")("uninstall removes only an exact owned shim and its exact user PATH entry", async () => {
     const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
     const escapedPath = scriptPath.replace(/'/g, "''");
@@ -304,6 +340,24 @@ describe("install scripts", () => {
 
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Conflict: true, ClaimPath: "C:\\Stable\\claim.tmp", Shim: "replacement", ClaimExists: true, User: "C:\\Stable\\cli-bin" });
+  });
+
+  test.skipIf(process.platform !== "win32")("uninstall PATH apply uses compare-before-write and preserves a concurrent PATH edit", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Stable\\cli-bin'; Process = 'C:\\Stable\\cli-bin'; Shim = 'generated'; ShimExists = $true; DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = 'C:\\Concurrent' } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -NewClaimPath { 'C:\\Stable\\claim.tmp' } -ClaimShim { param($p) $state.ShimExists = $false } -ReadClaim { param($p) $state.Shim } -RestoreClaim { param($p) $state.ShimExists = $true } -RemoveClaim { param($p) $state.ShimExists = $false } -TestShim { $state.ShimExists } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
+      [pscustomobject]@{ Ok = $result.Ok; Conflict = $result.PathConflict; RollbackFailed = $result.RollbackFailed; User = $state.User; ShimExists = $state.ShimExists } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Conflict: true, RollbackFailed: true, User: "C:\\Concurrent", ShimExists: true });
   });
 
   test.skipIf(process.platform !== "win32")("uninstall keeps a stable directory that contains unrelated data", async () => {
