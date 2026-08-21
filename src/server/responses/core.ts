@@ -52,6 +52,7 @@ import {
   oauthSessionKeyFromParts,
   promoteOAuthActiveAccount,
   resolveOAuthAccountForSession,
+  rotateOAuthAccountOnFailure,
   rotateOAuthAccountOn429,
 } from "../../oauth/provider-pool";
 import { buildWebSearchTool, planWebSearch, runWithWebSearch, shouldResolveOpenAiWebSearchSidecar } from "../../web-search";
@@ -60,6 +61,7 @@ import { describeImagesInPlace, planVisionSidecar, shouldResolveOpenAiVisionSide
 import { createAdapterEventQueue, preflightAdapterEvents } from "../../adapters/run-turn-queue";
 import {
   applyCodexAuthContextToProvider,
+  codexPoolAffinityKey,
   CodexAccountCooldownError,
   cooldownErrorResponse,
   CodexAuthContextError,
@@ -175,7 +177,7 @@ export function sidecarOutcomeRecorder(
 ): ((outcome: CodexUpstreamOutcome) => void) | undefined {
   return authCtx.kind === "pool" || authCtx.kind === "main-pool"
     ? outcome => recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
-      threadId,
+      threadId: authCtx.affinityKey ?? threadId,
       probeLeaseId: authCtx.probeLeaseId,
     })
     : undefined;
@@ -352,7 +354,7 @@ async function retryCodexPoolOnAlternateAccount(
   if (!shouldDeferCodexResetDerivedCooldown(firstResponse, options.deferCodexResetDerivedCooldown)) {
     recordCodexUpstreamOutcome(config, firstAuthCtx.accountId, outcomeStatus, {
       ...quotaMeta,
-      threadId: req.headers.get("x-codex-parent-thread-id"),
+      threadId: firstAuthCtx.affinityKey,
       modelId: route.modelId,
       probeLeaseId: codexProbeLeaseId(firstAuthCtx),
       probeQuotaScope: codexProbeQuotaScope(firstAuthCtx),
@@ -427,7 +429,7 @@ export function codexForwardTerminalOutcomeRecorder(
       // request. Don't penalize account health; record success to clear any
       // prior soft-avoid so a healthy account isn't stuck avoided.
       recordCodexUpstreamOutcome(config, authCtx.accountId, 200, {
-        threadId,
+        threadId: authCtx.affinityKey ?? threadId,
         modelId,
         probeLeaseId: codexProbeLeaseId(authCtx),
         probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -447,7 +449,7 @@ export function codexForwardTerminalOutcomeRecorder(
       ? 200
       : (httpStatusOverride ?? logCtx?.terminalHttpStatus ?? 502);
     recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
-      threadId,
+      threadId: authCtx.affinityKey ?? threadId,
       modelId,
       probeLeaseId: codexProbeLeaseId(authCtx),
       probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -1266,8 +1268,8 @@ export async function handleResponses(
   // Preview the preferred Codex account without acquiring a probe lease or refreshing
   // tokens — auth is resolved only after the final route is selected.
   if (isThreadSpawnRequest(req.headers) && !options.comboAttempt) {
-    const threadId = req.headers.get("x-codex-parent-thread-id");
-    const previewAccountId = previewCodexAccountForRequest(threadId, config);
+    const poolAffinityKey = codexPoolAffinityKey(req.headers);
+    const previewAccountId = previewCodexAccountForRequest(poolAffinityKey ?? null, config);
     subagentFallbackAccountId = previewAccountId ?? config.activeCodexAccountId ?? null;
     const fallback = applySubagentModelFallback(
       parsed,
@@ -1579,7 +1581,7 @@ export async function handleResponses(
       const outcome = err instanceof Error && err.name === "TimeoutError" ? "timeout" : "connect_error";
       if (usesCodexForwardPoolAuth(authCtx, route.provider)) {
         recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
-          threadId: req.headers.get("x-codex-parent-thread-id"),
+          threadId: authCtx.affinityKey,
           modelId: route.modelId,
           probeLeaseId: codexProbeLeaseId(authCtx),
           probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -1707,7 +1709,7 @@ export async function handleResponses(
       )) {
         recordCodexUpstreamOutcome(config, authCtx.accountId, upstreamResponse.status, {
           ...quotaMeta,
-          threadId: req.headers.get("x-codex-parent-thread-id"),
+          threadId: authCtx.affinityKey,
           modelId: route.modelId,
           probeLeaseId: codexProbeLeaseId(authCtx),
           probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -2322,6 +2324,50 @@ export async function handleResponses(
         if ("failed" in result) return result.failed;
         upstreamResponse = result;
         continue recovery;
+      }
+
+      // Generic OAuth pools may fail over an account only when the provider's response
+      // proves the credential is unusable.  A bare 403 (including workspace/plan policy
+      // denials) stays terminal; the classifier consumes only a bounded cloned body.
+      if (
+        (upstreamResponse.status === 401 || upstreamResponse.status === 403)
+        && oauthPoolAccountId
+        && oauthPoolProvider
+        && oauthPoolFailovers < OAUTH_POOL_MAX_FAILOVERS_PER_REQUEST
+      ) {
+        let failureBody = "";
+        try { failureBody = (await upstreamResponse.clone().text()).slice(0, 16_384); } catch { /* keep empty */ }
+        const nextAccountId = await rotateOAuthAccountOnFailure(
+          config,
+          oauthPoolProvider,
+          oauthPoolAccountId,
+          upstreamResponse.status,
+          failureBody,
+          upstreamResponse.headers.get("retry-after"),
+          oauthPoolSessionKey,
+        );
+        if (nextAccountId) {
+          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already closed */ }
+          try {
+            const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId);
+            oauthPoolAccountId = nextAccountId;
+            oauthPoolFailovers += 1;
+            applyOAuthAccountRouting(snapshot);
+            promoteOAuthActiveAccount(oauthPoolProvider, nextAccountId);
+            logCtx.provider = formatOAuthProviderForLog(oauthPoolProvider, nextAccountId);
+            activeAdapter = resolveAdapter(
+              resolveWireProtocolOverride(route.providerName, route.modelId, route.provider),
+              config.cacheRetention,
+            );
+            sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name);
+            const result = await rebuildAndRefetch("oauth-pool-auth-failure");
+            if ("failed" in result) return result.failed;
+            upstreamResponse = result;
+            continue recovery;
+          } catch {
+            // Keep the original provider response when the alternate cannot be materialized.
+          }
+        }
       }
 
       // Multi-key 429 failover: rotate to the next pool key (cooldown-aware) and retry the
