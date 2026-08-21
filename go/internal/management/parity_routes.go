@@ -135,20 +135,20 @@ func (a *API) handleParityRoutes(w http.ResponseWriter, r *http.Request) bool {
 			go a.stop()
 		}
 		return true
-	case path == "/api/host/discover" && r.Method == http.MethodGet:
+	case path == "/api/host/discover" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 		writeJSON(w, http.StatusOK, map[string]any{"hosts": []map[string]any{{"hostname": a.config.Host, "port": a.config.Port, "reachable": true, "source": "local"}}})
 		return true
 	case path == "/api/launch" && r.Method == http.MethodGet:
 		return a.handleNativeLaunchList(w)
 	case path == "/api/launch" && r.Method == http.MethodPost:
 		return a.handleNativeLaunch(w, r)
-	case path == "/api/launch/install" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+	case (path == "/api/launch/install" || strings.HasPrefix(path, "/api/launch/install/")) && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "reason": "install_unavailable", "message": "native launch targets are reported but automatic installation is not available"})
 		return true
 	case path == "/api/terminal" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 		return a.handleNativeTerminal(w, r)
 	case strings.HasPrefix(path, "/api/terminal/"):
-		writeError(w, http.StatusNotFound, "terminal session not found")
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "reason": "terminal_session_not_found", "message": "terminal session not found"})
 		return true
 	}
 	return false

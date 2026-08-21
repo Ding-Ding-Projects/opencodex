@@ -16,9 +16,10 @@ func TestNativeGapRouteInventoryIncludesIssue17Families(t *testing.T) {
 		"GET /api/changelog", "GET /api/export/capabilities", "POST /api/export",
 		"GET /api/host", "PUT /api/host", "POST /api/host/pair", "DELETE /api/host/pair",
 		"POST /api/host/pair/claim", "GET /api/host/export", "GET /api/host/history",
-		"POST /api/host/restore", "POST /api/host/exit", "GET /api/host/discover",
+		"POST /api/host/restore", "POST /api/host/exit", "GET /api/host/discover", "POST /api/host/discover",
 		"GET /api/launch", "POST /api/launch", "GET /api/launch/install",
-		"POST /api/launch/install", "GET /api/terminal", "POST /api/terminal",
+		"POST /api/launch/install", "GET /api/launch/install/{jobId}", "GET /api/terminal", "POST /api/terminal",
+		"GET /api/terminal/{id}", "POST /api/terminal/{id}/input", "DELETE /api/terminal/{id}",
 		"GET /api/system/restart", "POST /api/system/restart",
 	}
 	registered := map[string]bool{}
