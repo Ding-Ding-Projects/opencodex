@@ -10,10 +10,28 @@ import {
   sleepWithAbort,
 } from "../lib/upstream-retry";
 import { recordAntigravityCooldown } from "../oauth/antigravity-routing";
+import { antigravityHostCandidates } from "./google-antigravity-hosts";
 
 const GOOGLE_RETRY_ATTEMPTS = 3;
 const GOOGLE_RETRY_BASE_MS = 250;
 const GOOGLE_RETRY_MAX_MS = 2_000;
+
+function isAntigravitySseRequest(request: AdapterRequest): boolean {
+  try {
+    const url = new URL(request.url);
+    return url.pathname.endsWith("/v1internal:streamGenerateContent") && url.searchParams.get("alt") === "sse";
+  } catch {
+    return false;
+  }
+}
+
+function requestForHost(request: AdapterRequest, host: string): AdapterRequest {
+  const current = new URL(request.url);
+  const replacement = new URL(host);
+  current.protocol = replacement.protocol;
+  current.host = replacement.host;
+  return { ...request, url: current.toString() };
+}
 
 function retryAfterMs(value: string | null, now = Date.now()): number | undefined {
   const text = value?.trim();
@@ -57,6 +75,10 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
   const timeoutMs = ctx.timeoutMs ?? 200_000;
   let lastError: unknown;
   let activeRequest = request;
+  const peers = label === "Antigravity" && isAntigravitySseRequest(request)
+    ? antigravityHostCandidates(new URL(request.url).origin)
+    : [];
+  let peerAttempted = false;
   let compatibilityReplayUsed = false;
   for (let attempt = 0; attempt < GOOGLE_RETRY_ATTEMPTS; attempt++) {
     if (ctx.abortSignal?.aborted) throw abortError(ctx.abortSignal);
@@ -66,6 +88,13 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
         headers: activeRequest.headers,
         body: activeRequest.body,
       }, timeoutMs, ctx.abortSignal, ctx.stream);
+      if (peers.length > 1 && !peerAttempted && (res.status === 404 || res.status === 503)) {
+        peerAttempted = true;
+        cancelResponseBodyBestEffort(res);
+        activeRequest = requestForHost(request, peers[1]!);
+        attempt--;
+        continue;
+      }
       if (label === "Antigravity" && await recordAntigravityHttpCooldown(res, ctx.accountId)) {
         return ctx.returnRawErrors ? res : normalizeFinalGoogleError(label, res, ctx.abortSignal);
       }
@@ -108,6 +137,12 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
     } catch (err) {
       if (ctx.abortSignal?.aborted) throw err;
       lastError = err;
+      if (peers.length > 1 && !peerAttempted) {
+        peerAttempted = true;
+        activeRequest = requestForHost(request, peers[1]!);
+        attempt--;
+        continue;
+      }
       if (attempt === GOOGLE_RETRY_ATTEMPTS - 1) throw err;
       await sleepWithAbort(retryBackoffDelayMs(attempt, {
         baseDelayMs: GOOGLE_RETRY_BASE_MS,

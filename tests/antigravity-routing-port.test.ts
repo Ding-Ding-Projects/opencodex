@@ -5,7 +5,7 @@ import type { AdapterRequest } from "../src/adapters/base";
 
 const originalFetch = globalThis.fetch;
 const request: AdapterRequest = {
-  url: "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+  url: "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
   method: "POST",
   headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
   body: "{}",
@@ -40,5 +40,24 @@ describe("Antigravity account cooldown recording", () => {
     const text = await response.text();
     expect(text).toContain("location not supported");
     expect(text).not.toContain("test-token");
+  });
+
+  test("fails over one known host on a stream 503 without changing the request path", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async input => {
+      const url = String(input);
+      urls.push(url);
+      if (url.startsWith("https://daily-cloudcode-pa.googleapis.com")) return new Response("", { status: 503 });
+      return new Response("data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}]}}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    const response = await fetchAntigravityWithRetry(request, { accountId: "account-a", timeoutMs: 1_000 });
+    expect(response.status).toBe(200);
+    expect(urls).toEqual([
+      "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+      "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+    ]);
   });
 });
