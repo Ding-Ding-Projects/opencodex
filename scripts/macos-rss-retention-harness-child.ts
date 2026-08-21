@@ -116,4 +116,3 @@ await new Promise<void>((resolve) => {
   process.once("SIGINT", () => void stop());
   process.once("SIGTERM", () => void stop());
 });
-
