@@ -235,6 +235,9 @@ export function adoptPreSubstrateHome(options: {
   const finalPath = options.databasePath;
   mkdirSync(dirname(finalPath), { recursive: true, mode: 0o700 });
   if (existsSync(finalPath)) {
+    let header = "";
+    try { header = readFileSync(finalPath).subarray(0, 15).toString("utf8"); } catch { /* classify below */ }
+    if (!header.startsWith("SQLite format 3")) return { kind: "refused", reason: lstatSync(finalPath).isFile() ? "rowless-database" : "unversioned-database" };
     let evidence = readAdoptionEvidence(finalPath);
     if (!evidence && process.env.OCX_ADOPTION_TEST_CHILD_RACE === "1") return { kind: "refused", reason: "publication-race" };
     // A competing MoveFileEx winner may still be completing ACL hardening. Re-open
@@ -244,9 +247,6 @@ export function adoptPreSubstrateHome(options: {
       evidence = readAdoptionEvidence(finalPath);
     }
     if (evidence) return { kind: "already-adopted", databasePath: finalPath };
-    let header = "";
-    try { header = readFileSync(finalPath).subarray(0, 15).toString("utf8"); } catch { /* classify below */ }
-    if (!header.startsWith("SQLite format 3")) return { kind: "refused", reason: lstatSync(finalPath).isFile() ? "rowless-database" : "unversioned-database" };
     try {
       const database = new Database(finalPath, { readonly: true, create: false });
       const row = database.query(`SELECT singleton FROM ${TABLE} WHERE singleton = 1`).get();

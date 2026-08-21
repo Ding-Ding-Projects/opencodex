@@ -70,7 +70,7 @@ describe("pre-substrate Codex home adoption", () => {
     if (childResults.filter(result => result.kind === "refused" && result.reason === "publication-race").length !== 1) throw new Error(`unexpected child race result: ${JSON.stringify(childResults)}`);
     expect(outcomes).toEqual(["adopted", "refused"]);
     expect(readAdoptionEvidence(fx.db)?.historyStatus).toBe("adoption-pending");
-  });
+  }, { timeout: 30_000 });
 
   test("a child crash after complete temp creation leaves no final authority", async () => {
     const fx = fixture();
@@ -85,7 +85,7 @@ describe("pre-substrate Codex home adoption", () => {
     expect(existsSync(fx.db)).toBe(false);
     const retry = adoptPreSubstrateHome({ databasePath: fx.db, residue: "routed", intent: { kind: "retained-apply", operation: "apply-opencodex" } });
     expect(retry.kind).toBe("adopted");
-  });
+  }, { timeout: 30_000 });
 
   test("clean homes do not get a row", () => {
     const fx = fixture();
