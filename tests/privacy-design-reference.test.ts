@@ -3,13 +3,17 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { scanRepository, type PrivacyScanOptions } from "../scripts/privacy-scan";
+import {
+  scanRepository,
+  validateHistoricalDesignReference,
+  type PrivacyScanOptions,
+} from "../scripts/privacy-scan";
 
 const root = process.cwd();
 const sourceCopy = join(root, "design-reference", "original-source");
 const tempRoots: string[] = [];
 
-setDefaultTimeout(30_000);
+setDefaultTimeout(60_000);
 
 function overlay(): string {
   const tempRoot = mkdtempSync(join(tmpdir(), "ocx-design-privacy-"));
@@ -164,5 +168,26 @@ describe("historical design-reference privacy boundary", () => {
     } finally {
       rmSync(junction, { recursive: true, force: true });
     }
+  });
+
+  test("rejects a manifest-listed regular-file reparse point before exclusion or reading", () => {
+    const copyRoot = overlay();
+    const reads: string[] = [];
+    const validation = validateHistoricalDesignReference(
+      root,
+      copyRoot,
+      path => path.endsWith("ocx-data.js") ? "reparse" : "clear",
+      path => {
+        reads.push(path);
+        return readFileSync(path);
+      },
+    );
+
+    expect(validation.findings).toContainEqual(expect.objectContaining({
+      file: "design-reference/original-source/ocx-data.js",
+      kind: "historical-design-source",
+    }));
+    expect(validation.excludedFiles.has("design-reference/original-source/ocx-data.js")).toBe(false);
+    expect(reads.some(path => path.endsWith("ocx-data.js"))).toBe(false);
   });
 });

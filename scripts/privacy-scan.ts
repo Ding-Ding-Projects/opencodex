@@ -63,15 +63,12 @@ type HistoricalManifestEntry = {
 
 export type ReparsePointStatus = "clear" | "reparse" | "unavailable";
 
+export type HistoricalDesignValidation = {
+  excludedFiles: Set<string>;
+  findings: Finding[];
+};
+
 const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-const WINDOWS_REPARSE_SCRIPT = [
-  "& { param([string] $p)",
-  "try {",
-  "  $item = Get-Item -LiteralPath $p -Force -ErrorAction Stop",
-  "  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { 'REPARSE' } else { 'CLEAR' }",
-  "} catch { exit 2 }",
-  "}",
-].join(";");
 const REPARSE_STATUS_CACHE = new Map<string, ReparsePointStatus>();
 
 function finding(file: string, kind: string, value: string): Finding {
@@ -123,28 +120,63 @@ function isRegularFile(path: string, reparsePointCheck?: (path: string) => Repar
   }
 }
 
-function windowsReparsePointStatus(path: string): ReparsePointStatus {
-  if (process.platform !== "win32") return "clear";
-  const result = spawnSync(
-    WINDOWS_POWERSHELL,
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_REPARSE_SCRIPT, path],
-    { encoding: "utf8", timeout: 2_000, windowsHide: true, maxBuffer: 1024 },
-  );
-  if (result.error || result.status !== 0) return "unavailable";
-  const output = String(result.stdout).trim();
-  if (output === "REPARSE") return "reparse";
-  if (output === "CLEAR") return "clear";
-  return "unavailable";
+function isTrackedTextFile(path: string): boolean {
+  try {
+    const stats = lstatSync(path);
+    return stats.isFile() && !stats.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
-function pathReparsePointStatus(path: string, check?: (path: string) => ReparsePointStatus): ReparsePointStatus {
+function windowsReparsePointStatus(path: string): ReparsePointStatus {
+  return windowsReparsePointStatuses([path]).get(path) ?? "unavailable";
+}
+
+function windowsReparsePointStatuses(paths: string[]): Map<string, ReparsePointStatus> {
+  const statuses = new Map<string, ReparsePointStatus>();
+  if (process.platform !== "win32") {
+    for (const path of paths) statuses.set(path, "clear");
+    return statuses;
+  }
+  if (paths.length === 0) return statuses;
+  const pathPayload = Buffer.from(JSON.stringify(paths), "utf8").toString("base64");
+  const script = [
+    `$paths = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pathPayload}')) | ConvertFrom-Json`,
+    "foreach ($p in $paths) {",
+    "  try {",
+    "    $item = Get-Item -LiteralPath ([string]$p) -Force -ErrorAction Stop",
+    "    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { 'R' } else { 'C' }",
+    "  } catch { 'U' }",
+    "}",
+  ].join(";");
+  const encodedScript = Buffer.from(script, "utf16le").toString("base64");
+  const result = spawnSync(
+    WINDOWS_POWERSHELL,
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
+    { encoding: "utf8", timeout: 10_000, windowsHide: true, maxBuffer: 4096 },
+  );
+  const output = result.error || result.status !== 0 ? [] : String(result.stdout).trim().split(/\r?\n/);
+  for (let index = 0; index < paths.length; index += 1) {
+    const marker = output[index];
+    statuses.set(paths[index], marker === "R" ? "reparse" : marker === "C" ? "clear" : "unavailable");
+  }
+  return statuses;
+}
+
+function pathReparsePointStatus(
+  path: string,
+  check?: (path: string) => ReparsePointStatus,
+  precomputed?: Map<string, ReparsePointStatus>,
+): ReparsePointStatus {
   try {
     const stats = lstatSync(path);
     if (stats.isSymbolicLink()) return "reparse";
-    // Windows junctions are directory reparse points. Ordinary files are
-    // covered by lstat's symlink result, so avoid a PowerShell process for
-    // every historical text and image file.
-    if (!stats.isDirectory()) return "clear";
+    // Keep the lstat symlink fast path, then ask the trusted platform probe
+    // about every remaining candidate. Junctions are directories, but regular
+    // files can also carry a reparse attribute and must not be excluded before
+    // that check.
+    if (!check && precomputed?.has(path)) return precomputed.get(path) as ReparsePointStatus;
     if (!check && REPARSE_STATUS_CACHE.has(path)) return REPARSE_STATUS_CACHE.get(path) as ReparsePointStatus;
     const status = (check ?? windowsReparsePointStatus)(path);
     if (!check) REPARSE_STATUS_CACHE.set(path, status);
@@ -157,6 +189,7 @@ function pathReparsePointStatus(path: string, check?: (path: string) => ReparseP
 function listFilesOnDisk(
   root: string,
   reparsePointCheck?: (path: string) => ReparsePointStatus,
+  precomputed?: Map<string, ReparsePointStatus>,
 ): { files: string[]; invalidPaths: Array<{ path: string; status: ReparsePointStatus | "unreadable" }> } {
   const files: string[] = [];
   const invalidPaths: Array<{ path: string; status: ReparsePointStatus | "unreadable" }> = [];
@@ -172,7 +205,7 @@ function listFilesOnDisk(
     for (const entry of entries) {
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       const full = join(directory, entry.name);
-      const reparseStatus = pathReparsePointStatus(full, reparsePointCheck);
+      const reparseStatus = pathReparsePointStatus(full, reparsePointCheck, precomputed);
       if (reparseStatus !== "clear") {
         invalidPaths.push({ path: rel, status: reparseStatus });
         continue;
@@ -290,9 +323,15 @@ function parseHistoricalManifest(
     findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest source commit does not match"));
   }
 
-  const copied = listFilesOnDisk(designReferenceRoot, reparsePointCheck);
   const allowedSupportFiles = new Set(["MANIFEST.json", "PROVENANCE.md"]);
   const expectedCopyFiles = new Set([...expectedTree, ...allowedSupportFiles]);
+  const precomputedReparse = reparsePointCheck
+    ? undefined
+    : windowsReparsePointStatuses([
+        designReferenceRoot,
+        ...[...expectedCopyFiles].map(path => join(designReferenceRoot, ...path.split("/"))),
+      ]);
+  const copied = listFilesOnDisk(designReferenceRoot, reparsePointCheck, precomputedReparse);
   const actualCopyFiles = new Set(copied.files);
   for (const invalidPath of copied.invalidPaths) {
     findings.push(finding(
@@ -326,7 +365,7 @@ function parseHistoricalManifest(
       findings.push(finding(copyRelative, "historical-design-source", "copy is missing or cannot be inspected"));
       continue;
     }
-    if (!copyStats.isFile() || pathReparsePointStatus(copyPath, reparsePointCheck) !== "clear") {
+    if (!copyStats.isFile() || pathReparsePointStatus(copyPath, reparsePointCheck, precomputedReparse) !== "clear") {
       findings.push(finding(copyRelative, "historical-design-source", "copy is not a regular non-reparse file"));
       continue;
     }
@@ -349,6 +388,16 @@ function parseHistoricalManifest(
     if (metadataValid) excludedFiles.add(copyRelative);
   }
   return { manifest: { sourceCommit, files: parsed }, excludedFiles, findings };
+}
+
+export function validateHistoricalDesignReference(
+  root: string,
+  designReferenceRoot: string,
+  reparsePointCheck?: (path: string) => ReparsePointStatus,
+  readHistoricalFile?: (path: string) => Uint8Array,
+): HistoricalDesignValidation {
+  const result = parseHistoricalManifest(root, designReferenceRoot, reparsePointCheck, readHistoricalFile);
+  return { excludedFiles: result.excludedFiles, findings: result.findings };
 }
 
 function packagePatternCanSelectHistoricalCopy(pattern: string): boolean {
@@ -639,7 +688,7 @@ export function scanRepository(options: PrivacyScanOptions = {}): Finding[] {
   const root = options.root ?? process.cwd();
   const trackedFiles = options.trackedFiles ?? gitLsFiles(root);
   const designReferenceRoot = options.designReferenceRoot ?? join(root, "design-reference", "original-source");
-  const historical = parseHistoricalManifest(
+  const historical = validateHistoricalDesignReference(
     root,
     designReferenceRoot,
     options.reparsePointCheck,
@@ -648,7 +697,7 @@ export function scanRepository(options: PrivacyScanOptions = {}): Finding[] {
   const findings = [...historical.findings, ...validatePackageAllowlist(root, options.packageJsonPath)];
   return findings.concat(
     trackedFiles
-      .filter(file => isRegularFile(pathForFile(root, file, options.designReferenceRoot)))
+      .filter(file => isTrackedTextFile(pathForFile(root, file, options.designReferenceRoot)))
       .filter(file => shouldScan(file, historical.excludedFiles))
       .flatMap(file => scanFile(file, pathForFile(root, file, options.designReferenceRoot))),
   );
