@@ -77,6 +77,24 @@ Only a curated set of headers is forwarded (`FORWARD_HEADERS`: authorization, Ch
 OpenAI beta/originator/session — see [Adapters](/reference/adapters/)). This path is also
 what powers the [web-search and vision sidecars](/guides/sidecars/).
 
+### Vercel AI Gateway provider routing
+
+The `vercel-ai-gateway` provider accepts optional `vercelGatewayRouting` and exact-model
+`modelVercelGatewayRouting` settings. Each preference can set `only` and `order` provider slug
+arrays, or `sort` to `cost`, `ttft`, or `tps`. Model-specific settings replace the provider-wide
+preference. These fields are accepted only for the canonical
+`https://ai-gateway.vercel.sh/v1` endpoint and the `openai-chat` adapter; an unconfigured request
+keeps the upstream request body unchanged.
+
+### BigModel Coding Plan quota
+
+The GLM Coding Plan quota probe is pinned to the verified `open.bigmodel.cn` host and quota
+endpoint. It maps response-declared `TOKENS_LIMIT`/`CREDIT_LIMIT` unit `3` to the rolling
+five-hour window, unit `6` to weekly usage, and `TIME_LIMIT` unit `5` to the monthly MCP/tool
+allowance. BigModel's quota endpoint receives the API key directly in `Authorization`, while the
+Z.AI endpoint keeps its separate bearer contract. Unknown future units are ignored until their
+meaning is verified; quota failures never affect inference routing.
+
 The ChatGPT passthrough catalog also layers in the bare GPT-5.6 Sol/Terra/Luna slugs
 (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) for accounts that can use them.
 
