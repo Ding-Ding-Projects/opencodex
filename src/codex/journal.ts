@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { atomicWriteFile, atomicWriteFileAsync } from "../config";
 import { hasInjectedCodexRouting } from "./injected-marker";
 import { CODEX_HOME, CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "./paths";
-import { isProcessIdentity, readProcessIdentity, sameProcessIdentity, type ProcessIdentity } from "../lib/process-identity";
+import {
+  isPersistedProcessIdentity,
+  readProcessIdentity,
+  sameProcessIdentity,
+  toPersistedProcessIdentity,
+  type PersistedProcessIdentity,
+  type ProcessIdentity,
+} from "../lib/process-identity";
 
 const JOURNAL_PATH = join(CODEX_HOME, "opencodex-journal.json");
 
@@ -16,7 +23,7 @@ interface Journal {
   injectedProfileHash?: string | null;
   pid: number;
   /** PID-reuse protection; old version-1 journals may not have this field. */
-  ownerIdentity?: ProcessIdentity;
+  ownerIdentity?: PersistedProcessIdentity;
   timestamp: string;
 }
 
@@ -79,7 +86,10 @@ export function writeJournal(options: WriteJournalOptions = {}): void {
     originalConfig: Buffer.from(config).toString("base64"),
     originalProfile: profile ? Buffer.from(profile).toString("base64") : null,
     pid: process.pid,
-    ownerIdentity: readProcessIdentity(process.pid) ?? undefined,
+    ownerIdentity: (() => {
+      const identity = readProcessIdentity(process.pid);
+      return identity ? toPersistedProcessIdentity(identity) : undefined;
+    })(),
     timestamp: new Date().toISOString(),
   };
   atomicWriteFile(JOURNAL_PATH, JSON.stringify(journal));
@@ -103,7 +113,7 @@ function readJournal(): Journal | null {
   try {
     const journal = JSON.parse(readFileSync(JOURNAL_PATH, "utf-8")) as Journal;
     if (journal.version !== 1) throw new Error("unknown version");
-    if (journal.ownerIdentity !== undefined && !isProcessIdentity(journal.ownerIdentity)) throw new Error("invalid owner identity");
+    if (journal.ownerIdentity !== undefined && !isPersistedProcessIdentity(journal.ownerIdentity)) throw new Error("invalid owner identity");
     return journal;
   } catch {
     removeJournal();

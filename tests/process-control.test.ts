@@ -34,17 +34,22 @@ describe("process control helpers", () => {
       executablePath: "c:/other.exe",
     };
     let taskkillCalls = 0;
+    let fetchCalls = 0;
 
     await expect(stopProxy(4242, {
       expectedIdentity: initial,
       readIdentity: () => replacement,
       isAlive: () => true,
-      readRuntime: () => null,
-      fetchFn: (async () => new Response("no", { status: 503 })) as typeof fetch,
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => {
+        fetchCalls += 1;
+        return new Response("no", { status: 503 });
+      }) as typeof fetch,
       platform: "win32",
       taskkill: () => { taskkillCalls += 1; },
       waitExit: () => true,
     })).rejects.toThrow("process identity changed");
+    expect(fetchCalls).toBe(0);
     expect(taskkillCalls).toBe(0);
   });
 

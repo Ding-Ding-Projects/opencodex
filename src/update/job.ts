@@ -19,6 +19,7 @@ import {
   verifyPidIdentityFresh,
 } from "../config";
 import { isProcessAlive, killProxy } from "../lib/process-control";
+import { readProcessIdentity, type ProcessIdentity } from "../lib/process-identity";
 import { resolveBunCommand } from "../lib/bun-runtime";
 import { reclaimListenPort } from "../server/port-reclaim";
 import {
@@ -661,6 +662,8 @@ export function installerFailureAllowsRecovery(installer: Installer, result: Ins
 
 interface StartedRecoveryProcess {
   pid: number;
+  /** Identity captured from the exact spawned process, never from a later PID lookup. */
+  identity?: ProcessIdentity | null;
   /** True only while the detached ChildProcess handle still represents this start. */
   sameGeneration: () => boolean;
 }
@@ -712,6 +715,7 @@ function spawnDetachedStart(
   child.unref();
   return {
     pid,
+    identity: readProcessIdentity(pid),
     sameGeneration: () => !exited && child.exitCode === null && child.signalCode === null,
   };
 }
@@ -735,7 +739,7 @@ export interface RestartIo {
   probeProxyIdentity?: (port: number, hostname?: string) => Promise<RestartProxyIdentity | null>;
   verifyPidIdentityFn?: (pid: number) => number | null;
   recoveryLaunchersFn?: (currentLauncher: string, expectedVersion: string) => Promise<string[]> | string[];
-  killProxyFn?: (pid: number) => void;
+  killProxyFn?: (pid: number, identity?: ProcessIdentity | null) => void;
   sleepMs?: (ms: number) => Promise<void>;
   now?: () => number;
   /** Service-mode install/reinstall command (defaults to spawnSync via runLoggedCommand). */
@@ -747,14 +751,14 @@ export interface RestartIo {
   /** Override the explicit restart path (used by finishGuiUpdateRestart tests). */
   restartAfterUpdateFn?: (
     job: UpdateJobState,
-    captured?: { port: number; hostname: string; oldPid?: number; recoveryLauncher?: string },
+    captured?: { port: number; hostname: string; oldPid?: number; oldIdentity?: ProcessIdentity | null; recoveryLauncher?: string },
     io?: RestartIo,
   ) => Promise<RestartStartResult>;
 }
 
 async function restartAfterUpdate(
   job: UpdateJobState,
-  captured?: { port: number; hostname: string; oldPid?: number; recoveryLauncher?: string },
+  captured?: { port: number; hostname: string; oldPid?: number; oldIdentity?: ProcessIdentity | null; recoveryLauncher?: string },
   io: RestartIo = {},
 ): Promise<StartedRecoveryProcess | null> {
   const serviceInstalled = (io.serviceInstalledFn ?? isServiceInstalled)();
@@ -841,7 +845,17 @@ async function restartAfterUpdate(
   const pid = directPid.pid;
   if (pid !== null) {
     updateJob(job, {}, `Stopping current proxy PID ${pid}.`);
-    killProxy(pid);
+    const identity = pid === oldPid
+      ? (captured?.oldIdentity ?? null)
+      : readProcessIdentity(pid);
+    if (io.killProxyFn) {
+      io.killProxyFn(pid, identity);
+    } else if (!identity) {
+      updateJob(job, {}, `Could not prove current proxy PID ${pid}; refusing termination.`);
+      return null;
+    } else {
+      killProxy(pid, { expectedIdentity: identity, readIdentity: readProcessIdentity });
+    }
   }
   // Reclaim the captured port before the pinned start. Spawning `--port` while the old
   // socket is still busy is how Windows updates used to fail health checks (or hop).
@@ -860,7 +874,7 @@ async function restartAfterUpdate(
 /** Exposed for tests: drives the non-service restart path with injected io. */
 export function restartAfterUpdateForTests(
   job: UpdateJobState,
-  captured: { port: number; hostname: string; oldPid?: number; recoveryLauncher?: string },
+  captured: { port: number; hostname: string; oldPid?: number; oldIdentity?: ProcessIdentity | null; recoveryLauncher?: string },
   io: RestartIo,
 ): Promise<number | null> {
   return restartAfterUpdate(job, captured, io).then(started => started?.pid ?? null);
@@ -1035,7 +1049,7 @@ export async function findLiveProxyForUpdate(io: UpdateLivenessIo = {}): Promise
 /** Keep a failed GUI install from also leaving a previously-active proxy offline. */
 async function recoverFailedGuiUpdate(
   job: UpdateJobState,
-  captured: { port: number; hostname: string; oldPid?: number },
+  captured: { port: number; hostname: string; oldPid?: number; oldIdentity?: ProcessIdentity | null },
   proxyWasActive: boolean,
   io: RestartIo = {},
 ): Promise<FailedUpdateRecovery> {
@@ -1101,7 +1115,17 @@ async function recoverFailedGuiUpdate(
             break;
           }
           try {
-            (io.killProxyFn ?? killProxy)(started.pid);
+            if (io.killProxyFn) {
+              io.killProxyFn(started.pid, started.identity);
+            } else if (!started.identity) {
+              updateJob(job, {}, `Recovery candidate ${index + 1} PID ${started.pid} has no captured process identity; refusing termination.`);
+              break;
+            } else {
+              killProxy(started.pid, {
+                expectedIdentity: started.identity,
+                readIdentity: readProcessIdentity,
+              });
+            }
             updateJob(job, {}, `Stopped unhealthy recovery candidate ${index + 1} PID ${started.pid}.`);
           } catch (error) {
             updateJob(job, {}, `Could not stop unhealthy recovery candidate ${index + 1} PID ${started.pid}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1122,7 +1146,7 @@ async function recoverFailedGuiUpdate(
 
 export function recoverFailedGuiUpdateForTests(
   job: UpdateJobState,
-  captured: { port: number; hostname: string; oldPid?: number },
+  captured: { port: number; hostname: string; oldPid?: number; oldIdentity?: ProcessIdentity | null },
   proxyWasActive: boolean,
   io: RestartIo,
 ): Promise<FailedUpdateRecovery> {
@@ -1296,7 +1320,10 @@ export async function runGuiUpdateWorker(jobId: string, channel: Channel, restar
   const captured = {
     port: liveBeforeUpdate?.port ?? configPort,
     hostname: liveBeforeUpdate?.hostname ?? preUpdateConfig.hostname ?? "127.0.0.1",
-    ...(liveBeforeUpdate?.pid ? { oldPid: liveBeforeUpdate.pid } : {}),
+    ...(liveBeforeUpdate?.pid ? {
+      oldPid: liveBeforeUpdate.pid,
+      oldIdentity: readProcessIdentity(liveBeforeUpdate.pid),
+    } : {}),
   };
   let trayWasInstalled = false;
   let trayWasRunning = false;

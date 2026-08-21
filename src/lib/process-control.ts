@@ -64,6 +64,12 @@ export interface KillProxyIo {
 
 export interface StopProxyIo extends GracefulStopIo, KillProxyIo {}
 
+function expectedIdentityFrom(io: KillProxyIo, readIdentity: (pid: number) => ProcessIdentity | null, pid: number): ProcessIdentity | null {
+  return Object.prototype.hasOwnProperty.call(io, "expectedIdentity")
+    ? (io.expectedIdentity ?? null)
+    : readIdentity(pid);
+}
+
 /**
  * Host to POST /api/stop against: follow the recorded bind hostname when it names a
  * concrete address (a proxy bound to ::1 or a LAN IP is unreachable on 127.0.0.1);
@@ -138,12 +144,18 @@ export async function stopProxy(pid: number, io: StopProxyIo = {}): Promise<void
   const alive = io.isAlive ?? isProcessAlive;
   if (!alive(pid)) return;
   const readIdentity = io.readIdentity ?? readProxyProcessIdentity;
-  const expectedIdentity = io.expectedIdentity ?? readIdentity(pid);
+  const expectedIdentity = expectedIdentityFrom(io, readIdentity, pid);
   if (!expectedIdentity) {
     throw new Error(`cannot prove proxy ownership for PID ${pid}; refusing termination`);
   }
-  const runtime = readRuntimePort(pid);
-  const graceful = await stopProxyGracefully(pid, io);
+  const readRuntime = io.readRuntime ?? readRuntimePort;
+  const runtime = readRuntime(pid);
+  // The graceful endpoint is destructive too: do not send it to a successor
+  // that replaced the original PID while the runtime record was being read.
+  if (!sameProcessIdentity(expectedIdentity, readIdentity(pid))) {
+    throw new Error(`process identity changed for PID ${pid}; refusing termination`);
+  }
+  const graceful = await stopProxyGracefully(pid, { ...io, readRuntime: () => runtime });
   if (graceful === "refused") {
     // The proxy refused on purpose (foreign service owns it). Forcing would strip shared
     // config while that service keeps the proxy alive.
@@ -184,7 +196,7 @@ export function killProxy(pid: number, io: KillProxyIo = {}): void {
   const alive = io.isAlive ?? isProcessAlive;
   if (!alive(pid)) return;
   const readIdentity = io.readIdentity ?? readProcessIdentity;
-  const expectedIdentity = io.expectedIdentity ?? readIdentity(pid);
+  const expectedIdentity = expectedIdentityFrom(io, readIdentity, pid);
   if (!expectedIdentity) {
     throw new Error(`cannot prove process ownership for PID ${pid}; refusing termination`);
   }

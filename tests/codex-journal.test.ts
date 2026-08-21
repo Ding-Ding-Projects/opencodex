@@ -52,6 +52,22 @@ describe("codex-journal", () => {
     expect(out.hasPid).toBe(true);
   });
 
+  test("writeJournal persists only bounded comparison identity, never command-line text", () => {
+    const sentinel = "PRIVATE_OWNER_ARGV_SENTINEL";
+    const r = runScript(testDir, `
+      process.argv.push(${JSON.stringify(sentinel)});
+      const { writeJournal } = require("./src/codex/journal");
+      const fs = require("fs");
+      const path = require("path");
+      writeJournal();
+      const raw = fs.readFileSync(path.join(process.env.CODEX_HOME, "opencodex-journal.json"), "utf8");
+      const parsed = JSON.parse(raw);
+      console.log(JSON.stringify({ hasCommandLine: Object.prototype.hasOwnProperty.call(parsed.ownerIdentity ?? {}, "commandLine"), hasSentinel: raw.includes(${JSON.stringify(sentinel)}) }));
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ hasCommandLine: false, hasSentinel: false });
+  }, 15_000);
+
   test("reconcileJournal restores config when journaled PID is dead", () => {
     const journalPath = join(testDir, "opencodex-journal.json");
     const original = "# original config\nmodel_provider = \"openai\"\n";

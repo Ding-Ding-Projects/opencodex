@@ -15,6 +15,13 @@ export interface ProcessIdentity {
   commandLine?: string;
 }
 
+/** The only identity fields safe to persist in a journal or update record. */
+export interface PersistedProcessIdentity {
+  pid: number;
+  startIdentity: string;
+  executablePath?: string;
+}
+
 function validPid(pid: number): boolean {
   return Number.isSafeInteger(pid) && pid > 0;
 }
@@ -158,6 +165,14 @@ export function sameProcessIdentity(expected: ProcessIdentity, actual: ProcessId
   return true;
 }
 
+export function toPersistedProcessIdentity(identity: ProcessIdentity): PersistedProcessIdentity {
+  return {
+    pid: identity.pid,
+    startIdentity: identity.startIdentity,
+    ...(identity.executablePath ? { executablePath: identity.executablePath } : {}),
+  };
+}
+
 function canonicalStartIdentity(value: string): string {
   const trimmed = value.trim();
   // PowerShell CIM serializes DateTime as /Date(epoch-ms)/.
@@ -186,6 +201,11 @@ export function isProcessIdentity(value: unknown): value is ProcessIdentity {
   return validPid(candidate.pid ?? 0)
     && typeof candidate.startIdentity === "string"
     && candidate.startIdentity.length > 0
-    && (candidate.executablePath === undefined || typeof candidate.executablePath === "string")
-    && (candidate.commandLine === undefined || typeof candidate.commandLine === "string");
+    && candidate.startIdentity.length <= 128
+    && (candidate.executablePath === undefined || (typeof candidate.executablePath === "string" && candidate.executablePath.length <= 4096))
+    && (candidate.commandLine === undefined || (typeof candidate.commandLine === "string" && candidate.commandLine.length <= 16_384));
+}
+
+export function isPersistedProcessIdentity(value: unknown): value is PersistedProcessIdentity {
+  return isProcessIdentity(value) && (value as ProcessIdentity).commandLine === undefined;
 }
