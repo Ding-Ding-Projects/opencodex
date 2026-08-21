@@ -4,6 +4,7 @@ import {
   readdirSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 export type Finding = {
@@ -18,6 +19,12 @@ export type PrivacyScanOptions = {
   trackedFiles?: string[];
   /** Test-only overlay for the historical copy; production always uses the checkout. */
   designReferenceRoot?: string;
+  /** Test-only package manifest overlay. */
+  packageJsonPath?: string;
+  /** Test seam; production uses the fixed Windows PowerShell reparse check. */
+  reparsePointCheck?: (path: string) => ReparsePointStatus;
+  /** Test seam proving oversized files are rejected before their bytes are read. */
+  readHistoricalFile?: (path: string) => Uint8Array;
 };
 
 const TEXT_FILE_RE = /\.(?:cjs|css|html|js|json|jsonc|md|mjs|ps1|sh|toml|ts|tsx|txt|yml|yaml)$/;
@@ -53,6 +60,19 @@ type HistoricalManifestEntry = {
   bytes: number;
   sha256: string;
 };
+
+export type ReparsePointStatus = "clear" | "reparse" | "unavailable";
+
+const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+const WINDOWS_REPARSE_SCRIPT = [
+  "& { param([string] $p)",
+  "try {",
+  "  $item = Get-Item -LiteralPath $p -Force -ErrorAction Stop",
+  "  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { 'REPARSE' } else { 'CLEAR' }",
+  "} catch { exit 2 }",
+  "}",
+].join(";");
+const REPARSE_STATUS_CACHE = new Map<string, ReparsePointStatus>();
 
 function finding(file: string, kind: string, value: string): Finding {
   return { file, line: 1, kind, value };
@@ -94,41 +114,67 @@ function isSafeRelativePath(value: unknown): value is string {
   return segments.every(segment => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
-function isRegularFile(path: string): boolean {
+function isRegularFile(path: string, reparsePointCheck?: (path: string) => ReparsePointStatus): boolean {
   try {
     const stats = lstatSync(path);
-    return stats.isFile() && !stats.isSymbolicLink();
+    return stats.isFile() && pathReparsePointStatus(path, reparsePointCheck) === "clear";
   } catch {
     return false;
   }
 }
 
-function hasReparseOrSymlink(path: string): boolean {
+function windowsReparsePointStatus(path: string): ReparsePointStatus {
+  if (process.platform !== "win32") return "clear";
+  const result = spawnSync(
+    WINDOWS_POWERSHELL,
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_REPARSE_SCRIPT, path],
+    { encoding: "utf8", timeout: 2_000, windowsHide: true, maxBuffer: 1024 },
+  );
+  if (result.error || result.status !== 0) return "unavailable";
+  const output = String(result.stdout).trim();
+  if (output === "REPARSE") return "reparse";
+  if (output === "CLEAR") return "clear";
+  return "unavailable";
+}
+
+function pathReparsePointStatus(path: string, check?: (path: string) => ReparsePointStatus): ReparsePointStatus {
   try {
     const stats = lstatSync(path);
-    return stats.isSymbolicLink();
+    if (stats.isSymbolicLink()) return "reparse";
+    // Windows junctions are directory reparse points. Ordinary files are
+    // covered by lstat's symlink result, so avoid a PowerShell process for
+    // every historical text and image file.
+    if (!stats.isDirectory()) return "clear";
+    if (!check && REPARSE_STATUS_CACHE.has(path)) return REPARSE_STATUS_CACHE.get(path) as ReparsePointStatus;
+    const status = (check ?? windowsReparsePointStatus)(path);
+    if (!check) REPARSE_STATUS_CACHE.set(path, status);
+    return status;
   } catch {
-    return false;
+    return "unavailable";
   }
 }
 
-function listFilesOnDisk(root: string): { files: string[]; invalidPaths: string[] } {
+function listFilesOnDisk(
+  root: string,
+  reparsePointCheck?: (path: string) => ReparsePointStatus,
+): { files: string[]; invalidPaths: Array<{ path: string; status: ReparsePointStatus | "unreadable" }> } {
   const files: string[] = [];
-  const invalidPaths: string[] = [];
+  const invalidPaths: Array<{ path: string; status: ReparsePointStatus | "unreadable" }> = [];
 
   function walk(directory: string, prefix: string): void {
     let entries;
     try {
       entries = readdirSync(directory, { withFileTypes: true });
     } catch {
-      invalidPaths.push(prefix || ".");
+      invalidPaths.push({ path: prefix || ".", status: "unreadable" });
       return;
     }
     for (const entry of entries) {
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       const full = join(directory, entry.name);
-      if (entry.isSymbolicLink() || hasReparseOrSymlink(full)) {
-        invalidPaths.push(rel);
+      const reparseStatus = pathReparsePointStatus(full, reparsePointCheck);
+      if (reparseStatus !== "clear") {
+        invalidPaths.push({ path: rel, status: reparseStatus });
         continue;
       }
       if (entry.isDirectory()) {
@@ -136,7 +182,7 @@ function listFilesOnDisk(root: string): { files: string[]; invalidPaths: string[
       } else if (entry.isFile()) {
         files.push(rel);
       } else {
-        invalidPaths.push(rel);
+        invalidPaths.push({ path: rel, status: "unreadable" });
       }
     }
   }
@@ -148,15 +194,18 @@ function listFilesOnDisk(root: string): { files: string[]; invalidPaths: string[
 function parseHistoricalManifest(
   root: string,
   designReferenceRoot: string,
+  reparsePointCheck?: (path: string) => ReparsePointStatus,
+  readHistoricalFile: (path: string) => Uint8Array = path => readFileSync(path),
 ): { manifest: { sourceCommit: string; files: HistoricalManifestEntry[] } | undefined; excludedFiles: Set<string>; findings: Finding[] } {
   const findings: Finding[] = [];
   const excludedFiles = new Set<string>();
-  if (!isRegularFile(designReferenceRoot) && hasReparseOrSymlink(designReferenceRoot)) {
-    findings.push(finding(DESIGN_REFERENCE_PREFIX, "historical-design-path", "copy root is a symlink or reparse point"));
+  const rootStatus = pathReparsePointStatus(designReferenceRoot, reparsePointCheck);
+  if (rootStatus !== "clear") {
+    findings.push(finding(DESIGN_REFERENCE_PREFIX, "historical-design-path", `copy root is ${rootStatus}`));
     return { manifest: undefined, excludedFiles, findings };
   }
   const manifestPath = join(designReferenceRoot, "MANIFEST.json");
-  if (!isRegularFile(manifestPath)) {
+  if (!isRegularFile(manifestPath, reparsePointCheck)) {
     findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest is missing or not a regular file"));
     return { manifest: undefined, excludedFiles, findings };
   }
@@ -241,12 +290,16 @@ function parseHistoricalManifest(
     findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest source commit does not match"));
   }
 
-  const copied = listFilesOnDisk(designReferenceRoot);
+  const copied = listFilesOnDisk(designReferenceRoot, reparsePointCheck);
   const allowedSupportFiles = new Set(["MANIFEST.json", "PROVENANCE.md"]);
   const expectedCopyFiles = new Set([...expectedTree, ...allowedSupportFiles]);
   const actualCopyFiles = new Set(copied.files);
   for (const invalidPath of copied.invalidPaths) {
-    findings.push(finding(`${DESIGN_REFERENCE_PREFIX}${invalidPath}`, "historical-design-path", "symlink, reparse point, or unreadable path"));
+    findings.push(finding(
+      `${DESIGN_REFERENCE_PREFIX}${invalidPath.path}`,
+      "historical-design-path",
+      invalidPath.status === "unreadable" ? "unreadable path" : `path is ${invalidPath.status}`,
+    ));
   }
   for (const path of actualCopyFiles) {
     if (!expectedCopyFiles.has(path)) {
@@ -266,13 +319,24 @@ function parseHistoricalManifest(
   for (const entry of parsed) {
     const copyRelative = `${DESIGN_REFERENCE_PREFIX}${entry.path}`;
     const copyPath = join(designReferenceRoot, ...entry.path.split("/"));
-    if (!isRegularFile(copyPath)) {
-      findings.push(finding(copyRelative, "historical-design-source", "copy is missing or not a regular file"));
+    let copyStats;
+    try {
+      copyStats = lstatSync(copyPath);
+    } catch {
+      findings.push(finding(copyRelative, "historical-design-source", "copy is missing or cannot be inspected"));
+      continue;
+    }
+    if (!copyStats.isFile() || pathReparsePointStatus(copyPath, reparsePointCheck) !== "clear") {
+      findings.push(finding(copyRelative, "historical-design-source", "copy is not a regular non-reparse file"));
+      continue;
+    }
+    if (copyStats.size > MAX_HISTORICAL_FILE_BYTES) {
+      findings.push(finding(copyRelative, "historical-design-source", "copy exceeds the size limit"));
       continue;
     }
     let bytes: Uint8Array;
     try {
-      bytes = readFileSync(copyPath);
+      bytes = readHistoricalFile(copyPath);
     } catch {
       findings.push(finding(copyRelative, "historical-design-source", "copy cannot be read"));
       continue;
@@ -287,8 +351,22 @@ function parseHistoricalManifest(
   return { manifest: { sourceCommit, files: parsed }, excludedFiles, findings };
 }
 
-function validatePackageAllowlist(root: string): Finding[] {
-  const packagePath = join(root, "package.json");
+function packagePatternCanSelectHistoricalCopy(pattern: string): boolean {
+  // npm's packlist matcher is not a project dependency, so keep this check
+  // conservative: only patterns that are provably below another literal root
+  // are accepted. Broad roots, glob roots, traversal, and any spelling of the
+  // historical directory are rejected before they can select its files.
+  const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "");
+  if (normalized === "" || normalized === "." || normalized === ".." || normalized.startsWith("../")) return true;
+  if (normalized.includes("design-reference")) return true;
+  const firstSegment = normalized.split("/")[0] ?? "";
+  if (firstSegment === "*" || firstSegment === "**" || firstSegment.includes("*") ||
+      firstSegment.includes("?") || firstSegment.includes("[")) return true;
+  return false;
+}
+
+function validatePackageAllowlist(root: string, packageJsonPath = join(root, "package.json")): Finding[] {
+  const packagePath = packageJsonPath;
   if (!isRegularFile(packagePath)) return [];
   try {
     const packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as { files?: unknown };
@@ -296,7 +374,7 @@ function validatePackageAllowlist(root: string): Finding[] {
       return [finding("package.json", "package-allowlist", "files allowlist is missing or invalid")];
     }
     const includesHistoricalCopy = packageJson.files.some(
-      value => typeof value === "string" && (value === "design-reference" || value.startsWith("design-reference/")),
+      value => typeof value !== "string" || packagePatternCanSelectHistoricalCopy(value),
     );
     return includesHistoricalCopy
       ? [finding("package.json", "package-allowlist", "package files allowlist includes design-reference")]
@@ -561,8 +639,13 @@ export function scanRepository(options: PrivacyScanOptions = {}): Finding[] {
   const root = options.root ?? process.cwd();
   const trackedFiles = options.trackedFiles ?? gitLsFiles(root);
   const designReferenceRoot = options.designReferenceRoot ?? join(root, "design-reference", "original-source");
-  const historical = parseHistoricalManifest(root, designReferenceRoot);
-  const findings = [...historical.findings, ...validatePackageAllowlist(root)];
+  const historical = parseHistoricalManifest(
+    root,
+    designReferenceRoot,
+    options.reparsePointCheck,
+    options.readHistoricalFile,
+  );
+  const findings = [...historical.findings, ...validatePackageAllowlist(root, options.packageJsonPath)];
   return findings.concat(
     trackedFiles
       .filter(file => isRegularFile(pathForFile(root, file, options.designReferenceRoot)))
