@@ -962,6 +962,10 @@ export interface OcxProviderConfig {
    * as before.
    */
   modelAdapters?: Record<string, string>;
+  /** Display-only labels for live-discovered models, keyed by native model id. */
+  modelDisplayNames?: Record<string, string>;
+  /** Per-model opt-out for the catalog's synthetic max reasoning rung. */
+  modelSuppressSyntheticMax?: Record<string, boolean>;
   baseUrl: string;
   /**
    * Optional relative resource path for key-auth openai-responses requests. Must start with `/`
@@ -1013,6 +1017,8 @@ export interface OcxProviderConfig {
    * full set so the user can pick). See devlog issue_052_provider-model-allowlist.
    */
   selectedModels?: string[];
+  /** Models retained in the catalog when authoritative live discovery omits them. */
+  retainModels?: string[];
   /** Provider-wide Codex-visible context-window cap for routed catalog entries. */
   contextWindow?: number;
   /** Model-specific Codex-visible context-window caps. Values cap live metadata, never raise it. */

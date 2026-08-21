@@ -40,6 +40,20 @@ export type ProviderModelDiscoveryFailure = ProviderModelDiscoveryStatus extends
   : never;
 
 const cache = new Map<string, CacheEntry>();
+const providerGenerations = new Map<string, number>();
+let globalGeneration = 0;
+type CacheInvalidationListener = (provider: string | undefined, generation: number) => void;
+const invalidationListeners = new Set<CacheInvalidationListener>();
+
+/** Register lifecycle observers without coupling the cache to catalog diagnostics. */
+export function registerModelCacheInvalidationListener(listener: CacheInvalidationListener): () => void {
+  invalidationListeners.add(listener);
+  return () => invalidationListeners.delete(listener);
+}
+
+export function getModelCacheGeneration(provider?: string): number {
+  return provider === undefined ? globalGeneration : providerGenerations.get(provider) ?? 0;
+}
 
 /** Cooldown after a failed live `/models` fetch, so a dead/unreachable provider doesn't re-pay
  * the full fetch timeout on every catalog poll (issue #54: UI stalls behind corporate proxies). */
@@ -135,14 +149,19 @@ export function setCached(provider: string, models: CatalogModel[], now = Date.n
 /** Drop one provider's cache (or all) so the next resolve forces a live re-fetch. */
 export function clearModelCache(provider?: string): void {
   if (provider) {
+    const generation = (providerGenerations.get(provider) ?? 0) + 1;
+    providerGenerations.set(provider, generation);
     cache.delete(provider);
     failureAt.delete(provider);
     discoveryStatus.delete(provider);
     liveModelCounts.delete(provider);
+    for (const listener of invalidationListeners) listener(provider, generation);
   } else {
+    globalGeneration += 1;
     cache.clear();
     failureAt.clear();
     discoveryStatus.clear();
     liveModelCounts.clear();
+    for (const listener of invalidationListeners) listener(undefined, globalGeneration);
   }
 }

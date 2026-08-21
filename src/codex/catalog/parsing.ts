@@ -100,6 +100,8 @@ export interface CatalogModel {
   owned_by?: string;
   reasoningEfforts?: string[];
   defaultReasoningEffort?: string;
+  /** Transient policy: do not invent a missing max rung for this model. */
+  suppressSyntheticMax?: boolean;
   contextWindow?: number;
   maxInputTokens?: number;
   contextCap?: number;
@@ -110,6 +112,8 @@ export interface CatalogModel {
   /** Whether Codex may send Responses text.verbosity for this routed model. */
   supportsVerbosity?: boolean;
   supportsReasoningSummaries?: boolean;
+  supportsServiceTier?: boolean;
+  fastTierDescription?: string;
 }
 
 export type RawEntry = Record<string, unknown>;

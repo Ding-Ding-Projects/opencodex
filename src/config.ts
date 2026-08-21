@@ -433,12 +433,33 @@ function resolveRuntimePortPath(): string {
 
 const warnedConfigFallbacks = new Set<string>();
 
+export function normalizeNonBlankStringArray(values: readonly string[]): string[] {
+  return [...new Set(values.map(value => value.trim()).filter(Boolean))];
+}
+
+export function nonBlankStringArrayConfigError(value: unknown, field: string): string | null {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return `${field} must be an array of nonblank strings`;
+  if (value.some(item => typeof item !== "string" || item.trim().length === 0)) {
+    return `${field} must contain only nonblank strings`;
+  }
+  return null;
+}
+
 const providerConfigSchema = z.object({
   adapter: z.string().min(1),
   baseUrl: z.string().min(1),
   apiKeyTransport: z.enum(["x-api-key", "bearer"]).optional(),
   responsesPath: z.string().min(1).optional(),
   allowPrivateNetwork: z.boolean().optional(),
+  modelDisplayNames: z.record(z.string().min(1).max(256), z.string().trim().min(1).max(128)
+    .refine(value => !/[\u0000-\u001f\u007f]/u.test(value) && !value.includes("/"), {
+      message: "modelDisplayNames values must be printable labels without slash characters",
+    })).optional(),
+  modelSuppressSyntheticMax: z.record(z.string().min(1), z.boolean()).optional(),
+  retainModels: z.array(z.string().trim().min(1))
+    .transform(normalizeNonBlankStringArray)
+    .optional(),
   codexAccountMode: z.enum(["pool", "direct"]).optional(),
   responsesItemIdRepair: z.object({
     message: z.array(z.string().min(1)).optional(),
@@ -765,6 +786,17 @@ const configSchema = z.object({
       });
     }
     const provider = config.providers[name];
+    const retainModelsError = nonBlankStringArrayConfigError(
+      (provider as { retainModels?: unknown }).retainModels,
+      "retainModels",
+    );
+    if (retainModelsError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", name, "retainModels"],
+        message: retainModelsError,
+      });
+    }
     const openRouterRoutingError = openRouterRoutingConfigError(provider);
     if (openRouterRoutingError) {
       ctx.addIssue({
@@ -856,6 +888,17 @@ const configSchema = z.object({
         code: "custom",
         path: ["providers", name, "modelAdapters"],
         message: modelAdaptersError,
+      });
+    }
+    const suppressSyntheticMaxError = booleanRecordConfigError(
+      (provider as { modelSuppressSyntheticMax?: unknown }).modelSuppressSyntheticMax,
+      "modelSuppressSyntheticMax",
+    );
+    if (suppressSyntheticMaxError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", name, "modelSuppressSyntheticMax"],
+        message: suppressSyntheticMaxError,
       });
     }
     const maxInputError = positiveIntegerRecordConfigError(

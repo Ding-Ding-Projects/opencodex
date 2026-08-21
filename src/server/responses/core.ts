@@ -12,6 +12,7 @@ import { buildCompactV1Output, COMPACT_PROMPT, decodeCompactionSummary, extractC
 import { FORWARD_HEADERS, sanitizeReasoningInputContent } from "../../adapters/openai-responses";
 import { expandPreviousResponseInput, previousResponseProviderState, rememberResponseState } from "../../responses/state";
 import { routeModel, type RouteResult } from "../../router";
+import { warnRetainedModel404Once } from "../../codex/catalog/provider-fetch";
 import {
   advanceComboAfterFailure,
   comboDefaultEffort,
@@ -814,7 +815,8 @@ async function applyFinalRouteRequestNormalization(args: {
   applyOpenAiVirtualModel(parsed, route, logCtx);
 
   // Fast mode override for OpenAI-routed models.
-  if (config.fastMode !== undefined && route.provider.adapter === "openai-responses") {
+  const xaiApiKeyPriority = route.providerName === "xai" && route.provider.authMode === "key";
+  if (config.fastMode !== undefined && (route.provider.adapter === "openai-responses" || xaiApiKeyPriority)) {
     const tier = config.fastMode ? "priority" : undefined;
     if (parsed._rawBody && typeof parsed._rawBody === "object") {
       if (tier) (parsed._rawBody as Record<string, unknown>).service_tier = tier;
@@ -1785,6 +1787,7 @@ export async function handleResponses(
     // keep their typed failure envelope. Non-empty bodies are relayed verbatim
     // (headers included) so pool-retry Activation B/D and client diagnostics stay intact.
     if (!upstreamResponse.ok) {
+      if (upstreamResponse.status === 404) warnRetainedModel404Once(route.providerName, route.modelId);
       if (options.comboAttempt) {
         const failure = await consumeComboFailure(upstreamResponse, options.abortSignal);
         options.onConsumedComboFailure?.(failure);
@@ -2526,6 +2529,7 @@ export async function handleResponses(
       break;
     }
     if (!upstreamResponse.ok) {
+      if (upstreamResponse.status === 404) warnRetainedModel404Once(route.providerName, route.modelId);
       if (options.comboAttempt) {
         const failure = await consumeComboFailure(upstreamResponse, options.abortSignal)
           .finally(cleanupUpstreamAbort);

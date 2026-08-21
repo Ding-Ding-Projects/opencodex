@@ -11,6 +11,7 @@ import {
   multiAgentGuidanceEnabled,
   providerBaseUrlConfigError,
   providerHeadersConfigError,
+  normalizeNonBlankStringArray,
   saveConfigPreservingClaudeCode,
 } from "../../config";
 import {
@@ -82,6 +83,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         allowPrivateNetwork: p.allowPrivateNetwork === true,
         liveModels: p.liveModels !== false,
         models: p.models ?? [],
+        retainModels: p.retainModels ?? [],
+        modelDisplayNames: p.modelDisplayNames ?? {},
+        modelSuppressSyntheticMax: p.modelSuppressSyntheticMax ?? {},
         authMode: p.authMode,
         apiKeyTransport: p.apiKeyTransport,
         keyOptional: p.keyOptional === true,
@@ -146,6 +150,13 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // let the (possibly new) apiKey join the pool as the active entry.
     const existingPool = config.providers[name]?.apiKeyPool;
     if (existingPool && !prov.apiKeyPool) prov.apiKeyPool = existingPool;
+    const existing = config.providers[name];
+    if (existing && !Object.hasOwn(prov, "modelDisplayNames") && existing.modelDisplayNames) {
+      prov.modelDisplayNames = { ...existing.modelDisplayNames };
+    }
+    if (existing && !Object.hasOwn(prov, "modelSuppressSyntheticMax") && existing.modelSuppressSyntheticMax) {
+      prov.modelSuppressSyntheticMax = { ...existing.modelSuppressSyntheticMax };
+    }
     config.providers[name] = stripRegistryOnlyStaticHeaders(name, prov);
     if (body.setDefault) config.defaultProvider = name;
     save(config);
@@ -272,11 +283,55 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
      touched = true;
    }
 
-   if (Object.hasOwn(rawBody, "liveModels")) {
+    if (Object.hasOwn(rawBody, "liveModels")) {
      if (typeof rawBody.liveModels !== "boolean") return jsonResponse({ error: "liveModels must be a boolean" }, 400);
      next.liveModels = rawBody.liveModels;
-     touched = true;
-   }
+      touched = true;
+    }
+
+    if (Object.hasOwn(rawBody, "modelDisplayNames")) {
+      const labels = rawBody.modelDisplayNames;
+      if (labels === undefined || labels === null) {
+        delete next.modelDisplayNames;
+      } else if (!labels || typeof labels !== "object" || Array.isArray(labels)) {
+        return jsonResponse({ error: "modelDisplayNames must be an object" }, 400);
+      } else {
+        for (const [modelId, label] of Object.entries(labels as Record<string, unknown>)) {
+          if (!modelId.trim() || modelId.length > 256 || typeof label !== "string"
+            || !label.trim() || label.trim().length > 128 || /[\u0000-\u001f\u007f]/u.test(label) || label.includes("/")) {
+            return jsonResponse({ error: "modelDisplayNames must contain bounded printable labels without slash characters" }, 400);
+          }
+        }
+        next.modelDisplayNames = Object.fromEntries(
+          Object.entries(labels as Record<string, string>).map(([modelId, label]) => [modelId, label.trim()]),
+        );
+      }
+      touched = true;
+    }
+    if (Object.hasOwn(rawBody, "retainModels")) {
+      const retainModels = rawBody.retainModels;
+      if (retainModels === undefined || retainModels === null) {
+        delete next.retainModels;
+      } else if (!Array.isArray(retainModels) || retainModels.some(value => typeof value !== "string" || value.trim().length === 0)) {
+        return jsonResponse({ error: "retainModels must contain only nonblank strings" }, 400);
+      } else {
+        const normalized = normalizeNonBlankStringArray(retainModels);
+        if (normalized.length > 256) return jsonResponse({ error: "retainModels may contain at most 256 model ids" }, 400);
+        next.retainModels = normalized;
+      }
+      touched = true;
+    }
+    if (Object.hasOwn(rawBody, "modelSuppressSyntheticMax")) {
+      const suppression = rawBody.modelSuppressSyntheticMax;
+      if (suppression === undefined || suppression === null) delete next.modelSuppressSyntheticMax;
+      else if (!suppression || typeof suppression !== "object" || Array.isArray(suppression)
+        || Object.entries(suppression as Record<string, unknown>).some(([modelId, value]) => !modelId.trim() || typeof value !== "boolean")) {
+        return jsonResponse({ error: "modelSuppressSyntheticMax must be a boolean record" }, 400);
+      } else {
+        next.modelSuppressSyntheticMax = { ...(suppression as Record<string, boolean>) };
+      }
+      touched = true;
+    }
 
     if (!touched) return jsonResponse({ error: "no recognized fields to update" }, 400);
 

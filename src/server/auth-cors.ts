@@ -442,6 +442,22 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
     return `provider ${name} must not include codexAccountMode`;
   }
   const typed = provider as unknown as OcxProviderConfig;
+  if (raw.retainModels !== undefined) {
+    if (!Array.isArray(raw.retainModels) || raw.retainModels.some(value => typeof value !== "string" || value.trim().length === 0)) {
+      return `provider ${name} retainModels must contain only nonblank strings`;
+    }
+  }
+  if (raw.modelDisplayNames !== undefined) {
+    if (!raw.modelDisplayNames || typeof raw.modelDisplayNames !== "object" || Array.isArray(raw.modelDisplayNames)) {
+      return `provider ${name} modelDisplayNames must be an object`;
+    }
+    for (const [modelId, label] of Object.entries(raw.modelDisplayNames as Record<string, unknown>)) {
+      if (!modelId.trim() || modelId.length > 256 || typeof label !== "string"
+        || !label.trim() || label.trim().length > 128 || /[\u0000-\u001f\u007f]/u.test(label) || label.includes("/")) {
+        return `provider ${name} modelDisplayNames must contain bounded printable labels without slash characters`;
+      }
+    }
+  }
   const baseUrlError = providerBaseUrlConfigError(typed.baseUrl);
   if (baseUrlError) return `provider ${name} ${baseUrlError}`;
   const destinationError = providerDestinationConfigError(name, typed);
@@ -461,6 +477,8 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
   if (reasoningSummaryDeliveryError) return `provider ${name} ${reasoningSummaryDeliveryError}`;
   const modelAdaptersError = modelAdapterRecordConfigError(raw.modelAdapters, "modelAdapters", name, typed);
   if (modelAdaptersError) return `provider ${name} ${modelAdaptersError}`;
+  const suppressSyntheticMaxError = booleanRecordConfigError(raw.modelSuppressSyntheticMax, "modelSuppressSyntheticMax");
+  if (suppressSyntheticMaxError) return `provider ${name} ${suppressSyntheticMaxError}`;
   const defaultMaxOutputError = positiveIntegerConfigError(raw.defaultMaxOutputTokens, "defaultMaxOutputTokens");
   if (defaultMaxOutputError) return `provider ${name} ${defaultMaxOutputError}`;
   const maxOutputError = positiveIntegerRecordConfigError(raw.modelMaxOutputTokens, "modelMaxOutputTokens");
@@ -537,6 +555,9 @@ export function safeConfigDTO(config: OcxConfig): unknown {
       "freeTier",
       "liveModels",
       "models",
+      "retainModels",
+      "modelDisplayNames",
+      "modelSuppressSyntheticMax",
       "contextWindow",
       "modelContextWindows",
       "defaultMaxOutputTokens",

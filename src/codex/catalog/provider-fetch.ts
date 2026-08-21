@@ -16,6 +16,7 @@ import {
   markProviderDiscoveryOk,
   shouldLogDiscoveryFailure,
   setCached,
+  registerModelCacheInvalidationListener,
   type ProviderModelDiscoveryFailure,
 } from "../model-cache";
 import { buildModelsRequest, resolveModelsAuthToken } from "../../oauth";
@@ -50,6 +51,7 @@ import upstreamModelsSnapshot from "../data/upstream-models.json";
 
 import { JAWCODE_CATALOG_AUGMENT_PROVIDERS, catalogModelSlug, shouldExposeRoutedModel } from "./parsing";
 import type { CatalogModel } from "./parsing";
+import { applyOperatorDisplayLabels } from "./display-labels";
 import { disabledNativeSlugs, hasComboTargets, nativeInputModalities, nativeOpenAiContextWindow, nativeOpenAiSlugs, nativeParallelToolCalls, nativeReasoningEfforts } from "./metadata";
 import { deriveComboCatalogModel, normalizedOpenAiApiSignature, openAiApiCollisionWarnings, replaceLastComboCatalogOmissions, warnUncataloguedComboOnce } from "./aggregation";
 import type { ComboCatalogOmission } from "./aggregation";
@@ -138,9 +140,19 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
   }
   const reasoningEfforts = configuredReasoningEfforts(prov, model.id);
   const defaultReasoningEffort = modelRecordValue(prov.modelDefaultReasoningEfforts, model.id) ?? model.defaultReasoningEffort;
+  const suppressSyntheticMax = modelRecordValue(prov.modelSuppressSyntheticMax, model.id) === true;
   const supportsReasoningSummaries = configuredReasoningSummarySupport(prov, model.id);
+  const supportsServiceTier = name === "xai" && prov.authMode === "key";
   const hinted = {
-    ...model,
+    ...(() => {
+      const {
+        suppressSyntheticMax: _staleSuppressSyntheticMax,
+        supportsServiceTier: _staleSupportsServiceTier,
+        fastTierDescription: _staleFastTierDescription,
+        ...cleanModel
+      } = model;
+      return cleanModel;
+    })(),
     ...(configuredCap !== undefined
       ? {
         contextWindow: typeof model.contextWindow === "number" && model.contextWindow > 0
@@ -158,7 +170,9 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
       }
       : {}),
     ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+    ...(suppressSyntheticMax ? { suppressSyntheticMax: true } : {}),
     ...(typeof supportsReasoningSummaries === "boolean" ? { supportsReasoningSummaries } : {}),
+    ...(supportsServiceTier ? { supportsServiceTier: true, fastTierDescription: "Priority processing, 2x token price" } : {}),
     ...(prov.adapter === "kiro" ? { supportsVerbosity: false } : {}),
     // Default-on for openai-chat providers (explicit false opts out); other adapters
     // advertise only on explicit opt-in.
@@ -189,6 +203,57 @@ export function isDatedVariantId(liveId: string, configuredId: string): boolean 
 }
 
 export const lastDropWarnSignature = new Map<string, string>();
+
+/** Models retained without live confirmation, used by every dispatch surface for one honest 404 diagnosis. */
+export const retainedWithoutDiscoveryRefs = new Map<string, Set<string>>();
+export const warnedRetained404Refs = new Set<string>();
+let lastGlobalWarningReconciledGeneration = -1;
+
+export function reconcileProviderFetchWarnings(generation: number): number {
+  if (generation <= lastGlobalWarningReconciledGeneration) return 0;
+  const removed = lastDropWarnSignature.size;
+  lastDropWarnSignature.clear();
+  retainedWithoutDiscoveryRefs.clear();
+  warnedRetained404Refs.clear();
+  lastGlobalWarningReconciledGeneration = generation;
+  return removed;
+}
+
+export function reconcileProviderFetchWarningsForProvider(providerName: string, generation: number): number {
+  const retained = retainedWithoutDiscoveryRefs.get(providerName);
+  const removed = retained?.size ?? 0;
+  retainedWithoutDiscoveryRefs.delete(providerName);
+  for (const signature of warnedRetained404Refs) {
+    if (signature.startsWith(`${providerName}/`)) warnedRetained404Refs.delete(signature);
+  }
+  return removed;
+}
+
+registerModelCacheInvalidationListener((providerName, generation) => {
+  if (providerName === undefined) reconcileProviderFetchWarnings(generation);
+  else reconcileProviderFetchWarningsForProvider(providerName, generation);
+});
+
+export function warnRetainedModel404Once(providerName: string, modelId: string): void {
+  const retained = retainedWithoutDiscoveryRefs.get(providerName);
+  if (!retained?.has(modelId)) return;
+  const signature = `${providerName}/${modelId}`;
+  if (warnedRetained404Refs.has(signature)) return;
+  warnedRetained404Refs.add(signature);
+  console.warn(
+    `[opencodex] Model "${modelId}" on provider "${providerName}" is retained via retainModels but upstream returned 404/model_not_found; the account or project may not be provisioned for it. Remove it from retainModels if it should not be callable.`,
+  );
+}
+
+/** Record one authoritative omission cycle; a repeated omission starts a fresh warn-once window. */
+export function recordRetainedOmissionCycle(providerName: string, modelIds: readonly string[]): void {
+  const previous = retainedWithoutDiscoveryRefs.get(providerName);
+  if (previous) {
+    for (const modelId of previous) warnedRetained404Refs.delete(`${providerName}/${modelId}`);
+  }
+  if (modelIds.length > 0) retainedWithoutDiscoveryRefs.set(providerName, new Set(modelIds));
+  else retainedWithoutDiscoveryRefs.delete(providerName);
+}
 
 export const QUIET_AUTHORITATIVE_CATALOG_PROVIDERS = new Set(["kimi", "xai"]);
 
@@ -255,12 +320,44 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
     && prov.googleMode === "vertex"
     && (prov.models?.length ?? 0) === 0
     && Boolean(prov.defaultModel);
-  const configuredIds = seedVertexDefault && prov.defaultModel ? [prov.defaultModel] : (prov.models ?? []);
+  const configuredIds = Array.from(new Set([
+    ...(seedVertexDefault && prov.defaultModel ? [prov.defaultModel] : []),
+    ...(prov.models ?? []),
+    ...(prov.retainModels ?? []),
+  ]));
   const configured: CatalogModel[] = configuredIds.map(id => ({
     id,
     provider: name,
     ...catalogHintsFromProviderConfig(name, prov, id, contextCap),
   }));
+  const withConfiguredRetention = (
+    models: CatalogModel[],
+    options?: { recordRetainedDiagnostics?: boolean },
+  ): CatalogModel[] => {
+    const merged = mergeConfiguredModelsIntoLiveCatalog({
+      name,
+      provider: prov,
+      models,
+      configured,
+      contextCap,
+      seedVertexDefault,
+    });
+    if (options?.recordRetainedDiagnostics === true) {
+      recordRetainedOmissionCycle(name, merged.retainedConfiguredIds);
+    } else {
+      const prior = retainedWithoutDiscoveryRefs.get(name);
+      if (prior) {
+        const currentRetained = new Set(prov.retainModels ?? []);
+        const stillApplicable = [...prior].filter(id => currentRetained.has(id) && merged.models.some(model => model.id === id));
+        for (const modelId of prior) {
+          if (!stillApplicable.includes(modelId)) warnedRetained404Refs.delete(`${name}/${modelId}`);
+        }
+        if (stillApplicable.length > 0) retainedWithoutDiscoveryRefs.set(name, new Set(stillApplicable));
+        else retainedWithoutDiscoveryRefs.delete(name);
+      }
+    }
+    return merged.models;
+  };
   // A configured default is a real callable selector and must remain discoverable when a
   // compatible provider's live /models request fails (issue #308). Keep this separate from the
   // explicit static list: `liveModels: false` + empty `models[]` intentionally publishes zero
@@ -281,7 +378,7 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
   if (prov.adapter === "cursor") {
     if (prov.liveModels === false) {
       clearProviderDiscoveryStatus(name);
-      return configured;
+      return withConfiguredRetention(configured);
     }
     if (!apiKey) return configured;
     // Cursor uses a bespoke GetUsableModels RPC (not /models), returning the full effort-suffixed
@@ -289,15 +386,15 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
     // suffix) but filter the static seed to the bases the account actually has — so models not on the
     // plan (e.g. claude-fable-5) drop out instead of failing ERROR_BAD_MODEL_NAME. Fall back to the seed.
     const cachedCursor = getFreshCached(name, ttlMs);
-    if (cachedCursor) return applyConfigHintsToCachedModels(name, prov, cachedCursor);
+    if (cachedCursor) return withConfiguredRetention(applyConfigHintsToCachedModels(name, prov, cachedCursor));
     if (isModelsFetchCoolingDown(name)) {
       const cooling = getStaleCached(name);
-      return cooling ? applyConfigHintsToCachedModels(name, prov, cooling) : configured;
+      return cooling ? withConfiguredRetention(applyConfigHintsToCachedModels(name, prov, cooling)) : withConfiguredRetention(configured);
     }
     const liveResult = await fetchCursorUsableModels({ apiKey, baseUrl: prov.baseUrl });
     if (liveResult.ok) {
       const available = filterCursorConfiguredModelsByLiveDiscovery(configured, liveResult.models);
-      const result = available.length > 0 ? available : configured;
+      const result = withConfiguredRetention(available.length > 0 ? available : configured, { recordRetainedDiagnostics: true });
       // Count what discovery actually returned, not the configured rows we fall back to.
       markProviderDiscoveryOk(name, liveResult.models.length);
       setCached(name, result);
@@ -309,25 +406,27 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
       `[opencodex] Cursor model discovery for "${name}" failed [${liveResult.error}]${liveResult.detail ? `: ${liveResult.detail}` : ""}; using stale/static catalog degradation.`,
     );
     const staleCursor = getStaleCached(name);
-    return staleCursor ? applyConfigHintsToCachedModels(name, prov, staleCursor) : configured;
+    return staleCursor ? withConfiguredRetention(applyConfigHintsToCachedModels(name, prov, staleCursor)) : withConfiguredRetention(configured);
   }
   if (prov.authMode === "oauth" && !apiKey) {
     // No usable token (logged out, or account marked needsReauth). Still surface the
     // configured static catalog so the GUI Models tab / rail counts are not empty —
     // matching Cursor's !apiKey → configured degradation and fetch-failure fallback.
-    return configured;
+    retainedWithoutDiscoveryRefs.delete(name);
+    return withConfiguredRetention(configured);
   }
   if (prov.liveModels === false) {
     clearProviderDiscoveryStatus(name);
-    return configured;
+    retainedWithoutDiscoveryRefs.delete(name);
+    return withConfiguredRetention(configured);
   }
   const fresh = getFreshCached(name, ttlMs);
-  if (fresh) return withVertexDefaultSeed(applyConfigHintsToCachedModels(name, prov, fresh, contextCap)); // dedups Codex's frequent /v1/models polling within the TTL
+  if (fresh) return withConfiguredRetention(withVertexDefaultSeed(applyConfigHintsToCachedModels(name, prov, fresh, contextCap))); // dedups Codex's frequent /v1/models polling within the TTL
   if (isModelsFetchCoolingDown(name)) {
     // A recently-failed provider (unreachable API, missing proxy, bad key) must not re-pay the
     // fetch timeout on every catalog poll — the dashboard polls this path per page load.
     const stale = getStaleCached(name);
-    return stale ? withVertexDefaultSeed(applyConfigHintsToCachedModels(name, prov, stale, contextCap)) : failedDiscoveryConfigured;
+    return stale ? withConfiguredRetention(withVertexDefaultSeed(applyConfigHintsToCachedModels(name, prov, stale, contextCap))) : withConfiguredRetention(failedDiscoveryConfigured);
   }
   const { url, headers } = buildModelsRequest(prov, apiKey, name);
   const urlClass = new URL(url).hostname.endsWith("aiplatform.googleapis.com")
@@ -345,8 +444,8 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
     const stale = getStaleCached(name);
     return {
       models: stale
-        ? withVertexDefaultSeed(applyConfigHintsToCachedModels(name, prov, stale, contextCap))
-        : failedDiscoveryConfigured,
+        ? withConfiguredRetention(withVertexDefaultSeed(applyConfigHintsToCachedModels(name, prov, stale, contextCap)))
+        : withConfiguredRetention(failedDiscoveryConfigured),
       fallback: stale ? "stale" : "configured",
       shouldLog,
     };
@@ -416,25 +515,18 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
     // Capture the count BEFORE the alias/configured augmentation below pushes extra rows into
     // `live`; otherwise configured entries would be reported as discovered ones.
     const liveModelCount = live.length;
-    const liveIds = new Set(live.map(m => m.id));
-    // Dated-release aliases (Anthropic pattern): older models may appear in the live catalog
-    // ONLY under their dated id (claude-haiku-4-5-20251001) while the config names the
-    // API-valid alias (claude-haiku-4-5). Such aliases are real, callable models — keep them
-    // in the authoritative catalog (alias id, hints from the dated live entry) instead of
-    // dropping them and warning on every poll.
-    const droppedConfiguredIds: string[] = [];
-    for (const m of configured) {
-      if (liveIds.has(m.id)) continue;
-      const dated = live.find(l => isDatedVariantId(l.id, m.id));
-      if (dated) {
-        // Reapply config hints so alias-keyed overrides (modelContextWindows etc.) win.
-        live.push(applyProviderConfigHints(name, prov, { ...dated, id: m.id }, contextCap));
-      } else if (seedVertexDefault || shouldRetainConfiguredProviderModel(name, m.id)) {
-        live.push(m);
-      } else {
-        droppedConfiguredIds.push(m.id);
-      }
-    }
+    // Dated aliases, compatibility rows, and explicit retainModels all use one merge predicate.
+    const mergedLive = mergeConfiguredModelsIntoLiveCatalog({
+      name,
+      provider: prov,
+      models: live,
+      configured,
+      contextCap,
+      seedVertexDefault,
+    });
+    recordRetainedOmissionCycle(name, mergedLive.retainedConfiguredIds);
+    const droppedConfiguredIds = mergedLive.droppedConfiguredIds;
+    live.splice(0, live.length, ...mergedLive.models);
     if (live.length === 0 && name !== OPENAI_API_PROVIDER_ID) {
       console.warn(
         `[opencodex] Provider model discovery for "${name}" returned an authoritative empty catalog; ${droppedConfiguredIds.length > 0 ? `dropping configured model ids: ${droppedConfiguredIds.join(", ")}` : "no models will be exposed"}.`,
@@ -476,6 +568,64 @@ export function shouldRetainConfiguredProviderModel(providerName: string, modelI
   if (CALLABLE_CONFIGURED_COMPATIBILITY_MODELS[providerName]?.has(modelId)) return true;
   if (providerName === "opencode-free") return modelId === "big-pickle" || modelId.endsWith("-free");
   return false;
+}
+
+/**
+ * Fold dated-release aliases and retain configured rows that must survive an
+ * authoritative live roster (compatibility allow-list, combo targets, Vertex
+ * default). Used on every discovery return — live, fresh cache, stale, and
+ * failure fallback — so a warm cache captured before a combo existed still
+ * surfaces the configured target (OCX-111 / #1308).
+ *
+ * Cache writes should pass `retainComboTargets: false` so combo retention is
+ * re-applied on read against the current capture, not frozen into the TTL entry.
+ */
+export function mergeConfiguredModelsIntoLiveCatalog(opts: {
+  name: string;
+  provider: OcxProviderConfig;
+  models: readonly CatalogModel[];
+  configured: readonly CatalogModel[];
+  retainConfiguredModelIds?: ReadonlySet<string>;
+  contextCap?: number;
+  seedVertexDefault?: boolean;
+  retainComboTargets?: boolean;
+}): { models: CatalogModel[]; droppedConfiguredIds: string[]; retainedConfiguredIds: string[] } {
+  const {
+    name,
+    provider: prov,
+    configured,
+    retainConfiguredModelIds,
+    contextCap,
+    seedVertexDefault,
+    retainComboTargets = true,
+  } = opts;
+  const out = [...opts.models];
+  const present = new Set(out.map(model => model.id));
+  const droppedConfiguredIds: string[] = [];
+  const retainedConfiguredIds: string[] = [];
+  const providerRetainModels = Array.isArray(prov.retainModels) ? new Set(prov.retainModels) : undefined;
+  for (const candidate of configured) {
+    if (present.has(candidate.id)) continue;
+    const dated = out.find(live => isDatedVariantId(live.id, candidate.id));
+    if (dated) {
+      out.push(applyProviderConfigHints(name, prov, { ...dated, id: candidate.id }, contextCap));
+      present.add(candidate.id);
+      continue;
+    }
+    if (
+      seedVertexDefault === true
+      || shouldRetainConfiguredProviderModel(name, candidate.id)
+      || (retainComboTargets && retainConfiguredModelIds?.has(candidate.id) === true)
+      || (providerRetainModels?.has(candidate.id) === true)
+    ) {
+      out.push(candidate);
+      present.add(candidate.id);
+      if (providerRetainModels?.has(candidate.id) === true) retainedConfiguredIds.push(candidate.id);
+      continue;
+    }
+    droppedConfiguredIds.push(candidate.id);
+  }
+  return { models: out, droppedConfiguredIds, retainedConfiguredIds };
 }
 
 export function filterCatalogVisibleModels(
@@ -525,11 +675,12 @@ export async function gatherRoutedModels(
     activeProviders.map(([name, prov]) => fetchProviderModels(name, prov, ttlMs, providerContextCap(config, name))),
   );
   const apiAugmented = augmentRoutedModelsWithRegistryOpenAiApiRows(lists.flat(), config);
-  const all = augmentRoutedModelsWithJawcodeMetadata(apiAugmented, activeProviders.map(([name]) => name), config.providers, config)
+  let all = augmentRoutedModelsWithJawcodeMetadata(apiAugmented, activeProviders.map(([name]) => name), config.providers, config)
     // Drop image/video generation models (e.g. Grok image/video) by default. Cursor's static catalog
     // intentionally mirrors Cursor's public model table, including Gemini image preview, so the
     // exposure decision goes through shouldExposeRoutedModel (single choke point).
     .filter(shouldExposeRoutedModel);
+  all = applyOperatorDisplayLabels(all, config);
   const memberByKey = new Map(all.map(model => [`${model.provider}/${model.id}`, model]));
   // [Decision Log]
   // - 목적과 의도: 콤보 타겟에 native OpenAI(Codex login) 모델이 포함될 때 카탈로그에서
@@ -598,6 +749,10 @@ export async function gatherRoutedModels(
   const customModels = (config.customModels ?? []).map(cm => {
     const rawProvider = config.providers[cm.provider];
     const supportsReasoningSummaries = configuredReasoningSummarySupport(rawProvider, cm.modelId);
+    const supportsServiceTier = cm.provider === "xai" && rawProvider?.authMode === "key";
+    const suppressSyntheticMax = rawProvider
+      ? modelRecordValue(rawProvider.modelSuppressSyntheticMax, cm.modelId) === true
+      : false;
     const base: CatalogModel = {
       id: cm.modelId,
       provider: cm.provider,
@@ -606,6 +761,8 @@ export async function gatherRoutedModels(
       ...(cm.contextWindow ? { contextWindow: cm.contextWindow } : {}),
       ...(cm.inputModalities ? { inputModalities: cm.inputModalities } : {}),
       ...(typeof supportsReasoningSummaries === "boolean" ? { supportsReasoningSummaries } : {}),
+      ...(supportsServiceTier ? { supportsServiceTier: true, fastTierDescription: "Priority processing, 2x token price" } : {}),
+      ...(suppressSyntheticMax ? { suppressSyntheticMax: true } : {}),
     };
     // Vision-sidecar coverage ONLY: if the custom model is in the enriched provider's
     // noVisionModels, advertise image input so the Codex app lets images reach the sidecar

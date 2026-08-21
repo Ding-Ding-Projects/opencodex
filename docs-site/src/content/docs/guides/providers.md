@@ -146,6 +146,26 @@ deny-by-default.
 
 You can also start OAuth from the [web dashboard](/guides/web-dashboard/).
 
+### xAI Priority Processing
+
+The xAI preset exposes Priority Processing only when the provider is explicitly configured with
+`authMode: "key"` and a public xAI API key. Enabling the shared `fastMode` setting then forwards
+`service_tier: "priority"` for xAI Chat Completions requests and advertises the `Fast` tier in the
+catalog. The OAuth route created by `ocx login xai` uses the Grok subscription gateway and remains
+unclassified: it does not advertise or inject Priority Processing.
+
+xAI's Priority Processing price is model- and provider-scoped. A routed reseller that happens to
+use a Grok model id does not inherit xAI's premium schedule, and an echoed `default` response is
+priced as standard traffic. The official pricing table currently lists Grok 4.5 at `$2.00 / $0.30
+cached / $6.00` per 1M tokens below 200,000 prompt tokens and `$4.00 / $0.60 / $12.00` at or above
+that threshold. Grok 4.6 uses `$2.00 / $0.50 / $6.00` below the threshold and `$4.00 / $1.00 /
+$12.00` at or above it. These values were verified against
+[`docs.x.ai/developers/pricing`](https://docs.x.ai/developers/pricing) on 2026-08-21; Priority
+Processing behavior is documented at
+[`docs.x.ai/developers/advanced-api-usage/priority-processing`](https://docs.x.ai/developers/advanced-api-usage/priority-processing).
+See [configuration](/reference/configuration/#providersname) for the provider fields that control
+discovery retention, display labels, and reasoning-rung policy.
+
 ### Multiple OAuth accounts
 
 OAuth providers whose credentials include a stable account id or email can keep more than one

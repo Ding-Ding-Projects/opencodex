@@ -25,6 +25,7 @@ import { redactSecretString } from "../lib/redact";
 import { resolveClientRetryAfter } from "../lib/retry-after";
 import { estimateTokens } from "../lib/token-estimate";
 import { routeModel } from "../router";
+import { warnRetainedModel404Once } from "../codex/catalog/provider-fetch";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
 import type { OcxConfig } from "../types";
 import {
@@ -295,6 +296,9 @@ export async function handleChatCompletions(
       classified.code = upstreamCode;
     }
     const status = isCyberPolicyCode(classified.code) ? 400 : upstream.status;
+    if (status === 404 || classified.code === "model_not_found") {
+      warnRetainedModel404Once(logCtx.provider ?? "", logCtx.model ?? requestedModel);
+    }
     finalizeCopilotObservation(status);
     const rewritten = new Response(JSON.stringify({
       error: {

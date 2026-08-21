@@ -95,6 +95,8 @@ const OPENAI_VERIFIED_AT = "2026-08-09" as const;
 const ANTHROPIC_PRICING = "https://platform.claude.com/docs/en/about-claude/pricing";
 const OPENAI_PRICING = "https://developers.openai.com/api/docs/pricing";
 const DEEPSEEK_PRICING = "https://api-docs.deepseek.com/quick_start/pricing";
+const XAI_PRICING = "https://docs.x.ai/developers/pricing";
+const XAI_PRIORITY_PRICING = "https://docs.x.ai/developers/advanced-api-usage/priority-processing";
 
 /**
  * OpenAI Fast mode (`service_tier=priority`) price factors, by exact model slug.
@@ -257,6 +259,39 @@ function anthropicSchedules(
   ];
 }
 
+function xaiSchedules(
+  modelId: "grok-4.5" | "grok-4.6",
+  shortCacheRead: number,
+  longCacheRead: number,
+): OfficialPriceSchedule[] {
+  const short: Cost4 = { input: 2, output: 6, cacheRead: shortCacheRead, cacheWrite: 0 };
+  const long: Cost4 = { input: 4, output: 12, cacheRead: longCacheRead, cacheWrite: 0 };
+  const row = (
+    suffix: string,
+    band: PriceTierBand,
+    cost4: Cost4,
+    serviceTier: string,
+    sourceUrl: string,
+    promptRange: Pick<OfficialPriceConditions, "promptInputTokensMinExclusive" | "promptInputTokensMaxInclusive">,
+  ): OfficialPriceSchedule => ({
+    scheduleId: `xai/${modelId}/${suffix}`,
+    provider: "xai",
+    modelId,
+    cost4,
+    sourceUrl,
+    verifiedAt: "2026-08-21",
+    status: "verified",
+    conditions: { serviceTier, ...promptRange },
+    tier: { band, multiplier: band === "priority" ? uniformMultiplier(2) : band === "long_context" ? uniformMultiplier(2) : NO_MULTIPLIER },
+  });
+  return [
+    row("standard/short-context", "standard", short, "standard", XAI_PRICING, { promptInputTokensMaxInclusive: 199_999 }),
+    row("standard/long-context", "long_context", long, "standard", XAI_PRICING, { promptInputTokensMinExclusive: 199_999 }),
+    row("priority/short-context", "priority", scaleCost4(short, uniformMultiplier(2)), "priority", XAI_PRIORITY_PRICING, { promptInputTokensMaxInclusive: 199_999 }),
+    row("priority/long-context", "priority", scaleCost4(long, uniformMultiplier(2)), "priority", XAI_PRIORITY_PRICING, { promptInputTokensMinExclusive: 199_999 }),
+  ];
+}
+
 export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
   ...openAiSchedules(
     "gpt-5.6-sol",
@@ -275,6 +310,8 @@ export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
     { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
     "unavailable",
   ),
+  ...xaiSchedules("grok-4.5", 0.3, 0.6),
+  ...xaiSchedules("grok-4.6", 0.5, 1),
   ...anthropicSchedules(
     "claude-fable-5",
     { input: 10, output: 50, cacheRead: 1 },
