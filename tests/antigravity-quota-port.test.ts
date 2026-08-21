@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getAccountSet, saveCredential } from "../src/oauth/store";
+import { credentialGeneration, getAccountCredential, getAccountSet, saveCredential } from "../src/oauth/store";
 import { clearAccountQuotaCache, clearProviderQuotaCache, fetchProviderAccountQuotas, fetchProviderQuotaReports, getCachedProviderAccountQuota, setCachedProviderAccountQuotaForTests, supportsPerAccountQuota } from "../src/providers/quota";
 import { fetchAntigravityLiveQuota } from "../src/providers/antigravity-quota";
 import { assertOAuthAccessSnapshotCurrent } from "../src/oauth";
@@ -64,6 +64,56 @@ describe("Antigravity quota security boundary", () => {
       accountId: "snapshot", projectId: "snapshot-new-project",
     });
     expect(() => assertOAuthAccessSnapshotCurrent(old)).toThrow(/changed before dispatch/);
+  });
+  test("known trusted destination mutation is rejected before a quota request", async () => {
+    await saveCredential("google-antigravity", {
+      access: "trusted-a-token", refresh: "trusted-a-refresh", expires: Date.now() + 3_600_000,
+      accountId: "trusted", projectId: "trusted-project",
+    });
+    const accountId = getAccountSet("google-antigravity")!.activeAccountId;
+    const credential = getAccountCredential("google-antigravity", accountId)!;
+    const snapshot = {
+      provider: "google-antigravity", accountId, generation: credentialGeneration(credential),
+      accessToken: credential.access, projectId: credential.projectId, destination: DAILY,
+    } as const;
+    let requests = 0;
+    await expect(fetchAntigravityLiveQuota({
+      accessToken: snapshot.accessToken, projectId: snapshot.projectId!, baseUrl: DAILY, timeoutMs: 500,
+      snapshotValidator: actual => assertOAuthAccessSnapshotCurrent(snapshot, actual === DAILY ? PROD : actual),
+      fetchImpl: async () => {
+        requests++;
+        return json({ buckets: [{ modelId: "gemini-test", remainingFraction: 0.5 }] });
+      },
+    })).resolves.toBeNull();
+    expect(requests).toBe(0);
+  });
+  test("rotation between snapshot capture and dispatch sends no mixed quota tuple", async () => {
+    await saveCredential("google-antigravity", {
+      access: "before-token", refresh: "before-refresh", expires: Date.now() + 3_600_000,
+      accountId: "dispatch-race", projectId: "before-project",
+    });
+    const accountId = getAccountSet("google-antigravity")!.activeAccountId;
+    const before = getAccountCredential("google-antigravity", accountId)!;
+    const snapshot = {
+      provider: "google-antigravity", accountId, generation: credentialGeneration(before),
+      accessToken: before.access, projectId: before.projectId, destination: DAILY,
+    } as const;
+    let requests = 0;
+    await saveCredential("google-antigravity", {
+      access: "after-token", refresh: "after-refresh", expires: Date.now() + 3_600_000,
+      accountId: "dispatch-race", projectId: "after-project",
+    });
+    await expect(fetchAntigravityLiveQuota({
+      accessToken: snapshot.accessToken, projectId: snapshot.projectId!, baseUrl: DAILY, timeoutMs: 500,
+      snapshotValidator: actual => assertOAuthAccessSnapshotCurrent(snapshot, actual),
+      fetchImpl: async (_input, init) => {
+        requests++;
+        const auth = new Headers(init?.headers).get("authorization");
+        expect(auth).toBe("Bearer before-token");
+        return json({ buckets: [{ modelId: "gemini-test", remainingFraction: 0.5 }] });
+      },
+    })).resolves.toBeNull();
+    expect(requests).toBe(0);
   });
   test("uses HTTPS known daily/prod peers and rejects redirect-following", async () => {
     const requests: Array<{ url: string; redirect?: RequestRedirect }> = [];

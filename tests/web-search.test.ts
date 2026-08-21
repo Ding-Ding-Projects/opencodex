@@ -7,6 +7,7 @@ import { listOpenAiForwardSidecarCandidates, resolveFirstUsableOpenAiSidecar } f
 import type { AdapterEvent, OcxConfig, OcxProviderConfig } from "../src/types";
 import type { AdapterFetchContext, ProviderAdapter } from "../src/adapters/base";
 import type { OcxMessage, OcxParsedRequest } from "../src/types";
+import type { OAuthAccessSnapshot } from "../src/oauth";
 import { fakeChatGptJwt } from "./helpers/fake-chatgpt-jwt";
 
 const routedProvider: OcxProviderConfig = {
@@ -502,6 +503,16 @@ describe("web-search sidecar native web_search_call emission", () => {
 
     // First adapter always 429s via fetchResponse; the rotated adapter answers.
     const reasoningLogs: unknown[] = [];
+    const snapshotA: OAuthAccessSnapshot = {
+      provider: "google-antigravity", accountId: "account-a", generation: "generation-a",
+      accessToken: "test-token-a", projectId: "project-a", destination: "https://daily-cloudcode-pa.googleapis.com",
+    };
+    const snapshotB: OAuthAccessSnapshot = {
+      provider: "google-antigravity", accountId: "account-b", generation: "generation-b",
+      accessToken: "test-token-b", projectId: "project-b", destination: "https://daily-cloudcode-pa.googleapis.com",
+    };
+    let activeOAuth = { accountId: "account-a", oauthSnapshot: snapshotA };
+    const dispatches: { accountId?: string; generation?: string }[] = [];
     const firstAdapter: ProviderAdapter = {
       name: "mock-429",
       buildRequest: () => ({
@@ -515,7 +526,10 @@ describe("web-search sidecar native web_search_call emission", () => {
           wireValue: "low",
         },
       }),
-      fetchResponse: async () => new Response("rate limited", { status: 429, headers: { "retry-after": "30" } }),
+      fetchResponse: async (_request, ctx) => {
+        dispatches.push({ accountId: ctx?.accountId, generation: ctx?.oauthSnapshot?.generation });
+        return new Response("rate limited", { status: 429, headers: { "retry-after": "30" } });
+      },
       async *parseStream() { /* unused */ },
       async parseResponse() { return [{ type: "text_delta", text: "should not reach" }, { type: "done" }] as AdapterEvent[]; },
     };
@@ -532,7 +546,10 @@ describe("web-search sidecar native web_search_call emission", () => {
           wireValue: "high",
         },
       }),
-      fetchResponse: async () => new Response("{}", { status: 200 }),
+      fetchResponse: async (_request, ctx) => {
+        dispatches.push({ accountId: ctx?.accountId, generation: ctx?.oauthSnapshot?.generation });
+        return new Response("{}", { status: 200 });
+      },
       async *parseStream() {
         yield { type: "text_delta", text: "answer from rotated key" };
         yield { type: "done" };
@@ -550,9 +567,11 @@ describe("web-search sidecar native web_search_call emission", () => {
       settings: { model: "gpt-5.4-mini", reasoning: "low", timeoutMs: 30_000 },
       maxSearches: 1,
       onRequestBuilt: request => reasoningLogs.push(request.reasoningLog),
+      getOAuthDispatchContext: () => activeOAuth,
       on429: retryAfter => {
         rotations++;
         expect(retryAfter).toBe("30");
+        activeOAuth = { accountId: "account-b", oauthSnapshot: snapshotB };
         return rotatedAdapter;
       },
     });
@@ -562,6 +581,10 @@ describe("web-search sidecar native web_search_call emission", () => {
     const output = completed.output as { type: string; content?: { text?: string }[] }[];
     expect(output.find(o => o.type === "message")?.content?.[0]?.text).toBe("answer from rotated key");
     expect(rotations).toBe(1);
+    expect(dispatches).toEqual([
+      { accountId: "account-a", generation: "generation-a" },
+      { accountId: "account-b", generation: "generation-b" },
+    ]);
     expect(reasoningLogs).toEqual([
       {
         effectiveEffort: "low",

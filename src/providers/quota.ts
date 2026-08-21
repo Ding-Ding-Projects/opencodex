@@ -1,7 +1,8 @@
 import { fetchMainAccountInfo, listCodexAuthAccounts } from "../codex/auth-api";
 import { MAIN_CODEX_ACCOUNT_ID } from "../codex/main-account";
 import { resolveEnvValue } from "../config";
-import { getValidAccessToken, getValidAccessTokenForAccount } from "../oauth";
+import { assertOAuthAccessSnapshotCurrent, getValidAccessToken, getValidAccessTokenForAccount, getValidAccessTokenSnapshot } from "../oauth";
+import type { OAuthAccessSnapshot } from "../oauth";
 import { credentialGeneration, getAccountCredential, getAccountSet, getCredential } from "../oauth/store";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "./registry";
 import type { OcxConfig, OcxProviderConfig } from "../types";
@@ -399,6 +400,33 @@ async function getTokenForAccountQuotaProbe(provider: string, accountId: string)
   return getValidAccessTokenForAccount(provider, accountId);
 }
 
+/**
+ * Capture the complete account tuple after any refresh has settled. Reading the bearer and
+ * project from separate credential reads lets rotation publish a mixed request; the equality
+ * check plus the dispatch-time validator make the tuple immutable from capture through fetch.
+ */
+async function captureAccountQuotaSnapshot(
+  provider: string,
+  accountId: string,
+  destination: string,
+): Promise<OAuthAccessSnapshot> {
+  const accessToken = await getTokenForAccountQuotaProbe(provider, accountId);
+  const credential = getAccountCredential(provider, accountId);
+  if (!credential || credential.access !== accessToken) {
+    throw new Error("OAuth account credential rotated during quota refresh");
+  }
+  const snapshot: OAuthAccessSnapshot = {
+    provider,
+    accountId,
+    generation: credentialGeneration(credential),
+    accessToken,
+    ...(credential.projectId ? { projectId: credential.projectId } : {}),
+    ...(destination ? { destination } : {}),
+  };
+  assertOAuthAccessSnapshotCurrent(snapshot, destination || undefined);
+  return snapshot;
+}
+
 async function fetchAccountQuota(
   provider: string,
   accountId: string,
@@ -415,18 +443,33 @@ async function fetchAccountQuota(
   const joinable = accountQuotaInflight.get(key);
   if (joinable) return joinable;
 
+  let writeGeneration = generation;
+  let writeKey = key;
   const probe = (async (): Promise<AccountQuotaCacheEntry> => {
     try {
-      const token = await getTokenForAccountQuotaProbe(provider, accountId);
+      const snapshot = provider === "google-antigravity"
+        ? await captureAccountQuotaSnapshot(provider, accountId, baseUrl || "https://daily-cloudcode-pa.googleapis.com")
+        : null;
+      const token = snapshot?.accessToken ?? await getTokenForAccountQuotaProbe(provider, accountId);
+      // A refresh may legitimately advance the generation while the probe is in flight. Write
+      // only under the captured generation's key; the old key is never repopulated by a late
+      // writer, and routing reads the same destination+account+generation identity.
+      writeGeneration = snapshot?.generation ?? generation;
+      writeKey = accountCacheKey(provider, accountId, destination, writeGeneration);
+      const priorQuota = writeGeneration === generation ? cached?.quota ?? null : null;
+      const tupleIsCurrent = (): boolean => {
+        const latest = getAccountCredential(provider, accountId);
+        return !!latest && credentialGeneration(latest) === writeGeneration;
+      };
       const quota = provider === "google-antigravity"
         ? await (async () => {
-            const stored = getAccountCredential(provider, accountId);
-            if (!stored?.projectId || destination === "!invalid!") return null;
+            if (!snapshot?.projectId || destination === "!invalid!") return null;
             return fetchAntigravityAccountQuota({
-              accessToken: token,
-              projectId: stored.projectId,
+              accessToken: snapshot.accessToken,
+              projectId: snapshot.projectId,
               baseUrl: baseUrl || "https://daily-cloudcode-pa.googleapis.com",
               timeoutMs: REQUEST_TIMEOUT_MS,
+              snapshotValidator: actualDestination => assertOAuthAccessSnapshotCurrent(snapshot, actualDestination),
             });
           })()
         : await fetchAnthropicUsageQuota(token);
@@ -435,25 +478,24 @@ async function fetchAccountQuota(
         // negative-cache instead of re-probing on every GUI poll.
         const entry: AccountQuotaCacheEntry = {
           ts: Date.now(),
-          quota: cached?.quota ?? null,
+          quota: priorQuota,
           unavailable: true,
         };
-        if (getAccountCredential(provider, accountId) && credentialGeneration(getAccountCredential(provider, accountId)!) === generation) accountQuotaCache.set(key, entry);
+        if (tupleIsCurrent()) accountQuotaCache.set(writeKey, entry);
         return entry;
       }
       const entry: AccountQuotaCacheEntry = { ts: Date.now(), quota };
-      const latest = getAccountCredential(provider, accountId);
-      if (latest && credentialGeneration(latest) === generation) accountQuotaCache.set(key, entry);
+      if (tupleIsCurrent()) accountQuotaCache.set(writeKey, entry);
       return entry;
     } catch (error) {
       const terminal = error instanceof AntigravityQuotaRpcError && isTerminalAntigravityQuotaStatus(error.status);
       const entry: AccountQuotaCacheEntry = {
         ts: Date.now(),
-        quota: terminal ? null : cached?.quota ?? null,
+        quota: terminal ? null : (writeGeneration === generation ? cached?.quota ?? null : null),
         unavailable: true,
       };
       const latest = getAccountCredential(provider, accountId);
-      if (latest && credentialGeneration(latest) === generation) accountQuotaCache.set(key, entry);
+      if (latest && credentialGeneration(latest) === writeGeneration) accountQuotaCache.set(writeKey, entry);
       return entry;
     }
   })().finally(() => {
@@ -837,18 +879,19 @@ function antigravityUsedPercent(quotaInfo: Record<string, unknown>): number | un
 }
 
 async function fetchAntigravityQuota(provider: string, config: OcxProviderConfig): Promise<ProviderQuotaReport | null> {
-  const credential = getCredential("google-antigravity");
-  if (!credential?.projectId) return null;
-  let accessToken: string;
+  const baseUrl = (config.baseUrl || "https://daily-cloudcode-pa.googleapis.com").replace(/\/+$/, "");
+  let snapshot: OAuthAccessSnapshot;
   try {
-    accessToken = await getValidAccessToken("google-antigravity");
+    snapshot = await getValidAccessTokenSnapshot("google-antigravity", baseUrl);
   } catch {
     return null;
   }
-  const baseUrl = (config.baseUrl || "https://daily-cloudcode-pa.googleapis.com").replace(/\/+$/, "");
+  if (!snapshot.projectId) return null;
   try {
-    const live = await fetchAntigravityLiveQuota({ accessToken, projectId: credential.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS });
-    const quota = live ?? await fetchAntigravityAccountQuota({ accessToken, projectId: credential.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS });
+    assertOAuthAccessSnapshotCurrent(snapshot, baseUrl);
+    const snapshotValidator = (actualDestination: string) => assertOAuthAccessSnapshotCurrent(snapshot, actualDestination);
+    const live = await fetchAntigravityLiveQuota({ accessToken: snapshot.accessToken, projectId: snapshot.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS, snapshotValidator });
+    const quota = live ?? await fetchAntigravityAccountQuota({ accessToken: snapshot.accessToken, projectId: snapshot.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS, snapshotValidator });
     return quota ? report(provider, live ? "google-antigravity:retrieveUserQuota" : "google-antigravity:fetchAvailableModels", quota) : null;
   } catch (error) {
     // Terminal auth/quota/geoblock responses must not preserve stale rows or retry on a peer.

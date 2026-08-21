@@ -347,13 +347,22 @@ export async function forceRefreshOAuthAccessSnapshot(
 }
 
 /** Validate the complete immutable routing tuple immediately before a bearer dispatch. */
-export function assertOAuthAccessSnapshotCurrent(snapshot: OAuthAccessSnapshot): void {
+function normalizedSnapshotDestination(value: string): string | null {
+  try { return new URL(value).origin.toLowerCase(); } catch { return null; }
+}
+
+export function assertOAuthAccessSnapshotCurrent(snapshot: OAuthAccessSnapshot, actualDestination?: string): void {
   const credential = getAccountCredential(snapshot.provider, snapshot.accountId);
   if (!credential || credentialGeneration(credential) !== snapshot.generation || credential.access !== snapshot.accessToken) {
     throw new Error("OAuth account credential changed before dispatch");
   }
   if (snapshot.projectId !== undefined && credential.projectId !== snapshot.projectId) {
     throw new Error("OAuth account project changed before dispatch");
+  }
+  if (snapshot.destination !== undefined && actualDestination !== undefined) {
+    const expected = normalizedSnapshotDestination(snapshot.destination);
+    const actual = normalizedSnapshotDestination(actualDestination);
+    if (!expected || !actual || expected !== actual) throw new Error("OAuth account destination changed before dispatch");
   }
 }
 

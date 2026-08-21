@@ -90,7 +90,7 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
   for (let attempt = 0; attempt < GOOGLE_RETRY_ATTEMPTS; attempt++) {
     if (ctx.abortSignal?.aborted) throw abortError(ctx.abortSignal);
     try {
-      if (label === "Antigravity" && ctx.oauthSnapshot) assertOAuthAccessSnapshotCurrent(ctx.oauthSnapshot);
+      if (label === "Antigravity" && ctx.oauthSnapshot) assertOAuthAccessSnapshotCurrent(ctx.oauthSnapshot, activeRequest.url);
       if (label === "Antigravity") await resolveAntigravityBearerDestination(activeRequest.url);
       const res = await fetchWithAttemptDeadline(activeRequest.url, {
         method: activeRequest.method,

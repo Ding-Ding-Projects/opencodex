@@ -17,6 +17,8 @@ export interface AntigravityLiveQuotaArgs {
   baseUrl: string;
   timeoutMs: number;
   fetchImpl?: FetchImpl;
+  /** Revalidates the immutable OAuth tuple immediately before each bearer dispatch. */
+  snapshotValidator?: (actualDestination: string) => void | Promise<void>;
 }
 
 interface Candidate { record: Record<string, unknown>; path: string[] }
@@ -133,6 +135,7 @@ export function isTerminalAntigravityQuotaStatus(status: number): boolean {
 }
 
 async function rpc(fetchImpl: FetchImpl, host: string, path: string, args: AntigravityLiveQuotaArgs): Promise<unknown> {
+  await args.snapshotValidator?.(host);
   const response = await fetchImpl(`${host}${path}`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": antigravityUserAgent(), Authorization: `Bearer ${args.accessToken}` },
@@ -185,6 +188,7 @@ export async function fetchAntigravityAccountQuota(args: AntigravityLiveQuotaArg
     if (!isAntigravityHttpsHost(host)) continue;
     try {
       await resolveAntigravityBearerDestination(host);
+      await args.snapshotValidator?.(host);
       const response = await fetchImpl(`${host}${CATALOG_PATH}`, {
         method: "POST",
         headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": antigravityUserAgent(), Authorization: `Bearer ${args.accessToken}` },

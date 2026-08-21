@@ -1429,7 +1429,10 @@ export async function handleResponses(
           route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
         );
       }
-      assertOAuthAccessSnapshotCurrent(resolved);
+      assertOAuthAccessSnapshotCurrent(
+        resolved,
+        route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+      );
       selectedOAuthSnapshot = resolved;
       applyOAuthAccountRouting(resolved);
     } catch (err) {
@@ -1472,7 +1475,7 @@ export async function handleResponses(
     );
     if (!nextAccountId) return null;
     const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId, route.provider.baseUrl);
-    assertOAuthAccessSnapshotCurrent(snapshot);
+    assertOAuthAccessSnapshotCurrent(snapshot, route.provider.baseUrl);
     selectedOAuthSnapshot = snapshot;
     providerAccountId = nextAccountId;
     applyOAuthAccountRouting(snapshot);
@@ -2361,7 +2364,10 @@ export async function handleResponses(
           return formatErrorResponse(401, "authentication_error", err instanceof Error ? err.message : String(err));
         }
         // The forced refresh is account-scoped, so the routing it implies is too.
-        assertOAuthAccessSnapshotCurrent(refreshed);
+        assertOAuthAccessSnapshotCurrent(
+          refreshed,
+          route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+        );
         selectedOAuthSnapshot = refreshed;
         applyOAuthAccountRouting(refreshed);
         const refreshedProvider = resolveProviderTransport(
@@ -2428,7 +2434,10 @@ export async function handleResponses(
             nextAccountId,
             route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
           );
-          assertOAuthAccessSnapshotCurrent(snapshot);
+          assertOAuthAccessSnapshotCurrent(
+            snapshot,
+            route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+          );
           oauthPoolAccountId = nextAccountId;
           oauthPoolFailovers += 1;
           selectedOAuthSnapshot = snapshot;
@@ -2599,7 +2608,10 @@ export async function handleResponses(
               nextAccountId,
               route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
             );
-            assertOAuthAccessSnapshotCurrent(snapshot);
+            assertOAuthAccessSnapshotCurrent(
+              snapshot,
+              route.providerName === "google-antigravity" ? route.provider.baseUrl : undefined,
+            );
             oauthPoolAccountId = nextAccountId;
             oauthPoolFailovers += 1;
             selectedOAuthSnapshot = snapshot;
