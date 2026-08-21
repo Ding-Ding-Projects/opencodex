@@ -7,6 +7,7 @@
  * refused before any service command is started.
  */
 import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { unlinkSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 export const SERVICE_CLASS_PROFILES = ["P09", "P10", "P18", "P34", "P35", "P36"] as const;
@@ -43,6 +44,7 @@ export type ServiceLifecycleAdapter = {
   restart(): Promise<void> | void;
   stop(): Promise<void> | void;
   uninstall(): Promise<void> | void;
+  verifyGone(): Promise<void> | void;
 };
 
 function parseProfile(value: string | undefined): ServiceClassProfile {
@@ -64,10 +66,10 @@ function child(args: string[], timeoutMs: number): Promise<void> {
 }
 
 function defaultAdapter(): ServiceLifecycleAdapter {
-  const native = ["service", "--native"];
+  const command = (action: string) => ["service", action, "--native"];
   return {
-    install: () => child([...native, "install"], 30_000),
-    start: () => child([...native, "start"], 30_000),
+    install: () => child(command("install"), 30_000),
+    start: () => child(command("start"), 30_000),
     probe: async () => {
       const port = Number(process.env.OCX_DISPOSABLE_HOST_PORT ?? "10100");
       const hostname = process.env.OCX_DISPOSABLE_HOSTNAME ?? "127.0.0.1";
@@ -75,11 +77,20 @@ function defaultAdapter(): ServiceLifecycleAdapter {
       if (!response.ok) throw new Error(`health probe returned ${response.status}`);
       const body = await response.json() as Partial<ServiceHealth>;
       if (body.service !== "opencodex" || body.status !== "ok" || !Number.isSafeInteger(body.pid) || !Number.isSafeInteger(body.port) || typeof body.hostname !== "string" || body.coordinator !== "ready") throw new Error("health probe was incomplete or fabricated");
-      return { service: "opencodex", status: "ok", pid: body.pid, port: body.port, hostname: body.hostname, coordinator: "ready", sourceCommit: exactCommit(process.env.OCX_ACCEPTANCE_SOURCE_COMMIT, "source commit"), buildCommit: exactCommit(process.env.OCX_ACCEPTANCE_BUILD_COMMIT, "build commit") };
+      const source = Bun.spawnSync(["git", "rev-parse", "HEAD"], { stdout: "pipe", stderr: "ignore", stdin: "ignore", windowsHide: true });
+      const sourceCommit = source.success ? new TextDecoder().decode(source.stdout).trim() : "";
+      return { service: "opencodex", status: "ok", pid: body.pid, port: body.port, hostname: body.hostname, coordinator: "ready", sourceCommit: exactCommit(sourceCommit, "source commit"), buildCommit: exactCommit(typeof body.commit === "string" ? body.commit : undefined, "build commit") };
     },
-    restart: () => child([...native, "restart"], 30_000),
-    stop: () => child([...native, "stop"], 30_000),
-    uninstall: () => child([...native, "uninstall"], 30_000),
+    restart: () => child(command("restart"), 30_000),
+    stop: () => child(command("stop"), 30_000),
+    uninstall: () => child(command("uninstall"), 30_000),
+    verifyGone: async () => {
+      const port = Number(process.env.OCX_DISPOSABLE_HOST_PORT ?? "10100");
+      const hostname = process.env.OCX_DISPOSABLE_HOSTNAME ?? "127.0.0.1";
+      try { await fetch(`http://${hostname}:${port}/healthz`, { signal: AbortSignal.timeout(2_000) }); throw new Error("health endpoint remained reachable after uninstall"); } catch (error) { if (error instanceof Error && /remained reachable/.test(error.message)) throw error; }
+      const status = Bun.spawnSync(["sc.exe", "query", "opencodex"], { stdout: "ignore", stderr: "ignore", stdin: "ignore", windowsHide: true });
+      if (status.success) throw new Error("service registration remained after uninstall");
+    },
   };
 }
 
@@ -87,8 +98,10 @@ function assertFreshDisposableHost(hostRoot: string): void {
   if (!existsSync(hostRoot) || !lstatSync(hostRoot).isDirectory()) throw new Error("disposable host root must be an existing directory");
   const attestationPath = resolve(hostRoot, "disposable-host-attestation.json");
   if (!existsSync(attestationPath)) throw new Error("disposable host attestation is required");
-  const parsed = JSON.parse(readFileSync(attestationPath, "utf8")) as { expiresAt?: string; nonce?: string; hostId?: string };
-  if (!parsed.hostId || !parsed.nonce || !parsed.expiresAt || Date.parse(parsed.expiresAt) <= Date.now()) throw new Error("disposable host attestation is stale or incomplete");
+  const parsed = JSON.parse(readFileSync(attestationPath, "utf8")) as { expiresAt?: string; nonce?: string; hostId?: string; owner?: string };
+  const owner = process.env.USERDOMAIN && process.env.USERNAME ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME;
+  if (!parsed.hostId || !parsed.nonce || !parsed.expiresAt || !parsed.owner || parsed.owner !== owner || Date.parse(parsed.expiresAt) <= Date.now()) throw new Error("disposable host attestation is stale, forged, or incomplete");
+  unlinkSync(attestationPath);
 }
 
 export async function runServiceAcceptance(options: { profile: string | undefined; hostRoot: string | undefined; disposableHost: string | undefined; sourceCommit?: string; buildCommit?: string; adapter?: ServiceLifecycleAdapter }): Promise<ServiceAcceptanceEvidence> {
@@ -116,6 +129,7 @@ export async function runServiceAcceptance(options: { profile: string | undefine
     await run("probe", async () => { const restarted = await adapter.probe(); if (!health || restarted.pid === health.pid) throw new Error("restart did not produce a new live process identity"); health = restarted; });
     await run("stop", () => adapter.stop());
     await run("uninstall", () => adapter.uninstall()); installed = false;
+    await run("probe", () => adapter.verifyGone());
     return { profile, status: "verified", sourceCommit, buildCommit, serviceId, health: health && { pid: health.pid, port: health.port, hostname: health.hostname, coordinator: health.coordinator }, phases };
   } catch (error) {
     if (installed) { try { await adapter.stop(); } catch { /* preserve original failure */ } try { await adapter.uninstall(); } catch { /* preserve original failure */ } }

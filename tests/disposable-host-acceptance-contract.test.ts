@@ -23,7 +23,7 @@ describe("disposable-host service acceptance contract", () => {
 
   test("runs the owned install/start/probe/restart/probe/stop/uninstall lifecycle", async () => {
     const root = mkdtempSync(join(process.env.TEMP ?? ".", "ocx-service-acceptance-"));
-    writeFileSync(join(root, "disposable-host-attestation.json"), JSON.stringify({ hostId: "test-host", nonce: "one-use", expiresAt: new Date(Date.now() + 60_000).toISOString() }));
+    writeFileSync(join(root, "disposable-host-attestation.json"), JSON.stringify({ hostId: "test-host", nonce: "one-use", owner: `${process.env.USERDOMAIN}\\${process.env.USERNAME}`, expiresAt: new Date(Date.now() + 60_000).toISOString() }));
     const calls: string[] = [];
     let pid = 700;
     const adapter = {
@@ -33,17 +33,18 @@ describe("disposable-host service acceptance contract", () => {
       restart: () => { calls.push("restart"); },
       stop: () => { calls.push("stop"); },
       uninstall: () => { calls.push("uninstall"); },
+      verifyGone: () => { calls.push("verify-gone"); },
     };
     const result = await runServiceAcceptance({ profile: "P09", hostRoot: root, disposableHost: "1", sourceCommit: "a".repeat(40), buildCommit: "b".repeat(40), adapter });
     expect(result.status).toBe("verified");
-    expect(calls).toEqual(["install", "start", "probe", "restart", "probe", "stop", "uninstall"]);
+    expect(calls).toEqual(["install", "start", "probe", "restart", "probe", "stop", "uninstall", "verify-gone"]);
   });
 
   test("rejects stale attestation before invoking a service operation", async () => {
     const root = mkdtempSync(join(process.env.TEMP ?? ".", "ocx-service-acceptance-"));
-    writeFileSync(join(root, "disposable-host-attestation.json"), JSON.stringify({ hostId: "test-host", nonce: "stale", expiresAt: new Date(Date.now() - 1).toISOString() }));
+    writeFileSync(join(root, "disposable-host-attestation.json"), JSON.stringify({ hostId: "test-host", nonce: "stale", owner: `${process.env.USERDOMAIN}\\${process.env.USERNAME}`, expiresAt: new Date(Date.now() - 1).toISOString() }));
     let called = false;
-    await expect(runServiceAcceptance({ profile: "P10", hostRoot: root, disposableHost: "1", sourceCommit: "a".repeat(40), buildCommit: "b".repeat(40), adapter: { install: () => { called = true; }, start: () => {}, probe: () => { throw new Error("should not probe"); }, restart: () => {}, stop: () => {}, uninstall: () => {} } })).rejects.toThrow(/stale/);
+    await expect(runServiceAcceptance({ profile: "P10", hostRoot: root, disposableHost: "1", sourceCommit: "a".repeat(40), buildCommit: "b".repeat(40), adapter: { install: () => { called = true; }, start: () => {}, probe: () => { throw new Error("should not probe"); }, restart: () => {}, stop: () => {}, uninstall: () => {}, verifyGone: () => {} } })).rejects.toThrow(/stale/);
     expect(called).toBe(false);
   });
 });
