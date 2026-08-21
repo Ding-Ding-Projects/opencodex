@@ -454,6 +454,7 @@ const providerConfigSchema = z.object({
     .refine(value => !/[\u0000-\u001f\u007f]/u.test(value) && !value.includes("/"), {
       message: "modelDisplayNames values must be printable labels without slash characters",
     })).optional(),
+  modelSuppressSyntheticMax: z.record(z.string().min(1), z.boolean()).optional(),
   retainModels: z.array(z.string().trim().min(1))
     .transform(normalizeNonBlankStringArray)
     .optional(),
@@ -866,6 +867,17 @@ const configSchema = z.object({
         code: "custom",
         path: ["providers", name, "modelAdapters"],
         message: modelAdaptersError,
+      });
+    }
+    const suppressSyntheticMaxError = booleanRecordConfigError(
+      (provider as { modelSuppressSyntheticMax?: unknown }).modelSuppressSyntheticMax,
+      "modelSuppressSyntheticMax",
+    );
+    if (suppressSyntheticMaxError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", name, "modelSuppressSyntheticMax"],
+        message: suppressSyntheticMaxError,
       });
     }
     const maxInputError = positiveIntegerRecordConfigError(

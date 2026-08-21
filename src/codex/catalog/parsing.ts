@@ -100,6 +100,8 @@ export interface CatalogModel {
   owned_by?: string;
   reasoningEfforts?: string[];
   defaultReasoningEffort?: string;
+  /** Transient policy: do not invent a missing max rung for this model. */
+  suppressSyntheticMax?: boolean;
   contextWindow?: number;
   maxInputTokens?: number;
   contextCap?: number;

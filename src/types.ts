@@ -935,6 +935,8 @@ export interface OcxProviderConfig {
   modelAdapters?: Record<string, string>;
   /** Display-only labels for live-discovered models, keyed by native model id. */
   modelDisplayNames?: Record<string, string>;
+  /** Per-model opt-out for the catalog's synthetic max reasoning rung. */
+  modelSuppressSyntheticMax?: Record<string, boolean>;
   baseUrl: string;
   /**
    * Optional relative resource path for key-auth openai-responses requests. Must start with `/`

@@ -84,6 +84,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         models: p.models ?? [],
         retainModels: p.retainModels ?? [],
         modelDisplayNames: p.modelDisplayNames ?? {},
+        modelSuppressSyntheticMax: p.modelSuppressSyntheticMax ?? {},
         authMode: p.authMode,
         apiKeyTransport: p.apiKeyTransport,
         keyOptional: p.keyOptional === true,
@@ -148,6 +149,13 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // let the (possibly new) apiKey join the pool as the active entry.
     const existingPool = config.providers[name]?.apiKeyPool;
     if (existingPool && !prov.apiKeyPool) prov.apiKeyPool = existingPool;
+    const existing = config.providers[name];
+    if (existing && !Object.hasOwn(prov, "modelDisplayNames") && existing.modelDisplayNames) {
+      prov.modelDisplayNames = { ...existing.modelDisplayNames };
+    }
+    if (existing && !Object.hasOwn(prov, "modelSuppressSyntheticMax") && existing.modelSuppressSyntheticMax) {
+      prov.modelSuppressSyntheticMax = { ...existing.modelSuppressSyntheticMax };
+    }
     config.providers[name] = stripRegistryOnlyStaticHeaders(name, prov);
     if (body.setDefault) config.defaultProvider = name;
     save(config);
@@ -296,6 +304,17 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         next.modelDisplayNames = Object.fromEntries(
           Object.entries(labels as Record<string, string>).map(([modelId, label]) => [modelId, label.trim()]),
         );
+      }
+      touched = true;
+    }
+    if (Object.hasOwn(rawBody, "modelSuppressSyntheticMax")) {
+      const suppression = rawBody.modelSuppressSyntheticMax;
+      if (suppression === undefined || suppression === null) delete next.modelSuppressSyntheticMax;
+      else if (!suppression || typeof suppression !== "object" || Array.isArray(suppression)
+        || Object.entries(suppression as Record<string, unknown>).some(([modelId, value]) => !modelId.trim() || typeof value !== "boolean")) {
+        return jsonResponse({ error: "modelSuppressSyntheticMax must be a boolean record" }, 400);
+      } else {
+        next.modelSuppressSyntheticMax = { ...(suppression as Record<string, boolean>) };
       }
       touched = true;
     }

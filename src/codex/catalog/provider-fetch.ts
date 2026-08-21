@@ -139,9 +139,13 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
   }
   const reasoningEfforts = configuredReasoningEfforts(prov, model.id);
   const defaultReasoningEffort = modelRecordValue(prov.modelDefaultReasoningEfforts, model.id) ?? model.defaultReasoningEffort;
+  const suppressSyntheticMax = modelRecordValue(prov.modelSuppressSyntheticMax, model.id) === true;
   const supportsReasoningSummaries = configuredReasoningSummarySupport(prov, model.id);
   const hinted = {
-    ...model,
+    ...(() => {
+      const { suppressSyntheticMax: _staleSuppressSyntheticMax, ...cleanModel } = model;
+      return cleanModel;
+    })(),
     ...(configuredCap !== undefined
       ? {
         contextWindow: typeof model.contextWindow === "number" && model.contextWindow > 0
@@ -159,6 +163,7 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
       }
       : {}),
     ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+    ...(suppressSyntheticMax ? { suppressSyntheticMax: true } : {}),
     ...(typeof supportsReasoningSummaries === "boolean" ? { supportsReasoningSummaries } : {}),
     ...(prov.adapter === "kiro" ? { supportsVerbosity: false } : {}),
     // Default-on for openai-chat providers (explicit false opts out); other adapters
@@ -707,6 +712,9 @@ export async function gatherRoutedModels(
   const customModels = (config.customModels ?? []).map(cm => {
     const rawProvider = config.providers[cm.provider];
     const supportsReasoningSummaries = configuredReasoningSummarySupport(rawProvider, cm.modelId);
+    const suppressSyntheticMax = rawProvider
+      ? modelRecordValue(rawProvider.modelSuppressSyntheticMax, cm.modelId) === true
+      : false;
     const base: CatalogModel = {
       id: cm.modelId,
       provider: cm.provider,
@@ -715,6 +723,7 @@ export async function gatherRoutedModels(
       ...(cm.contextWindow ? { contextWindow: cm.contextWindow } : {}),
       ...(cm.inputModalities ? { inputModalities: cm.inputModalities } : {}),
       ...(typeof supportsReasoningSummaries === "boolean" ? { supportsReasoningSummaries } : {}),
+      ...(suppressSyntheticMax ? { suppressSyntheticMax: true } : {}),
     };
     // Vision-sidecar coverage ONLY: if the custom model is in the enriched provider's
     // noVisionModels, advertise image input so the Codex app lets images reach the sidecar

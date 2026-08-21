@@ -146,6 +146,7 @@ export function applyReasoningLevels(
   effortsOverride?: string[],
   defaultOverride?: string,
   preserveExact = false,
+  suppressSyntheticMax = false,
 ): void {
   let efforts = sanitizeCodexReasoningEfforts(effortsOverride) ?? ROUTED_REASONING_LEVELS.map(l => l.effort);
   // Mock top tiers (user decision 260709): every reasoning-capable model advertises `max`
@@ -156,7 +157,7 @@ export function applyReasoningLevels(
   // nativeEffortClamp (max -> the model's real top rung).
   if (!preserveExact && efforts.length > 0) {
     const additions: string[] = [];
-    if (!efforts.includes("max")) additions.push("max");
+    if (!suppressSyntheticMax && !efforts.includes("max")) additions.push("max");
     if (!efforts.includes("ultra")) additions.push("ultra");
     if (additions.length > 0) efforts = sanitizeCodexReasoningEfforts([...efforts, ...additions]) ?? efforts;
   }

@@ -197,7 +197,7 @@ export function deriveEntry(
           `You are a coding agent powered by the ${modelName} model. Do not claim to be GPT-5 or made by OpenAI.`,
         );
       }
-      applyReasoningLevels(e, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact);
+      applyReasoningLevels(e, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact, model?.suppressSyntheticMax === true);
       normalizeRoutedCatalogEntry(e, model?.parallelToolCalls === true);
       if (model) applyJawcodeCatalogMetadata(e, model.provider, model.id, model.contextCap);
       applyCatalogModelMetadata(e, model);
@@ -230,7 +230,7 @@ export function deriveEntry(
     ...(isRouted ? { web_search_tool_type: "text_and_image", supports_search_tool: true } : {}),
   };
   if (isRouted) {
-    applyReasoningLevels(entry, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact);
+    applyReasoningLevels(entry, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact, model?.suppressSyntheticMax === true);
   }
   else {
     applyReasoningLevels(entry, isGpt56NativeSlug(slug) ? undefined : ["low", "medium", "high", "xhigh"]);
@@ -349,6 +349,7 @@ export function mergeCatalogEntriesForSync(
   exactComboSlugs: ReadonlySet<string> = new Set(),
   hasPhysicalComboProvider = false,
   includeNativeOpenAi = true,
+  syntheticMaxSuppressedSlugs: ReadonlySet<string> = new Set(),
 ): RawEntry[] {
   const rank = new Map(featured.map((slug, i) => [slug, i] as const));
   const native = includeNativeOpenAi
@@ -456,7 +457,8 @@ export function mergeCatalogEntriesForSync(
     // Mock-max universality (260709): preserved routed entries from disk may predate
     // the max rung — ensure it here so subagent max spawns validate on every
     // reasoning-capable entry. max only: 5.6 exact ladders (luna: no ultra) stay intact.
-    if (!exactCombo) {
+    const suppressSyntheticMax = typeof m.slug === "string" && syntheticMaxSuppressedSlugs.has(m.slug);
+    if (!exactCombo && !suppressSyntheticMax) {
       const levels = Array.isArray(e.supported_reasoning_levels)
         ? e.supported_reasoning_levels as Array<{ effort?: string }>
         : [];
@@ -477,6 +479,17 @@ export function mergeCatalogEntriesForSync(
   // Native enable/disable (single choke point: bare slugs in `disabledModels`). Runs as the
   // LAST pass so the upstream-upgrade branch above can never clobber a hide flag back to list.
   return applyMultiAgentMode(applyNativeVisibility(mergedEntries, disabledNative), multiAgentMode);
+}
+
+export function syntheticMaxSuppressedCatalogSlugs(config: Pick<OcxConfig, "providers">): Set<string> {
+  const slugs = new Set<string>();
+  for (const [provider, entry] of Object.entries(config.providers)) {
+    if (entry.disabled === true) continue;
+    for (const [model, suppress] of Object.entries(entry.modelSuppressSyntheticMax ?? {})) {
+      if (suppress === true) slugs.add(routedSlug(provider, model));
+    }
+  }
+  return slugs;
 }
 
 export async function syncCatalogModels(config: OcxConfig): Promise<{
@@ -531,7 +544,7 @@ export async function syncCatalogModels(config: OcxConfig): Promise<{
   // bare gpt-* rows that hard-404 via NoEnabledOpenAiProviderError. Keep natives when no
   // providers are configured yet (fresh install / catalog bootstrap tests).
   const includeNativeOpenAi = enabledProviders.length === 0 || hasCanonicalOpenai;
-  catalog.models = mergeCatalogEntriesForSync(catalog.models ?? [], goEntries, baseline, featured, wsEnabled, goIds, template, disabledNativeSlugs(config), gatheredProviderNames, multiAgentMode, exactComboSlugs, hasPhysicalComboProvider, includeNativeOpenAi);
+  catalog.models = mergeCatalogEntriesForSync(catalog.models ?? [], goEntries, baseline, featured, wsEnabled, goIds, template, disabledNativeSlugs(config), gatheredProviderNames, multiAgentMode, exactComboSlugs, hasPhysicalComboProvider, includeNativeOpenAi, syntheticMaxSuppressedCatalogSlugs(config));
   clampCatalogModelsToCodexSupport(catalog.models);
 
   const autoReviewModel = configuredAutoReviewModel();
