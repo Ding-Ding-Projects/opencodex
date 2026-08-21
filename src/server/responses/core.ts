@@ -170,6 +170,8 @@ import {
   type NestedSubagentDecision,
 } from "../nested-subagents";
 import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
+import { agentTaskRecoveryConfig, recoverEncryptedAgentTask } from "./agent-task-recovery";
+import { markBodyNonPersistable } from "../../responses/state";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel } from "./fetch-helpers";
 import { guardTerminalEventStream } from "./terminal-guard";
 import { grokNativeToolNamesForRequest } from "../../adapters/grok-structured-edit";
@@ -837,6 +839,7 @@ async function applyFinalRouteRequestNormalization(args: {
       subagentModels: childRow?.models ?? config.subagentModels,
       subagentModelFallback: config.subagentModelFallback,
       injectionPrompt: config.injectionPrompt,
+      subagentRoles: config.subagentRoles,
       depth: nested && !nested.clamp
         ? {
           depth: nested.depth,
@@ -930,7 +933,7 @@ export async function handleComboResponses(
     });
   };
 
-  const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+  let unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (rawBody as { input?: unknown } | undefined)?.input,
   );
   const canDecryptUnreadableAgentTask = (target: (typeof combo.targets)[number]): boolean => {
@@ -1145,7 +1148,7 @@ export async function handleResponses(
   if (comboId && Object.hasOwn(config.combos ?? {}, comboId)) {
     return handleComboResponses(req, body, comboId, config, logCtx, options);
   }
-  const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+  let unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
   );
   const originalBody = body;
@@ -1313,6 +1316,42 @@ export async function handleResponses(
       }
     }
   }
+
+  // Optional, explicitly enabled recovery runs only after the final route is known. It never
+  // weakens the native-only encrypted-task refusal: recovery must produce plaintext before the
+  // route check can proceed, and a miss leaves the original ciphertext untouched.
+  if (isThreadSpawnRequest(req.headers)
+    && unreadableEncryptedAgentTask
+    && !isCanonicalOpenAiForwardProvider(route.provider)
+    && !options.comboAttempt) {
+    const recovery = agentTaskRecoveryConfig(config);
+    if (recovery) {
+      const recovered = await recoverEncryptedAgentTask(
+        req,
+        (body as { input?: unknown } | undefined)?.input,
+        recovery,
+        config,
+        { parentThreadId: req.headers.get("x-codex-parent-thread-id")?.trim() ?? null, abortSignal: options.abortSignal },
+      ).catch(() => false);
+      if (recovered) {
+        unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+        if (!unreadableEncryptedAgentTask) {
+          markBodyNonPersistable(body);
+          try {
+            const reparsed = parseRequest(body);
+            reparsed._providerContinuation = parsed._providerContinuation;
+            reparsed._cursorConversationId = parsed._cursorConversationId;
+            reparsed._clientThreadId = parsed._clientThreadId;
+            parsed = reparsed;
+          } catch {
+            unreadableEncryptedAgentTask = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (options.abortSignal?.aborted) return clientCancelledResponse();
 
   // Encrypted child tasks may only reach the canonical native backend. This check
   // runs against the FINAL route so native-only fallback can rescue a routed primary.

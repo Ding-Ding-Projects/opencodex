@@ -11,6 +11,8 @@ export interface BoundedBodyOptions {
 	totalTimeoutMs?: number;
 	/** Deadline between non-empty raw chunks. Exposed for focused tests. */
 	inactivityTimeoutMs?: number;
+	/** Optional larger bound for explicitly trusted internal response consumers. */
+	maxBytes?: number;
 }
 
 export interface BoundedBodyResult {
@@ -93,6 +95,9 @@ export async function readBoundedResponseBody(
 	}
 
 	const reader = body.getReader();
+	const maxBytes = typeof options.maxBytes === "number" && Number.isSafeInteger(options.maxBytes) && options.maxBytes > 0
+		? options.maxBytes
+		: BOUNDED_BODY_MAX_BYTES;
 	const chunks: Uint8Array[] = [];
 	let retainedBytes = 0;
 	let mustCancel = false;
@@ -165,7 +170,7 @@ export async function readBoundedResponseBody(
 				INACTIVITY_TIMEOUT,
 			);
 
-			if (value.byteLength > BOUNDED_BODY_MAX_BYTES - retainedBytes) {
+			if (value.byteLength > maxBytes - retainedBytes) {
 				mustCancel = true;
 				cancelReason = new DOMException("Error body size limit reached", "QuotaExceededError");
 				chunks.length = 0;

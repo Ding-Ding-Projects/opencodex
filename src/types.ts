@@ -549,6 +549,16 @@ export interface OcxNestedSubagentsConfig {
   depths?: OcxNestedSubagentDepthConfig[];
 }
 
+/** User-authored specialist the Codex parent may spawn by name. */
+export interface OcxSubagentRole {
+  id: string;
+  description: string;
+  model: string;
+  effort?: string;
+  developerInstructions: string;
+  enabled?: boolean;
+}
+
 export const DATA_PLANE_API_KEY_PURPOSES = ["github-copilot-desktop"] as const;
 export type DataPlaneApiKeyPurpose = typeof DATA_PLANE_API_KEY_PURPOSES[number];
 
@@ -574,6 +584,10 @@ export interface OcxConfig {
    * Codex's spawn_agent only advertises the first 5 routed models, so this picks which 5 appear.
    */
   subagentModels?: string[];
+  /** Bounded named specialist roles used by v2 guidance and the picker roster. */
+  subagentRoles?: OcxSubagentRole[];
+  /** Monotonic management revision used for compare-and-swap role removal. */
+  subagentRolesRevision?: number;
   /**
    * Priority-ordered fallback models for spawned sub-agents. When the requested
    * model is quota-exhausted or recently failed, opencodex rewrites the child
@@ -627,7 +641,8 @@ export interface OcxConfig {
    * collab surface would have fired; firing gates are unchanged. Placeholders:
    * `{{model}}` -> injectionModel, `{{effort}}` -> injectionEffort, `{{roster}}` ->
    * the resolved sub-agent roster block ("" when nothing resolves), `{{fallback}}` ->
-   * the configured subagent model fallback guidance block ("" when unset).
+   * the configured subagent model fallback guidance block, and `{{roles}}` -> the
+   * bounded enabled named-role catalog ("" when none resolves).
    */
   injectionPrompt?: string;
   /**
@@ -681,6 +696,16 @@ export interface OcxConfig {
    * - "v2": force ALL models to v2 surface (override upstream pins)
    */
   multiAgentMode?: "v1" | "default" | "v2";
+  /** Experimental, default-off ChatGPT recovery for encrypted V2 routed tasks. */
+  agentTaskRecovery?: {
+    enabled?: boolean;
+    /** ChatGPT model used by the recovery request. Default: gpt-5.6-sol. */
+    model?: string;
+    /** Recovery request timeout in milliseconds. Default: 45000. */
+    timeoutMs?: number;
+    /** Maximum in-memory ciphertext-to-assignment entries. Default: 200. */
+    cacheEntries?: number;
+  };
   /** Provider-level Codex-visible context caps. Values only lower known model context windows. */
   providerContextCaps?: Record<string, number>;
   /** Global Codex-visible context cap value (tokens). Falls back to DEFAULT_PROVIDER_CONTEXT_CAP. */
@@ -1027,6 +1052,8 @@ export interface OcxProviderConfig {
   modelInputModalities?: Record<string, string[]>;
   /** Model-specific max input token limits. Values cap auto_compact_token_limit. */
   modelMaxInputTokens?: Record<string, number>;
+  /** Model-specific soft auto-compaction thresholds; values only lower the effective envelope. */
+  modelAutoCompactTokenLimits?: Record<string, number>;
   /**
    * Provider-wide fallback for chat-completions `max_tokens` when the caller omits
    * Responses `max_output_tokens`. Adapters still let an explicit request win.

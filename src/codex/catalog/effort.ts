@@ -13,6 +13,7 @@ import { getJawcodeModelMetadata, getJawcodeModelMetadataCaseInsensitive, listJa
 import { enrichProviderFromRegistry, shouldCaseFoldMetadataModelId } from "../../providers/derive";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { applyProviderContextCap, providerContextCap } from "../../providers/context-cap";
+import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { routedSlug, slugEquals, slugsEquivalent } from "../../providers/slug-codec";
 import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
@@ -125,10 +126,14 @@ export function applyCatalogModelMetadata(entry: RawEntry, model?: CatalogModel)
   if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
     entry.context_window = model.contextWindow;
     entry.max_context_window = model.contextWindow;
-    entry.auto_compact_token_limit = Math.min(
-      Math.floor(model.contextWindow * 0.9),
-      model.maxInputTokens ?? Number.POSITIVE_INFINITY,
+    entry.auto_compact_token_limit = clampAutoCompactTokenLimit(
+      model.contextWindow,
+      model.maxInputTokens,
+      model.autoCompactTokenLimit,
     );
+  } else if (typeof entry.context_window === "number" && entry.context_window > 0
+    && typeof model.maxInputTokens === "number" && model.maxInputTokens > 0) {
+    entry.auto_compact_token_limit = clampAutoCompactTokenLimit(entry.context_window, model.maxInputTokens);
   }
   if (Array.isArray(model.inputModalities) && model.inputModalities.length > 0) {
     entry.input_modalities = model.inputModalities;

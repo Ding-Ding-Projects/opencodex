@@ -23,6 +23,7 @@ import { providerConfigurationState, providerHasConfiguredApiKey } from "../prov
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 import { vercelGatewayRoutingConfigError } from "../providers/vercel-gateway-routing";
 import { responsesTerminalRepairConfigError } from "../providers/terminal-repair";
+import { modelAutoCompactTokenLimitsConfigError } from "../providers/auto-compact-budget";
 
 let _corsOrigin = "http://localhost:10100";
 export function setCorsOrigin(port: number): void { _corsOrigin = `http://localhost:${port}`; }
@@ -434,7 +435,11 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
       return "provider openai codexAccountMode must be pool or direct";
     }
     if (seed) seed.codexAccountMode = raw.codexAccountMode;
-    const canonical = seed && sameCanonicalProviderSeed(raw, seed);
+    // The per-model soft budget is a user-owned lowering overlay, not part of the
+    // canonical transport seed for the built-in OpenAI provider.
+    const canonicalRaw = { ...raw };
+    delete canonicalRaw.modelAutoCompactTokenLimits;
+    const canonical = seed && sameCanonicalProviderSeed(canonicalRaw, seed);
     if (!canonical) {
       return `provider ${name} must equal the canonical built-in provider seed`;
     }
@@ -468,6 +473,8 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
   if (apiKeyTransportError) return `provider ${name} ${apiKeyTransportError}`;
   const maxInputError = positiveIntegerRecordConfigError(raw.modelMaxInputTokens, "modelMaxInputTokens");
   if (maxInputError) return `provider ${name} ${maxInputError}`;
+  const autoCompactError = modelAutoCompactTokenLimitsConfigError(raw.modelAutoCompactTokenLimits, { requireNativeIds: name === "openai" });
+  if (autoCompactError) return `provider ${name} ${autoCompactError}`;
   const reasoningSummariesError = booleanRecordConfigError(raw.modelSupportsReasoningSummaries, "modelSupportsReasoningSummaries");
   if (reasoningSummariesError) return `provider ${name} ${reasoningSummariesError}`;
   const reasoningSummaryDeliveryError = reasoningSummaryDeliveryRecordConfigError(
@@ -560,6 +567,7 @@ export function safeConfigDTO(config: OcxConfig): unknown {
       "modelSuppressSyntheticMax",
       "contextWindow",
       "modelContextWindows",
+      "modelAutoCompactTokenLimits",
       "defaultMaxOutputTokens",
       "modelMaxOutputTokens",
       "openRouterRouting",

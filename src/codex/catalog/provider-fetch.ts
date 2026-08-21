@@ -27,6 +27,7 @@ import { getJawcodeModelMetadata, getJawcodeModelMetadataCaseInsensitive, listJa
 import { enrichProviderFromRegistry, shouldCaseFoldMetadataModelId } from "../../providers/derive";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { applyProviderContextCap, providerContextCap } from "../../providers/context-cap";
+import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { routedSlug, slugEquals, slugsEquivalent } from "../../providers/slug-codec";
 import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
@@ -52,7 +53,7 @@ import upstreamModelsSnapshot from "../data/upstream-models.json";
 import { JAWCODE_CATALOG_AUGMENT_PROVIDERS, catalogModelSlug, shouldExposeRoutedModel } from "./parsing";
 import type { CatalogModel } from "./parsing";
 import { applyOperatorDisplayLabels } from "./display-labels";
-import { disabledNativeSlugs, hasComboTargets, nativeInputModalities, nativeOpenAiContextWindow, nativeOpenAiSlugs, nativeParallelToolCalls, nativeReasoningEfforts } from "./metadata";
+import { disabledNativeSlugs, hasComboTargets, nativeInputModalities, nativeOpenAiAutoCompactTokenLimit, nativeOpenAiContextWindow, nativeOpenAiSlugs, nativeParallelToolCalls, nativeReasoningEfforts } from "./metadata";
 import { deriveComboCatalogModel, normalizedOpenAiApiSignature, openAiApiCollisionWarnings, replaceLastComboCatalogOmissions, warnUncataloguedComboOnce } from "./aggregation";
 import type { ComboCatalogOmission } from "./aggregation";
 
@@ -118,6 +119,11 @@ export function configuredMaxInputTokens(prov: OcxProviderConfig, id: string): n
   return typeof configured === "number" && configured > 0 ? configured : undefined;
 }
 
+export function configuredAutoCompactTokenLimit(prov: OcxProviderConfig, id: string): number | undefined {
+  const configured = modelRecordValue(prov.modelAutoCompactTokenLimits, id);
+  return typeof configured === "number" && Number.isSafeInteger(configured) && configured > 0 ? configured : undefined;
+}
+
 function configuredReasoningSummarySupport(prov: OcxProviderConfig | undefined, id: string): boolean | undefined {
   if (!prov) return undefined;
   const explicit = modelRecordValue(prov.modelSupportsReasoningSummaries, id);
@@ -129,6 +135,7 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
   void name;
   const configuredCap = configuredContextWindow(prov, model.id);
   const configuredMaxInput = configuredMaxInputTokens(prov, model.id);
+  const configuredAutoCompact = configuredAutoCompactTokenLimit(prov, model.id);
   let inputModalities = configuredInputModalities(prov, model.id);
   // Vision-sidecar coverage: `noVisionModels` marks models whose images the PROXY describes
   // (src/vision/index.ts). The catalog must still advertise image input for them — the Codex app
@@ -169,6 +176,7 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
           : configuredMaxInput,
       }
       : {}),
+    ...(configuredAutoCompact !== undefined ? { autoCompactTokenLimit: configuredAutoCompact } : {}),
     ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
     ...(suppressSyntheticMax ? { suppressSyntheticMax: true } : {}),
     ...(typeof supportsReasoningSummaries === "boolean" ? { supportsReasoningSummaries } : {}),
@@ -181,10 +189,16 @@ export function applyProviderConfigHints(name: string, prov: OcxProviderConfig, 
       : {}),
   };
   const capped = applyProviderContextCap(hinted.contextWindow, providerCap);
-  if (providerCap !== undefined && capped !== hinted.contextWindow) {
-    return { ...hinted, contextWindow: capped, contextCap: providerCap, contextCapped: true };
-  }
-  return providerCap !== undefined ? { ...hinted, contextCap: providerCap, contextCapped: false } : hinted;
+  const withCap = providerCap !== undefined && capped !== hinted.contextWindow
+    ? { ...hinted, contextWindow: capped, contextCap: providerCap, contextCapped: true }
+    : providerCap !== undefined ? { ...hinted, contextCap: providerCap, contextCapped: false } : hinted;
+  const contextWindow = typeof withCap.contextWindow === "number" && withCap.contextWindow > 0 ? withCap.contextWindow : undefined;
+  const maxInputTokens = typeof withCap.maxInputTokens === "number" && withCap.maxInputTokens > 0
+    ? (contextWindow !== undefined ? Math.min(withCap.maxInputTokens, contextWindow) : withCap.maxInputTokens)
+    : undefined;
+  const bounded = maxInputTokens !== undefined && maxInputTokens !== withCap.maxInputTokens ? { ...withCap, maxInputTokens } : withCap;
+  if (contextWindow === undefined || bounded.autoCompactTokenLimit === undefined) return bounded;
+  return { ...bounded, autoCompactTokenLimit: clampAutoCompactTokenLimit(contextWindow, maxInputTokens, bounded.autoCompactTokenLimit) };
 }
 
 export function catalogHintsFromProviderConfig(name: string, prov: OcxProviderConfig, id: string, contextCap?: number): Partial<CatalogModel> {
@@ -711,12 +725,14 @@ export async function gatherRoutedModels(
       if (disabled.has(slug)) continue;
       const contextWindow = nativeOpenAiContextWindow(slug);
       if (contextWindow === undefined) continue;
+      const autoCompactTokenLimit = nativeOpenAiAutoCompactTokenLimit(slug, config.providers.openai);
       const synthetic: CatalogModel = {
         provider: "openai",
         id: slug,
         owned_by: "openai",
         contextWindow,
         maxInputTokens: contextWindow,
+        ...(autoCompactTokenLimit !== undefined ? { autoCompactTokenLimit } : {}),
         inputModalities: nativeInputModalities(slug),
         reasoningEfforts: nativeReasoningEfforts(slug),
         ...(nativeParallelToolCalls(slug) ? { parallelToolCalls: true } : {}),

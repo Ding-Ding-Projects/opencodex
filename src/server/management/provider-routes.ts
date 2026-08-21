@@ -38,6 +38,7 @@ import { clearThreadAccountMap } from "../../codex/routing";
 import { primeCodexPoolQuotas } from "../../codex/auth-api";
 import { getProviderDiscoveryStatus, getProviderLiveModelCount } from "../../codex/model-cache";
 import { DEFAULT_PROVIDER_CONTEXT_CAP, globalContextCapValue, providerContextCap, providerContextCaps, setAllProviderContextCaps, setGlobalContextCapValue, setProviderContextCap } from "../../providers/context-cap";
+import { modelAutoCompactTokenLimitsConfigError } from "../../providers/auto-compact-budget";
 import { resolveCodexHomeDir } from "../../codex/home";
 import { readUsageEntries } from "../../usage/log";
 import { getUsageDebugLogEntries } from "../../usage/debug";
@@ -86,6 +87,10 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         retainModels: p.retainModels ?? [],
         modelDisplayNames: p.modelDisplayNames ?? {},
         modelSuppressSyntheticMax: p.modelSuppressSyntheticMax ?? {},
+        contextWindow: p.contextWindow,
+        modelContextWindows: p.modelContextWindows,
+        modelMaxInputTokens: p.modelMaxInputTokens,
+        modelAutoCompactTokenLimits: p.modelAutoCompactTokenLimits,
         authMode: p.authMode,
         apiKeyTransport: p.apiKeyTransport,
         keyOptional: p.keyOptional === true,
@@ -332,6 +337,23 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       }
       touched = true;
     }
+
+   if (Object.hasOwn(rawBody, "modelAutoCompactTokenLimits")) {
+     const value = rawBody.modelAutoCompactTokenLimits;
+     const error = modelAutoCompactTokenLimitsConfigError(value, { allowTombstones: true, requireNativeIds: name === "openai" });
+     if (error) return jsonResponse({ error }, 400);
+     if (value === null) delete next.modelAutoCompactTokenLimits;
+     else {
+       const merged: Record<string, number> = { ...(next.modelAutoCompactTokenLimits ?? {}) };
+       for (const [model, budget] of Object.entries(value as Record<string, number | null>)) {
+         if (budget === null) delete merged[model];
+         else merged[model] = budget;
+       }
+       if (Object.keys(merged).length > 0) next.modelAutoCompactTokenLimits = merged;
+       else delete next.modelAutoCompactTokenLimits;
+     }
+     touched = true;
+   }
 
     if (!touched) return jsonResponse({ error: "no recognized fields to update" }, 400);
 
