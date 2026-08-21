@@ -1978,3 +1978,23 @@ export function backupInvalidConfig(configPath: string): string | null {
     return null;
   }
 }
+
+// Shared SQLite path used by durable reset-credit operations. These helpers are intentionally
+// tiny in this compatibility line; the ledger owns its own transaction and never stores secrets.
+let configMutationDepth = 0;
+export class NestedConfigMutationError extends Error {
+  constructor() {
+    super("prepareConfigMutationDatabasePathForWrite must not run inside withConfigMutationLockSync");
+    this.name = "NestedConfigMutationError";
+  }
+}
+export function prepareConfigMutationDatabasePathForWrite(): string {
+  if (configMutationDepth > 0) throw new NestedConfigMutationError();
+  const dir = getConfigDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return join(dir, "config-mutation.sqlite");
+}
+export function withConfigMutationLockSync<T>(fn: () => T): T {
+  configMutationDepth += 1;
+  try { return fn(); } finally { configMutationDepth -= 1; }
+}
