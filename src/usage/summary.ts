@@ -37,8 +37,8 @@ export interface UsageSummaryTotals {
   unreportedRequests: number;
   unsupportedRequests: number;
   estimatedRequests: number;
-  inputTokens?: number;
-  outputTokens?: number;
+  inputTokens: number;
+  outputTokens: number;
   cachedInputTokens: number;
   cacheReadInputTokens: number;
   cacheCreationInputTokens: number;
@@ -76,8 +76,8 @@ export interface UsageDayModel {
   provider: string;
   requests: number;
   attemptCount: number;
-  inputTokens: number;
-  outputTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheHitRate?: number;
@@ -532,14 +532,15 @@ function buildDayGrid(range: UsageRange, since: number | null, now: number, entr
     const mKey = usageModelKey(providerKey, attribution.model);
     let m = models.get(mKey);
     if (!m) {
-      m = {
+      const created: UsageDayModel = {
         model: attribution.model,
         provider: providerKey,
         requests: 0,
         attemptCount: 0,
         totalTokens: 0,
       };
-      models.set(mKey, m);
+      models.set(mKey, created);
+      m = created;
     }
     const requestKey = `${dayKey}\0${mKey}`;
     let requests = dayModelRequests.get(requestKey);
@@ -582,8 +583,9 @@ function buildDayGrid(range: UsageRange, since: number | null, now: number, entr
     if (models) {
       day.models = [...models.values()].sort((a, b) => b.requests - a.requests);
       for (const model of day.models) {
-        if (model.cacheReadInputTokens !== undefined && model.inputTokens > 0) {
-          model.cacheHitRate = model.cacheReadInputTokens / model.inputTokens;
+        const inputTokens = model.inputTokens ?? 0;
+        if (model.cacheReadInputTokens !== undefined && inputTokens > 0) {
+          model.cacheHitRate = model.cacheReadInputTokens / inputTokens;
         }
       }
     }
