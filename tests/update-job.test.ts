@@ -932,6 +932,40 @@ describe("GUI update execution decisions", () => {
     expect(readUpdateJob(job.id)?.log.some(line => line.includes("refusing an automatic restart"))).toBe(true);
   });
 
+  test("failed health probes expose health-unverified recovery and never kill the identity-valid old PID", async () => {
+    const killed: number[] = [];
+    const job: UpdateJobState = {
+      id: "failed-install-health-unverified",
+      status: "running",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(), JSON.stringify(job));
+
+    await recoverFailedGuiUpdateForTests(
+      job,
+      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
+      true,
+      {
+        probeProxyIdentity: async () => null,
+        verifyPidIdentityFn: pid => pid,
+        sleepMs: async () => {},
+        killProxyFn: pid => { killed.push(pid); },
+      },
+    );
+
+    expect(readUpdateJob(job.id)).toMatchObject({ recoveryState: "health-unverified" });
+    expect(killed).toEqual([]);
+  });
+
   test("failed install leaves a concurrently restored replacement proxy untouched", async () => {
     let probes = 0;
     let restartCalls = 0;
