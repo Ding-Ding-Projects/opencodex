@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { handleSquirrelEvent, planSquirrelEvent } from "./squirrel.mjs";
 import { readBuildStamp } from "./build-stamp.mjs";
 import { classifyDesktopHealth, desktopLauncherPath, launcherExists, normalizeDesktopProbeHostname, planDesktopStartup, readDesktopPortState, runFixedNativeRestore } from "./startup-recovery.mjs";
-import { installCliOnPath, recordDesktopCliPathStatus } from "./cli-path.mjs";
+import { installCliOnPath, recordDesktopCliPathStatus, uninstallCliOnPath } from "./cli-path.mjs";
 import { createDesktopAutoUpdater, DEFAULT_DESKTOP_UPDATE_FEED } from "./auto-updater.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +75,15 @@ if (squirrelPlan && (squirrelPlan.event === "--squirrel-install" || squirrelPlan
   } catch {
     // Never let a PATH-install surprise block Squirrel's own install/update —
     // it is waiting on this process to exit within about a second either way.
+  }
+}
+if (squirrelPlan?.event === "--squirrel-uninstall") {
+  try {
+    // Only the final uninstall owns cleanup. --squirrel-obsolete deliberately
+    // leaves the stable shim and PATH entry for the incoming version.
+    recordDesktopCliPathStatus(uninstallCliOnPath(process.execPath));
+  } catch {
+    // Never let optional PATH cleanup block Squirrel's own uninstall.
   }
 }
 

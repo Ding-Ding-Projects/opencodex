@@ -103,14 +103,27 @@ describe("doctor", () => {
   });
 
   test("desktop CLI PATH status reports success, reading exactly the file the desktop app writes", () => {
+    const binDir = join(TEST_OPENCODEX_HOME, "cli-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "ocx.cmd"), "@echo off\r\n");
     writeFileSync(
       join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
-      JSON.stringify({ ok: true, binDir: "C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin", at: "2026-08-13T00:00:00.000Z" }),
+      JSON.stringify({ action: "install", ok: true, binDir, at: "2026-08-13T00:00:00.000Z" }),
     );
     expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toEqual({
       present: true,
+      action: "install",
+      state: "installed",
       ok: true,
-      binDir: "C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin",
+      binDir,
+      shimPath: join(binDir, "ocx.cmd"),
+      shimPresent: true,
+      owned: null,
+      removed: null,
+      transactionRecovered: null,
+      rollbackFailed: null,
+      replacementConflict: false,
+      claimPath: null,
       reason: null,
       manualCommand: null,
       at: "2026-08-13T00:00:00.000Z",
@@ -130,8 +143,46 @@ describe("doctor", () => {
     );
     const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
     expect(status.present).toBe(true);
-    expect(status).toMatchObject({ ok: false, reason: "the user PATH could not be updated" });
+    expect(status).toMatchObject({ action: null, state: "unresolved", ok: false, reason: "the user PATH could not be updated" });
     if (status.present) expect(status.manualCommand).toContain("setx PATH");
+  });
+
+  test("desktop PATH status never calls a stable bin directory installed when its shim is missing", () => {
+    const binDir = join(TEST_OPENCODEX_HOME, "cli-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
+      JSON.stringify({ action: "install", ok: true, binDir, at: "2026-08-21T00:00:00.000Z" }),
+    );
+    const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
+    expect(status).toMatchObject({ present: true, state: "unresolved", ok: true, shimPresent: false });
+    if (status.present) expect(status.state).not.toBe("installed");
+  });
+
+  test("desktop PATH status distinguishes removed, recovered rollback, failed rollback, and replacement conflict", () => {
+    const cases = [
+      [{ action: "uninstall", ok: true, owned: true, removed: true }, "removed"],
+      [{ action: "install", ok: false, transactionRecovered: true, rollbackFailed: false }, "rollback-recovered"],
+      [{ action: "install", ok: false, transactionRecovered: false, rollbackFailed: true }, "rollback-failed"],
+      [{ action: "uninstall", ok: false, replacementConflict: true, claimPath: "C:\\claim.tmp" }, "replacement-conflict"],
+    ] as const;
+    for (const [record, state] of cases) {
+      writeFileSync(join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME), JSON.stringify({ ...record, binDir: "", at: "2026-08-21T00:00:00.000Z" }));
+      expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toMatchObject({ present: true, state });
+    }
+  });
+
+  test("stale removed status with a present replacement shim is never reported as removed", () => {
+    const binDir = join(TEST_OPENCODEX_HOME, "cli-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "ocx.cmd"), "replacement\r\n");
+    writeFileSync(
+      join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
+      JSON.stringify({ action: "uninstall", ok: true, owned: true, removed: true, binDir, at: "2026-08-21T00:00:00.000Z" }),
+    );
+    const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
+    expect(status).toMatchObject({ present: true, shimPresent: true, state: "unresolved" });
+    if (status.present) expect(status.state).not.toBe("removed");
   });
 
   test("desktop CLI PATH status tolerates a corrupt file rather than throwing", () => {

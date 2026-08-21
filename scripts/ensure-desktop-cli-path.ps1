@@ -38,7 +38,15 @@ On failure:
 param(
     [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
-    [string]$BinDir
+    [string]$BinDir,
+
+    [ValidateSet("install", "uninstall")]
+    [string]$Action = "install",
+
+    [string]$ShimPath,
+
+    [AllowEmptyString()]
+    [string]$ExpectedShimContent
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,26 +54,35 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "install-path.ps1")
 
 try {
-    $repair = Add-NpmGlobalBinToUserPath -NpmGlobalBin $BinDir
+    if ($Action -eq "uninstall") {
+        if ([string]::IsNullOrWhiteSpace($ShimPath)) { throw "ShimPath is required for uninstall" }
+        $result = Remove-OcxPathRegistration -BinDir $BinDir -ShimPath $ShimPath -ExpectedShimContent $ExpectedShimContent
+        $result | Add-Member -NotePropertyName ok -NotePropertyValue ([bool]$result.Ok) -Force
+        $result | Add-Member -NotePropertyName binDir -NotePropertyValue $BinDir -Force
+        $result | ConvertTo-Json -Compress
+        exit 0
+    }
 
-    # Same "simulate a fresh shell" reasoning as scripts/install.ps1: the
-    # process-path prepend that Add-NpmGlobalBinToUserPath just did would
-    # make our own directory look like the winner in THIS process no matter
-    # what a brand-new shell would actually resolve.
-    $freshShellPath = @(
-        [Environment]::GetEnvironmentVariable("Path", "Machine"),
-        [Environment]::GetEnvironmentVariable("Path", "User")
-    ) -join ";"
-    $collision = Resolve-OcxPathCollision -NpmGlobalBin $BinDir -ResolvedOcxPaths (Get-OcxCommandPaths -PathValue $freshShellPath)
+    $repair = Add-DesktopCliPath -BinDir $BinDir
+    if (-not $repair.Ok) {
+        [pscustomobject]@{
+            ok = $false
+            binDir = $BinDir
+            reason = $repair.Reason
+            transactionRecovered = $repair.TransactionRecovered
+        } | ConvertTo-Json -Compress
+        exit 0
+    }
 
     [pscustomobject]@{
         ok = $true
         binDir = $BinDir
         userPathChanged = $repair.UserPathChanged
-        collision = $collision.Collision
-        collisionWinner = $collision.Winner
-        collisionReordered = $collision.Reordered
-        collisionMachineBlocked = $collision.MachineBlocked
+        processPathChanged = $repair.ProcessPathChanged
+        collision = $repair.Collision
+        collisionWinner = $repair.Winner
+        collisionReordered = $repair.Reordered
+        collisionMachineBlocked = $repair.MachineBlocked
     } | ConvertTo-Json -Compress
 } catch {
     [pscustomobject]@{

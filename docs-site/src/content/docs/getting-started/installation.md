@@ -77,6 +77,13 @@ On Windows, the repository's PowerShell installer also repairs the current user'
 PowerShell process and the user's environment only, preserves unrelated entries, avoids machine-wide
 mutation or `setx`, and verifies `ocx.cmd`/`ocx` with `help` before reporting success:
 
+The Windows desktop Squirrel installer uses a stable `cli-bin\ocx.cmd` beside `Update.exe`, and
+regenerates it for each installed version. The shim scopes `ELECTRON_RUN_AS_NODE` to its child. On
+final uninstall, cleanup removes only the exact user-PATH entry and shim bytes this installation
+owns; edited or unrelated shims, unrelated PATH/data entries, non-empty stable directories, and the
+machine PATH remain untouched. The obsolete-version event leaves the shared shim for the incoming
+version.
+
 From a checkout of the repository, run the script from its root:
 
 ```powershell
