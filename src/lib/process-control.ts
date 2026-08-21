@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { loadConfig, readRuntimePort } from "../config";
+import {
+  readProcessIdentity,
+  readProxyProcessIdentity,
+  sameProcessIdentity,
+  type ProcessIdentity,
+} from "./process-identity";
 
 export type ProcessSignalProbe = (pid: number, signal: 0) => boolean;
 
@@ -42,6 +48,26 @@ export interface GracefulStopIo {
   waitExit?: (pid: number, timeoutMs: number) => boolean;
   env?: Record<string, string | undefined>;
   exitTimeoutMs?: number;
+}
+
+export interface KillProxyIo {
+  /** Fresh identity reader; defaults to the generic OS process identity. */
+  readIdentity?: (pid: number) => ProcessIdentity | null;
+  /** Snapshot captured before the graceful attempt, carried into forced fallback. */
+  expectedIdentity?: ProcessIdentity | null;
+  isAlive?: (pid: number) => boolean;
+  waitExit?: (pid: number, timeoutMs: number) => boolean;
+  platform?: NodeJS.Platform;
+  taskkill?: (pid: number) => void;
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
+}
+
+export interface StopProxyIo extends GracefulStopIo, KillProxyIo {}
+
+function expectedIdentityFrom(io: KillProxyIo, readIdentity: (pid: number) => ProcessIdentity | null, pid: number): ProcessIdentity | null {
+  return Object.prototype.hasOwnProperty.call(io, "expectedIdentity")
+    ? (io.expectedIdentity ?? null)
+    : readIdentity(pid);
 }
 
 /**
@@ -114,10 +140,22 @@ function drainDeadlineMs(): number {
 }
 
 /** Graceful-first stop: management-API drain, then the platform kill ladder. */
-export async function stopProxy(pid: number): Promise<void> {
-  if (!isProcessAlive(pid)) return;
-  const runtime = readRuntimePort(pid);
-  const graceful = await stopProxyGracefully(pid);
+export async function stopProxy(pid: number, io: StopProxyIo = {}): Promise<void> {
+  const alive = io.isAlive ?? isProcessAlive;
+  if (!alive(pid)) return;
+  const readIdentity = io.readIdentity ?? readProxyProcessIdentity;
+  const expectedIdentity = expectedIdentityFrom(io, readIdentity, pid);
+  if (!expectedIdentity) {
+    throw new Error(`cannot prove proxy ownership for PID ${pid}; refusing termination`);
+  }
+  const readRuntime = io.readRuntime ?? readRuntimePort;
+  const runtime = readRuntime(pid);
+  // The graceful endpoint is destructive too: do not send it to a successor
+  // that replaced the original PID while the runtime record was being read.
+  if (!sameProcessIdentity(expectedIdentity, readIdentity(pid))) {
+    throw new Error(`process identity changed for PID ${pid}; refusing termination`);
+  }
+  const graceful = await stopProxyGracefully(pid, { ...io, readRuntime: () => runtime });
   if (graceful === "refused") {
     // The proxy refused on purpose (foreign service owns it). Forcing would strip shared
     // config while that service keeps the proxy alive.
@@ -130,7 +168,7 @@ export async function stopProxy(pid: number): Promise<void> {
     await waitForStoppedPort(runtime);
     return;
   }
-  killProxy(pid);
+  killProxy(pid, { ...io, readIdentity, expectedIdentity });
   await waitForStoppedPort(runtime);
 }
 
@@ -154,22 +192,42 @@ async function waitForStoppedPort(
   }
 }
 
-export function killProxy(pid: number): void {
-  if (!isProcessAlive(pid)) return;
-  if (process.platform === "win32") {
+export function killProxy(pid: number, io: KillProxyIo = {}): void {
+  const alive = io.isAlive ?? isProcessAlive;
+  if (!alive(pid)) return;
+  const readIdentity = io.readIdentity ?? readProcessIdentity;
+  const expectedIdentity = expectedIdentityFrom(io, readIdentity, pid);
+  if (!expectedIdentity) {
+    throw new Error(`cannot prove process ownership for PID ${pid}; refusing termination`);
+  }
+  const revalidateBeforeTermination = (): void => {
+    if (!sameProcessIdentity(expectedIdentity, readIdentity(pid))) {
+      throw new Error(`process identity changed for PID ${pid}; refusing termination`);
+    }
+  };
+  const waitExit = io.waitExit ?? waitForExit;
+  if ((io.platform ?? process.platform) === "win32") {
     // Windows process.kill(SIGTERM/SIGINT) is TerminateProcess — not a graceful signal.
     // Graceful drain happens only via stopProxyGracefully() (POST /api/stop). This path
     // is the hard fallback: taskkill /T /F so the process tree exits (ghost LISTEN /
     // CLOSE_WAIT are then cleared by reclaimListenPort / SetTcpEntry).
     const taskkill = `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\taskkill.exe`;
+    revalidateBeforeTermination();
     try {
-      execFileSync(taskkill, ["/PID", String(pid), "/T", "/F"], { stdio: "pipe", windowsHide: true });
+      if (io.taskkill) io.taskkill(pid);
+      else execFileSync(taskkill, ["/PID", String(pid), "/T", "/F"], { stdio: "pipe", windowsHide: true });
     } catch (err) {
-      if (isProcessAlive(pid)) throw err;
+      if (alive(pid)) throw err;
     }
   } else {
-    process.kill(pid, "SIGTERM");
-    if (!waitForExit(pid, 5000)) process.kill(pid, "SIGKILL");
+    revalidateBeforeTermination();
+    if (io.kill) io.kill(pid, "SIGTERM");
+    else process.kill(pid, "SIGTERM");
+    if (!waitExit(pid, 5000)) {
+      revalidateBeforeTermination();
+      if (io.kill) io.kill(pid, "SIGKILL");
+      else process.kill(pid, "SIGKILL");
+    }
   }
-  if (!waitForExit(pid, 5000)) throw new Error(`process ${pid} did not exit`);
+  if (!waitExit(pid, 5000)) throw new Error(`process ${pid} did not exit`);
 }

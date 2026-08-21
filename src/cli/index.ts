@@ -28,6 +28,7 @@ import { hasHelpFlag, printSubcommandUsage, printUsage, printVersion } from "./h
 import { findAvailablePort, isAddrInUse, PortUnavailableError, shouldPersistSelectedPort, waitForPortAvailable } from "../server/ports";
 import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
 import { stopProxy } from "../lib/process-control";
+import { readProxyProcessIdentity } from "../lib/process-identity";
 import { loadServiceTokenFromFile } from "../lib/service-secrets";
 import { diagnoseService, isServiceOwnershipError, serviceCommand, serviceEnvironmentOwnedHere, serviceStartableFromTray, serviceStatusSummary, stopServiceIfInstalled, uninstallServiceIfInstalled } from "../service";
 import { startupHealthSummary } from "../codex/autostart-health";
@@ -527,7 +528,11 @@ async function stopTrackedProxyForCli(): Promise<boolean> {
   if (pid) {
     // Graceful-first (management-API drain) — on Windows this is the only path where
     // the proxy's shutdown handlers actually run; taskkill /F is the fallback inside.
-    await stopProxy(pid);
+    // Capture the proxy identity before the graceful attempt and carry it into
+    // any forced fallback. A PID can be reused while /api/stop is timing out;
+    // numeric liveness must never authorize taskkill/kill of that successor.
+    const identity = readProxyProcessIdentity(pid);
+    await stopProxy(pid, { expectedIdentity: identity, readIdentity: readProxyProcessIdentity });
     console.log(`✅ Proxy (PID ${pid}) stopped.`);
     removePid(pid);
     removeRuntimePort(pid);
@@ -545,7 +550,7 @@ async function stopTrackedProxyForCli(): Promise<boolean> {
         `A live OpenCodex proxy was found on port ${live.port}, but its PID could not be verified; refusing unsafe teardown.`,
       );
     }
-    await stopProxy(live.pid);
+    await stopProxy(live.pid, { readIdentity: readProxyProcessIdentity });
     console.log(`✅ Proxy (PID ${live.pid}) stopped.`);
   }
   removePidIfValueIs(stalePidValue);

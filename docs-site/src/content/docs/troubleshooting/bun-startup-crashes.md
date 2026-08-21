@@ -22,10 +22,14 @@ that Bun process cannot catch it.
 opencodex handles this failure at two separate process boundaries:
 
 1. **Owner check before journal recovery.** `start` and `ensure` first identity-probe the existing
-   proxy. If a healthy proxy owns routing, its injected Codex files, PID state, and journal are left
-   untouched. Only a definitively dead owner can trigger recovery. PID and runtime-owner removals
-   compare the complete records observed before the liveness probe. A changed or newly published
-   owner record prevents this process from reconciling the journal.
+   proxy. The journal records the PID together with its process start/creation identity and the
+   executable identity available from the host. A healthy proxy whose PID and identity still match
+   keeps its injected Codex files, PID state, and journal untouched. If the OS has reused that PID
+   for an unrelated live process, the mismatch is treated as stale journal ownership and recovery
+   may restore only the hash-bounded Codex snapshot; an identity that cannot be proved is preserved
+   rather than guessed. PID and runtime-owner removals compare the complete records observed before
+   the liveness probe. A changed or newly published owner record prevents this process from
+   reconciling the journal.
 2. **One external retry for a real Bun panic.** The Node launcher retains at most 64 KiB of the Bun
    child's stderr while forwarding every byte live with writable backpressure. A separate
    attempt-local streaming latch remembers Bun's exact `oh no: Bun has crashed` marker even if later
@@ -83,6 +87,9 @@ unreadable, and incomplete placeholder binaries, but a size check is not a publi
 
 - Recovery restores only the journaled opencodex-owned state. Hash-identified user edits are
   preserved instead of overwritten.
+- A forced stop captures the proxy identity before the graceful request and rechecks it immediately
+  before `taskkill` or a POSIX signal. PID reuse or an unreadable identity refuses termination;
+  numeric liveness alone never authorizes a destructive fallback.
 - Startup restoration uses the asynchronous hardened atomic-write path on Windows. If one file was
   restored before another write failed, a later attempt recognizes the exact original bytes and can
   finish the remaining restore.
