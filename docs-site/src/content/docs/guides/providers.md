@@ -118,6 +118,19 @@ deny-by-default.
 
 You can also start OAuth from the [web dashboard](/guides/web-dashboard/).
 
+### xAI Priority Processing
+
+The xAI preset exposes Priority Processing only when the provider is explicitly configured with
+`authMode: "key"` and a public xAI API key. Enabling the shared `fastMode` setting then forwards
+`service_tier: "priority"` for xAI Chat Completions requests and advertises the `Fast` tier in the
+catalog. The OAuth route created by `ocx login xai` uses the Grok subscription gateway and remains
+unclassified: it does not advertise or inject Priority Processing.
+
+xAI's Priority Processing price is model- and provider-scoped. A routed reseller that happens to
+use a Grok model id does not inherit xAI's premium schedule, and an echoed `default` response is
+priced as standard traffic. See [configuration](/reference/configuration/#providersname) for the
+provider fields that control discovery retention, display labels, and reasoning-rung policy.
+
 ### Multiple OAuth accounts
 
 OAuth providers whose credentials include a stable account id or email can keep more than one

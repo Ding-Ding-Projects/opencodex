@@ -440,6 +440,9 @@ or bind the forward explicitly to loopback (`ssh -L 127.0.0.1:20100:localhost:10
 | `models?` | `string[]` | Seed/fallback model list. When `liveModels` is `false`, these are the only discovered models. |
 | `liveModels?` | `boolean` | Fetch the provider's live `/models` catalog on start/sync (default `true`). Set `false` to use only configured `models`. |
 | `selectedModels?` | `string[]` | Catalog allowlist applied after discovery. A non-empty list exposes only those ids to Codex; empty/omitted exposes all discovered models. |
+| `retainModels?` | `string[]` | Keep these exact native model ids in the catalog when authoritative live discovery omits them. The retained row is still subject to upstream availability at request time. |
+| `modelDisplayNames?` | `Record<string,string>` | Display-only labels for live-discovered rows, keyed by native model id. Labels are trimmed, printable, slash-free, and at most 128 characters; they never change routing. |
+| `modelSuppressSyntheticMax?` | `Record<string,boolean>` | For an exact model id, suppress only the catalog's invented `max` reasoning rung. A provider-declared `max` and Codex `ultra` remain intact. |
 | `contextWindow?` | `number` | Provider-wide Codex-visible context-window cap for routed catalog entries. Live metadata below this value is kept. |
 | `modelContextWindows?` | `Record<string,number>` | Model-specific context-window caps. These override `contextWindow` for matching model ids and never raise smaller live metadata. |
 | `modelInputModalities?` | `Record<string,string[]>` | Model-specific catalog input hints such as `["text"]` or `["text", "image"]`. |
