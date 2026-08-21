@@ -25,6 +25,7 @@ import { antigravityUsesReplayCache, applyAntigravityReplay, clearAntigravityRep
 import { resolveAntigravityEffortWireModel } from "../providers/antigravity-models";
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { mapReasoningEffort } from "../reasoning-effort";
+import { repairGoogleToolPairs, stripTrailingClaudePrefill } from "./google-antigravity-tools";
 
 // Google-family models (Gemini/Vertex/Antigravity) tend to emit long running commentary between
 // tool calls. This steers them to keep the BETWEEN-STEP text to one line and reason internally
@@ -129,8 +130,9 @@ function messagesToGeminiFormat(parsed: OcxParsedRequest): { systemInstruction?:
   const systemInstruction = { parts: [{ text: systemText }] };
 
   const contents: unknown[] = [];
+  const messages = repairGoogleToolPairs(parsed.context.messages);
 
-  for (const msg of parsed.context.messages) {
+  for (const msg of messages) {
     switch (msg.role) {
       case "user":
       case "developer": {
@@ -243,6 +245,12 @@ function usageFromGemini(usage: Record<string, number> | undefined): OcxUsage | 
  */
 const MAX_RESPONSE_BYTES = 100 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES = MAX_RESPONSE_BYTES;
+let sseFrameMaxBytes = MAX_SSE_FRAME_BYTES;
+
+/** Test-only cap override; production remains at the documented 100 MiB bound. */
+export function setGoogleSseFrameMaxBytesForTests(bytes?: number): void {
+  sseFrameMaxBytes = bytes ?? MAX_SSE_FRAME_BYTES;
+}
 
 // Note: imagen-* models use a different API surface (prediction/image-generation
 // schema) and must NOT be treated as responseModalities-capable Gemini models.
@@ -310,8 +318,9 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
       }
       if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig;
 
-      const method = parsed.stream ? "streamGenerateContent" : "generateContent";
-      const streamParam = parsed.stream ? "?alt=sse" : "";
+      const ccaAlwaysSse = provider.googleMode === "cloud-code-assist";
+      const method = ccaAlwaysSse || parsed.stream ? "streamGenerateContent" : "generateContent";
+      const streamParam = ccaAlwaysSse || parsed.stream ? "?alt=sse" : "";
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (provider.headers) Object.assign(headers, provider.headers);
 
@@ -342,6 +351,7 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         // nested) — matching CLIProxyAPI `generateStableSessionID`. An extra top-level/snake_case
         // spelling is a non-first-party key, so we send the single canonical location.
         const draftRequest: Record<string, unknown> = { ...body, sessionId };
+        if (systemInstruction) draftRequest.preambleConfig = { mode: "SYSTEM_INSTRUCTION_MODE_REPLACE" };
         // Claude-on-Antigravity forces VALIDATED function calling (the real client always sets it).
         if (/claude/i.test(wireModelId)) {
           const existing = (draftRequest.toolConfig ?? {}) as Record<string, unknown>;
@@ -350,10 +360,12 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         }
         const compiled = compileGoogleWireBody(draftRequest);
         const request = compiled.body;
+        if (systemInstruction) request.preambleConfig = { mode: "SYSTEM_INSTRUCTION_MODE_REPLACE" };
         restoreGoogleToolName = compiled.restoreToolName;
         // Compile names before replay: signatures are keyed by the exact provider-visible name.
         if (Array.isArray((request as { contents?: unknown[] }).contents)) {
           const contents = (request as { contents: unknown[] }).contents;
+          if (/claude/i.test(wireModelId)) stripTrailingClaudePrefill(contents);
           if (antigravityUsesReplayCache(wireModelId)) {
             applyAntigravityReplay(wireModelId, sessionId, contents);
           } else {
@@ -373,6 +385,7 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         };
         headers["User-Agent"] = ANTIGRAVITY_REQUEST_UA;
         headers["Authorization"] = `Bearer ${token}`;
+        if (/claude/i.test(wireModelId)) headers["anthropic-beta"] = "interleaved-thinking-2025-05-14";
         return { url, method: "POST", headers, body: JSON.stringify(envelope) };
       }
 
@@ -420,7 +433,9 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
       let buffer = "";
+      let bufferBytes = 0;
       let pendingUsage: OcxUsage | undefined;
       let toolCallsStarted = 0;
       let lastFinishReason: string | undefined;
@@ -430,8 +445,8 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
       const handleDataLine = async function* (line: string): AsyncGenerator<AdapterEvent, "continue" | "content" | "terminate"> {
         const payload = line.slice(5).trim();
         if (!payload) return "continue";
-        if (payload.length > MAX_SSE_FRAME_BYTES) {
-          yield { type: "error", message: `upstream SSE data frame exceeds ${MAX_SSE_FRAME_BYTES} bytes` };
+        if (encoder.encode(payload).byteLength > sseFrameMaxBytes) {
+          yield { type: "error", message: `upstream SSE data frame exceeds ${sseFrameMaxBytes} bytes` };
           return "terminate";
         }
         let emittedContentEvent = false;
@@ -529,17 +544,25 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          const incomingBytes = value?.byteLength ?? 0;
+          if (bufferBytes + incomingBytes > sseFrameMaxBytes) {
+            yield { type: "error", message: `upstream SSE data frame exceeds ${sseFrameMaxBytes} bytes` };
+            try { await reader.cancel(); } catch { /* ignore */ }
+            return;
+          }
           buffer += decoder.decode(value, { stream: true });
           // Cap incomplete frames before waiting for a newline — otherwise a single
           // unterminated data: payload can grow without bound.
-          if (buffer.length > MAX_SSE_FRAME_BYTES) {
-            yield { type: "error", message: `upstream SSE data frame exceeds ${MAX_SSE_FRAME_BYTES} bytes` };
+          bufferBytes = encoder.encode(buffer).byteLength;
+          if (bufferBytes > sseFrameMaxBytes) {
+            yield { type: "error", message: `upstream SSE data frame exceeds ${sseFrameMaxBytes} bytes` };
             try { await reader.cancel(); } catch { /* ignore */ }
             return;
           }
 
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
+          bufferBytes = encoder.encode(buffer).byteLength;
 
           let sawLiveness = false;
           let sawContentEvent = false;
@@ -593,6 +616,13 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
     },
 
     async parseResponse(response: Response): Promise<AdapterEvent[]> {
+      // CCA exposes only its SSE transport, even for a non-streaming caller. Reuse the
+      // streaming parser so unary requests retain event ordering, wrappers, and caps.
+      if (provider.googleMode === "cloud-code-assist") {
+        const events: AdapterEvent[] = [];
+        for await (const event of this.parseStream(response)) events.push(event);
+        return events;
+      }
       // Reject oversized responses before JSON parse. Prefer Content-Length when
       // present and truthful; always stream-read with a hard byte cap so a missing
       // or lying Content-Length cannot force a full in-memory buffer + parse.
