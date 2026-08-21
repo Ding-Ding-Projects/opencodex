@@ -105,8 +105,10 @@ type API struct {
 	pairMu              sync.Mutex
 	pairToken           string
 	pairExpires         time.Time
-	pairWindow          time.Time
-	pairAttempts        int
+	pairArmedWindow     time.Time
+	pairArmedAttempts   int
+	pairIdleWindow      time.Time
+	pairIdleAttempts    int
 	restartAccepted     atomic.Bool
 	refreshCatalog      func() error
 	onAPIKeysChanged    func([]config.ProxyAPIKey)

@@ -253,7 +253,7 @@ func runLaunch(args []string, streams IO) error {
 	for _, target := range []struct {
 		id, label string
 		names     []string
-	}{{"codex", "Codex", []string{"codex.exe", "codex.cmd", "codex", "codex.bat"}}, {"claude", "Claude Code", []string{"claude.exe", "claude.cmd", "claude", "claude.bat"}}, {"grok", "Grok", []string{"grok.exe", "grok.cmd", "grok", "grok.bat"}}} {
+	}{{"codex-cli", "Codex CLI", []string{"codex.exe", "codex.cmd", "codex", "codex.bat"}}, {"claude-cli", "Claude Code", []string{"claude.exe", "claude.cmd", "claude", "claude.bat"}}, {"grok-cli", "Grok CLI", []string{"grok.exe", "grok.cmd", "grok", "grok.bat"}}} {
 		path := ""
 		for _, name := range target.names {
 			if found, err := exec.LookPath(name); err == nil {

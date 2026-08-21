@@ -34,7 +34,7 @@ var changelogHeading = regexp.MustCompile(`^##\s+([^\s—-]+)\s*(?:[—-]\s*(\d{
 
 const (
 	maxPairClaimBody   = 4 << 10
-	maxPairAttempts    = 5
+	maxPairAttempts    = 10
 	pairAttemptWindow  = time.Minute
 	defaultDrainWindow = time.Minute
 	maxDrainWindow     = 5 * time.Minute
@@ -559,6 +559,8 @@ func (a *API) handleNativePair(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method == http.MethodDelete {
 		a.pairToken = ""
 		a.pairExpires = time.Time{}
+		a.pairArmedWindow = time.Time{}
+		a.pairArmedAttempts = 0
 		writeNoStoreJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return true
 	}
@@ -569,8 +571,8 @@ func (a *API) handleNativePair(w http.ResponseWriter, r *http.Request) bool {
 	}
 	a.pairToken = base64.RawURLEncoding.EncodeToString(raw[:])
 	a.pairExpires = time.Now().Add(5 * time.Minute)
-	a.pairWindow = time.Now()
-	a.pairAttempts = 0
+	a.pairArmedWindow = time.Now()
+	a.pairArmedAttempts = 0
 	writeNoStoreJSON(w, http.StatusOK, map[string]any{"token": a.pairToken, "expiresAt": a.pairExpires.UnixMilli()})
 	return true
 }
@@ -579,12 +581,21 @@ func (a *API) handleNativePairClaim(w http.ResponseWriter, r *http.Request) bool
 	a.pairMu.Lock()
 	defer a.pairMu.Unlock()
 	now := time.Now()
-	if a.pairWindow.IsZero() || now.Sub(a.pairWindow) >= pairAttemptWindow {
-		a.pairWindow = now
-		a.pairAttempts = 0
+	armed := a.pairToken != "" && now.Before(a.pairExpires)
+	window, attempts := a.pairIdleWindow, a.pairIdleAttempts
+	if armed {
+		window, attempts = a.pairArmedWindow, a.pairArmedAttempts
 	}
-	a.pairAttempts++
-	if a.pairAttempts > maxPairAttempts {
+	if window.IsZero() || now.Sub(window) >= pairAttemptWindow {
+		window, attempts = now, 0
+	}
+	attempts++
+	if armed {
+		a.pairArmedWindow, a.pairArmedAttempts = window, attempts
+	} else {
+		a.pairIdleWindow, a.pairIdleAttempts = window, attempts
+	}
+	if attempts > maxPairAttempts {
 		w.Header().Set("Retry-After", "60")
 		writeNoStoreJSON(w, http.StatusTooManyRequests, map[string]any{"error": "too many pairing attempts"})
 		return true
@@ -615,12 +626,14 @@ func (a *API) handleNativePairClaim(w http.ResponseWriter, r *http.Request) bool
 		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "the pairing key could not be saved"})
 		return true
 	}
-	oldToken, oldExpiry, oldWindow, oldAttempts := a.pairToken, a.pairExpires, a.pairWindow, a.pairAttempts
+	oldToken, oldExpiry := a.pairToken, a.pairExpires
+	oldArmedWindow, oldArmedAttempts, oldIdleWindow, oldIdleAttempts := a.pairArmedWindow, a.pairArmedAttempts, a.pairIdleWindow, a.pairIdleAttempts
 	a.pairToken = ""
 	a.pairExpires = time.Time{}
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		a.pairToken, a.pairExpires, a.pairWindow, a.pairAttempts = oldToken, oldExpiry, oldWindow, oldAttempts
+		a.pairToken, a.pairExpires = oldToken, oldExpiry
+		a.pairArmedWindow, a.pairArmedAttempts, a.pairIdleWindow, a.pairIdleAttempts = oldArmedWindow, oldArmedAttempts, oldIdleWindow, oldIdleAttempts
 		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "the pairing key could not be saved"})
 		return true
 	}
@@ -628,7 +641,8 @@ func (a *API) handleNativePairClaim(w http.ResponseWriter, r *http.Request) bool
 	a.config.APIKeys = append(a.config.APIKeys, config.ProxyAPIKey{ID: fmt.Sprintf("pair-%d", time.Now().UnixNano()), Name: "Paired device", Key: key, CreatedAt: now.UTC().Format(time.RFC3339)})
 	if err := a.persistParityConfig(); err != nil {
 		*a.config = *previous
-		a.pairToken, a.pairExpires, a.pairWindow, a.pairAttempts = oldToken, oldExpiry, oldWindow, oldAttempts
+		a.pairToken, a.pairExpires = oldToken, oldExpiry
+		a.pairArmedWindow, a.pairArmedAttempts, a.pairIdleWindow, a.pairIdleAttempts = oldArmedWindow, oldArmedAttempts, oldIdleWindow, oldIdleAttempts
 		writeNoStoreJSON(w, http.StatusInternalServerError, map[string]any{"error": "the pairing key could not be saved"})
 		return true
 	}
@@ -685,7 +699,7 @@ func (a *API) handleNativeLaunchList(w http.ResponseWriter) bool {
 	targets := []map[string]any{}
 	for _, target := range nativeLaunchTargets() {
 		path, ok := resolveNativeLaunchTarget(target)
-		row := map[string]any{"id": target.ID, "label": target.Label, "kind": "cli", "available": ok, "installUrl": target.InstallURL}
+		row := map[string]any{"id": target.ID, "label": target.Label, "kind": target.Kind, "available": ok, "installUrl": target.InstallURL}
 		if !ok {
 			row["reason"] = "not_installed"
 		} else {
@@ -725,7 +739,12 @@ func (a *API) handleNativeLaunch(w http.ResponseWriter, r *http.Request) bool {
 	if runtime.GOOS == "windows" {
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext == ".cmd" || ext == ".bat" {
-			cmd = exec.Command("cmd.exe", "/d", "/c", path)
+			terminal, terminalErr := exec.LookPath("wt.exe")
+			if terminalErr != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "reason": "needs-windows-terminal", "message": "Windows Terminal is required for batch launch targets"})
+				return true
+			}
+			cmd = exec.Command(terminal, path)
 		}
 	}
 	if err := cmd.Start(); err != nil {
@@ -739,11 +758,12 @@ func (a *API) handleNativeLaunch(w http.ResponseWriter, r *http.Request) bool {
 
 type nativeLaunchTarget struct {
 	ID, Label, InstallURL string
+	Kind                  string
 	Names                 []string
 }
 
 func nativeLaunchTargets() []nativeLaunchTarget {
-	return []nativeLaunchTarget{{"codex", "Codex CLI", "https://developers.openai.com/codex/cli", []string{"codex.exe", "codex.cmd", "codex.bat", "codex"}}, {"claude", "Claude Code", "https://claude.com/claude-code", []string{"claude.exe", "claude.cmd", "claude.bat", "claude"}}, {"grok", "Grok CLI", "https://github.com/superagent-ai/grok-cli", []string{"grok.exe", "grok.cmd", "grok.bat", "grok"}}}
+	return []nativeLaunchTarget{{"codex-cli", "Codex CLI", "https://developers.openai.com/codex/cli", "cli", []string{"codex.exe", "codex.cmd", "codex.bat", "codex"}}, {"claude-cli", "Claude Code", "https://claude.com/claude-code", "cli", []string{"claude.exe", "claude.cmd", "claude.bat", "claude"}}, {"grok-cli", "Grok CLI", "https://github.com/superagent-ai/grok-cli", "cli", []string{"grok.exe", "grok.cmd", "grok.bat", "grok"}}, {"chatgpt-desktop", "ChatGPT", "https://openai.com/chatgpt/download/", "desktop", []string{"ChatGPT.exe"}}, {"claude-desktop", "Claude", "https://claude.com/download", "desktop", []string{"Claude.exe"}}, {"grok-desktop", "Grok", "https://grok.com/download", "desktop", []string{"Grok.exe"}}}
 }
 func nativeLaunchTargetByID(id string) (nativeLaunchTarget, bool) {
 	for _, target := range nativeLaunchTargets() {

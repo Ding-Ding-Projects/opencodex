@@ -55,6 +55,14 @@ func terminalCommand(preset string) (string, []string, bool) {
 			shell = "/bin/bash"
 		}
 		return shell, []string{"-i"}, true
+	case "codex", "claude", "grok":
+		id := map[string]string{"codex": "codex-cli", "claude": "claude-cli", "grok": "grok-cli"}[preset]
+		for _, name := range []string{id + ".exe", id + ".cmd", id, id + ".bat"} {
+			if path, err := exec.LookPath(name); err == nil {
+				return path, []string{}, true
+			}
+		}
+		return "", nil, false
 	default:
 		return "", nil, false
 	}

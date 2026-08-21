@@ -98,7 +98,7 @@ func TestPairingClaimIsBoundedRateLimitedConstantTimeShapeAndNoStore(t *testing.
 	if len(token) != 43 {
 		t.Fatalf("token length = %d, want 43", len(token))
 	}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		result := serveManagement(api, http.MethodPost, "/api/host/pair/claim", `{"token":"wrong-token-that-is-long-enough-but-wrong-000"}`)
 		if result.Code != http.StatusBadRequest {
 			t.Fatalf("mismatch %d status=%d body=%s", i, result.Code, result.Body.String())
