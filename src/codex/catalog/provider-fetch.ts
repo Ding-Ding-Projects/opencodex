@@ -322,6 +322,14 @@ export async function fetchProviderModels(name: string, prov: OcxProviderConfig,
       } else {
         retainedWithoutDiscoveryRefs.delete(name);
       }
+    } else {
+      const prior = retainedWithoutDiscoveryRefs.get(name);
+      if (prior) {
+        const currentRetained = new Set(prov.retainModels ?? []);
+        const stillApplicable = [...prior].filter(id => currentRetained.has(id) && merged.models.some(model => model.id === id));
+        if (stillApplicable.length > 0) retainedWithoutDiscoveryRefs.set(name, new Set(stillApplicable));
+        else retainedWithoutDiscoveryRefs.delete(name);
+      }
     }
     return merged.models;
   };
