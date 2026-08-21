@@ -1,5 +1,44 @@
 # Handoff
 
+## Backend recovery closeout — 2026-08-21
+
+The task-owned integration branch is `codex/backend-recovery-integration` at `a3b7aba42992cb0183c14da7483b5d79c977cd87`. At the time this handoff was written it was local and had not yet been pushed or merged into the default branch.
+
+### Integrated and source-verified
+
+- Desktop startup discovers valid runtime/configured ports, adopts only a healthy same-build owner, runs the fixed argument-free native Codex restore before recovery, never stops a healthy or foreign proxy, and keeps the recovery shell alive when startup fails.
+- Proxy/journal/update process ownership uses bounded persisted generation identity and compare-before-stop/kill behavior.
+- The Squirrel updater initializes before proxy startup, keeps bounded retry scheduling after initial feed failures, accepts only exact project HTTPS feed shapes, and does not own proxy start/stop.
+- Windows packaging uses a content-addressed multi-resolution OpenCodex icon and stable Squirrel identity. The desktop CLI PATH lifecycle installs a stable current-user `ocx` shim, preserves concurrent edits/replacements, and reports coherent rollback/doctor state.
+- Cursor, Kiro, custom-tool, Grok structured-tool, Vercel gateway, BigModel quota, Orca manifest, Responses terminal-repair, catalog retention/pricing, observability, service/ACL, bounded OAuth failover, and collaboration/recovery backend batches are integrated.
+- The first checked-in `design/` source is preserved under `design-reference/original-source/`. Privacy exclusion is manifest/tree/blob/hash/size/package/reparse bound; the 10-case mutation suite passed.
+
+### Verification bound to the integration tree
+
+- `bun run typecheck`: passed after the latest integration batches.
+- `bun run privacy:scan`: passed at `a3b7aba42`.
+- Collaboration integration: 60 passed, 0 failed.
+- Installer/PATH/startup/update integration: 128 passed, 1 stale integration assertion repaired, then the failed file passed 30/30.
+- Service/ACL/WinSW integration: 116 passed, 0 failed.
+- Observability integration: 167 passed, 0 failed.
+- Provider/catalog/protocol focused batches passed; several subprocess-heavy tests exceeded the legacy 5-second default under fleet contention and passed alone under bounded diagnostic limits. No whole-suite green verdict is claimed.
+
+### Preserved but not integrated
+
+- UI/design work remains intentionally paused for the replacement design. Personal-vocabulary state repair is preserved at `e5743be3c663611774270656f7064aa60edc42a1`; the docs-site checkpoint is `b0fb9db11dc3cdf7e65da8571e5b772f6d43c1d4`; dashboard, updater UI, and design-parity checkpoints remain on their task branches.
+- Authentication reset-credit durability is preserved at `7a3034ccf2c3f7c8108fcdfb59f2b05268834fc1`; its backend contract requires a stable operation ID, but the paused GUI caller does not yet send one. Only the independently ready bounded OAuth failover slice was integrated.
+- Antigravity follow-up is preserved at `d91af3ccc861a527095584fe75d1250b752534e8`; final parent acceptance and cleanup of an earlier malformed unpublished commit message remain.
+- Network/vault follow-up is preserved at `cab53967522fcd63c427490f172a8b969dfc5fe2`; final review was interrupted by closeout, and the branch still has an earlier unpublished public-wording metadata defect to rebuild.
+- Architecture foundations are preserved at `2176fd55e`; final correctness/security reviews were interrupted by closeout.
+- Native Go parity remains incomplete and issue #17 must stay open. Its active branch is preserved; launch installation, complete host/export/history/exit parity, LAN discovery, and full lifecycle parity were not proven complete.
+
+### External and release state
+
+- UI captures and built-artifact design parity were not run because the replacement UI is still being authored.
+- No new installer was built, installed, or exercised from this task tip.
+- No new release was published. The last verified release baseline remains `build-230` at `dc9401145e99c1dc6a5e981e257575749a38f882`.
+- Open issues #8 and #10 retain substantial default-branch backend implementations but remain open for required UI/capture and security-review evidence. Issue #17 remains open for native Go parity.
+
 ## Service/platform port lane — 2026-08-21
 
 Local commits on `codex/port-service-platform` (not dewed or merged):

@@ -1,5 +1,16 @@
 # Roadmap
 
+## Backend recovery closeout — 2026-08-21
+
+- [x] Integrate source-verified startup recovery, forced native-config restore, owner-safe proxy handling, updater scheduling, installer branding/PATH, protocol/provider, service, observability, catalog, and collaboration backend batches.
+- [x] Preserve the first checked-in `design/` source and add exact manifest/tree/blob/hash/size/package/reparse privacy validation.
+- [x] Preserve every paused UI/design and unfinished backend lane on its owning branch for handoff.
+- [ ] Merge the backend integration into the default branch after the closeout preservation/dew pass.
+- [ ] Reconcile the replacement UI and integrate the personal-vocabulary, updater UI, dashboard health, and design-parity checkpoints.
+- [ ] Finish native Go issue #17 parity and the remaining Antigravity, network/vault, architecture, and reset-credit review gaps.
+- [ ] Build and exercise the real unsigned Squirrel installer, then publish and verify a new release.
+- [ ] Capture the real built desktop through the required cheap headless route after UI work resumes.
+
 ## Service, remote-login, and ACL ports — 2026-08-21
 
 - [x] Source contract: make bare `ocx service` install only when both Windows backends are proven absent; route an existing installation through repair/restart without re-registering it (`b37d17fc5`, focused planning/probe/repair tests pass). Follow-up `2f44fad02` now refuses unverified scheduler stop, deletion, and persisted-token boundaries. Live Windows Task Scheduler stop/restart evidence remains pending.
