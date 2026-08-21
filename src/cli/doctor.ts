@@ -578,7 +578,7 @@ export type ServiceMemoryData = {
   arrayBuffers: number;
   observedBytes?: number;
   observedMetric?: MemoryMetric;
-  jscHeap: { heapSize: number } | null;
+  jscHeap: { heapSize: number; extraMemorySize?: number } | null;
   streamMode: string;
   eagerRelay: { useEagerRelay: boolean; reason: string } | null;
   watchdog: { warnThresholdBytes: number; lastWarnAt: number | null; observedBytes?: number; observedMetric?: MemoryMetric } | null;
@@ -633,7 +633,16 @@ export async function fetchServiceMemory(
         observedMetric: body.observedMetric === "rss" || body.observedMetric === "external" || body.observedMetric === "arrayBuffers"
           ? body.observedMetric
           : undefined,
-        jscHeap: body.jscHeap && typeof body.jscHeap.heapSize === "number" ? { heapSize: body.jscHeap.heapSize } : null,
+        jscHeap: body.jscHeap && typeof body.jscHeap.heapSize === "number"
+          ? {
+            heapSize: body.jscHeap.heapSize,
+            ...(typeof body.jscHeap.extraMemorySize === "number"
+              && Number.isFinite(body.jscHeap.extraMemorySize)
+              && body.jscHeap.extraMemorySize >= 0
+              ? { extraMemorySize: body.jscHeap.extraMemorySize }
+              : {}),
+          }
+          : null,
         streamMode: typeof body.streamMode === "string" ? body.streamMode : "auto",
         eagerRelay: body.eagerRelay && typeof body.eagerRelay.reason === "string"
           ? { useEagerRelay: body.eagerRelay.useEagerRelay === true, reason: body.eagerRelay.reason }
@@ -670,7 +679,7 @@ export function formatServiceMemoryLines(report: ServiceMemoryReport): string[] 
   const observed = observedMemory(d);
   const observedBytes = d.observedBytes ?? d.watchdog?.observedBytes ?? observed.bytes;
   const observedMetric = d.observedMetric ?? d.watchdog?.observedMetric ?? observed.metric;
-  lines.push(`         rss=${mb(d.rss)}, external=${mb(d.external)}, arrayBuffers=${mb(d.arrayBuffers)}, heapUsed=${mb(d.heapUsed)}${d.jscHeap ? `, jscHeap=${mb(d.jscHeap.heapSize)}` : ""}`);
+  lines.push(`         rss=${mb(d.rss)}, external=${mb(d.external)}, arrayBuffers=${mb(d.arrayBuffers)}, heapUsed=${mb(d.heapUsed)}${d.jscHeap ? `, jscHeap=${mb(d.jscHeap.heapSize)}` : ""}${d.jscHeap?.extraMemorySize !== undefined ? `, jscExtra=${mb(d.jscHeap.extraMemorySize)}` : ""}`);
   lines.push(`         observed=${mb(observedBytes)} (${observedMetric})`);
   lines.push(`         streamMode=${d.streamMode}${d.eagerRelay ? ` (eager relay: ${d.eagerRelay.useEagerRelay ? "on" : "off"}, ${d.eagerRelay.reason})` : ""}`);
   if (d.watchdog) {

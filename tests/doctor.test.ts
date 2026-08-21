@@ -419,10 +419,32 @@ describe("service memory section (#314 WP4)", () => {
     if (malformed.status === "unreachable") expect(malformed.error).toBe("malformed response");
   });
 
+  test("fetchServiceMemory keeps a numeric JSC extra-memory counter and omits malformed values", async () => {
+    const withExtra = await fetchServiceMemory("127.0.0.1", 10100,
+      (async () => Response.json({ ...baseData, jscHeap: { heapSize: 10, extraMemorySize: 22 } })) as typeof fetch);
+    expect(withExtra.status).toBe("ok");
+    if (withExtra.status === "ok") expect(withExtra.data.jscHeap).toEqual({ heapSize: 10, extraMemorySize: 22 });
+
+    const malformedExtra = await fetchServiceMemory("127.0.0.1", 10100,
+      (async () => Response.json({ ...baseData, jscHeap: { heapSize: 10, extraMemorySize: "22" } })) as typeof fetch);
+    expect(malformedExtra.status).toBe("ok");
+    if (malformedExtra.status === "ok") expect(malformedExtra.data.jscHeap).toEqual({ heapSize: 10 });
+  });
+
   test("identity labels: doctor process is never presented as the service", () => {
     const lines = formatServiceMemoryLines({ status: "ok", data: baseData });
     expect(lines[0]).toContain("NOT the service process");
     expect(lines.some(l => l.includes(`service pid ${baseData.pid}`))).toBe(true);
+  });
+
+  test("memory lines include JSC extra-memory only when the service reported it", () => {
+    const withExtra = formatServiceMemoryLines({
+      status: "ok",
+      data: { ...baseData, jscHeap: { heapSize: 10, extraMemorySize: 22 * 1024 * 1024 } },
+    });
+    expect(withExtra.some(line => line.includes("jscExtra=22MB"))).toBe(true);
+    const withoutExtra = formatServiceMemoryLines({ status: "ok", data: baseData });
+    expect(withoutExtra.join("\n")).not.toContain("jscExtra=");
   });
 
   test("interpretation: high RSS + small JS heap → native-side line", () => {
