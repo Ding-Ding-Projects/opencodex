@@ -74,6 +74,48 @@ export type OAuthAccountSelectionReason =
   | "none"
   | "all-cooled";
 
+export type OAuthPoolFailureKind = "rate_limit" | "unauthorized" | "forbidden";
+
+const PROVIDER_FORBIDDEN_AUTH_CODES: ReadonlySet<string> = new Set([
+  "account_disabled",
+  "account_suspended",
+  "invalid_token",
+  "token_expired",
+  "token_invalid",
+  "oauth_token_invalid",
+  "oauth_token_expired",
+]);
+
+/**
+ * Classify only provider evidence that makes the selected OAuth account unusable.
+ * A bare 403 is deliberately not enough: workspace/plan/policy denials can be valid
+ * account requests and must remain visible to the caller instead of poisoning the pool.
+ */
+export function classifyOAuthPoolFailure(
+  _provider: string,
+  status: number,
+  bodyText: string,
+): OAuthPoolFailureKind | null {
+  if (status === 429) return "rate_limit";
+  if (status === 401) return "unauthorized";
+  if (status !== 403 || bodyText.length === 0) return null;
+  const bounded = bodyText.slice(0, 16_384);
+  let payload: unknown;
+  try { payload = JSON.parse(bounded); } catch { return null; }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  const error = record.error && typeof record.error === "object" && !Array.isArray(record.error)
+    ? record.error as Record<string, unknown>
+    : undefined;
+  const detail = record.detail && typeof record.detail === "object" && !Array.isArray(record.detail)
+    ? record.detail as Record<string, unknown>
+    : undefined;
+  const codes = [record.code, error?.code, error?.type, detail?.code]
+    .filter((value): value is string => typeof value === "string")
+    .map(value => value.trim().toLowerCase());
+  return codes.some(code => PROVIDER_FORBIDDEN_AUTH_CODES.has(code)) ? "forbidden" : null;
+}
+
 export interface OAuthAccountSelection {
   accountId: string | null;
   reason: OAuthAccountSelectionReason;
@@ -222,6 +264,48 @@ export function getOAuthAccountHealthSnapshot(
 
 export function clearOAuthAccountCooldown(provider: string, accountId: string): boolean {
   return healthMap(provider).delete(accountId);
+}
+
+/**
+ * Apply a classified account failure and choose one bounded alternate. Auth failures
+ * receive a bounded local quarantine, while rate limits use the existing finite cooldown.
+ * The caller remains responsible for counting attempts and validating the alternate;
+ * durable needsReauth remains owned by the refresh/login store path.
+ */
+export async function rotateOAuthAccountOnFailure(
+  config: OcxConfig,
+  provider: string,
+  failedAccountId: string,
+  status: number,
+  bodyText: string,
+  retryAfterHeader: string | null | undefined,
+  sessionKey?: string | null,
+  now = Date.now(),
+): Promise<string | null> {
+  const kind = classifyOAuthPoolFailure(provider, status, bodyText);
+  if (!kind || !isOAuthPoolEnabled(config, provider)) return null;
+  if (kind === "rate_limit") {
+    return rotateOAuthAccountOn429(config, provider, failedAccountId, retryAfterHeader, sessionKey, now);
+  }
+
+  // Keep an auth-failed account out of this bounded request and cooldown window.
+  // The OAuth refresh path remains the authority for durable needsReauth marking;
+  // this route must not block failover on a second credential-store writer.
+  healthMap(provider).set(failedAccountId, {
+    cooldownUntil: now + MAX_COOLDOWN_MS,
+    cooldownSource: "default",
+  });
+  clearOAuthSessionAffinityForAccount(provider, failedAccountId);
+  const next = pickAlternateAccount(config, provider, failedAccountId, now);
+  if (sessionKey?.trim() && next) {
+    affinityMap(provider).set(sessionKey.trim(), { accountId: next, lastUsedAt: now });
+    pruneExpiredAffinity(provider, now);
+  }
+  console.warn(
+    `[oauth-pool] ${kind} on ${provider} ${formatOAuthAccountOrdinal(failedAccountId)}; `
+      + (next ? `failing over to ${formatOAuthAccountOrdinal(next)}` : "no eligible alternate"),
+  );
+  return next;
 }
 
 /** Test / logout helper. */

@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import {
   CodexCredentialGenerationConflictError,
   CodexCredentialRefreshLockTimeoutError,
@@ -25,6 +26,30 @@ import { getAccountQuota } from "./quota";
 import type { CodexAccountMode, OcxConfig, OcxProviderConfig } from "../types";
 import { FORWARD_HEADERS } from "../adapters/openai-responses";
 
+const CODEX_AFFINITY_COMPONENT_MAX_BYTES = 512;
+const CODEX_APP_AFFINITY_KEY = randomBytes(32);
+
+function boundedCodexAffinityComponent(value: string | null): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized || new TextEncoder().encode(normalized).byteLength > CODEX_AFFINITY_COMPONENT_MAX_BYTES) return undefined;
+  return normalized;
+}
+
+/** Preserve parent-thread affinity, or derive an opaque process-local App key from both IDs. */
+export function codexPoolAffinityKey(headers: Headers): string | undefined {
+  const parentThreadId = boundedCodexAffinityComponent(headers.get("x-codex-parent-thread-id"));
+  if (parentThreadId) return parentThreadId;
+  const sessionId = boundedCodexAffinityComponent(headers.get("session-id"));
+  const threadId = boundedCodexAffinityComponent(headers.get("thread-id"));
+  if (!sessionId || !threadId) return undefined;
+  return `app:${createHmac("sha256", CODEX_APP_AFFINITY_KEY)
+    .update("opencodex-app-pool-affinity-v1\0")
+    .update(sessionId)
+    .update("\0")
+    .update(threadId)
+    .digest("base64url")}`;
+}
+
 export type CodexAuthContext =
   | { kind: "main"; accountId: null }
   | {
@@ -33,6 +58,8 @@ export type CodexAuthContext =
       generation: number;
       accessToken: string;
       chatgptAccountId: string;
+      /** Opaque process-local affinity key; never a raw Desktop identifier. */
+      affinityKey?: string;
       /**
        * Set when this request was admitted through an active quota cooldown as
        * the account's single probe. Must be echoed into the upstream outcome so
@@ -51,6 +78,8 @@ export type CodexAuthContext =
       accountId: string;
       accessToken: string;
       chatgptAccountId: string;
+      /** Opaque process-local affinity key; never a raw Desktop identifier. */
+      affinityKey?: string;
       /** See `pool.probeLeaseId`. */
       probeLeaseId?: string;
       quotaScope?: CodexQuotaScope;
@@ -200,7 +229,7 @@ export async function resolveCodexAuthContext(
     return { kind: "main", accountId: null };
   }
   reconcileMainCodexAccountRuntimeState();
-  const threadId = headers.get("x-codex-parent-thread-id");
+  const affinityKey = options.excludeAccountId === undefined ? codexPoolAffinityKey(headers) : undefined;
   const quotaScope = codexQuotaScopeForModel(options.modelId);
   const resolution = options.excludeAccountId
     ? (() => {
@@ -209,7 +238,7 @@ export async function resolveCodexAuthContext(
           ? { status: "selected" as const, accountId }
           : { status: "none" as const };
       })()
-    : resolveCodexAccountForThreadDetailed(threadId, config, Date.now(), quotaScope);
+    : resolveCodexAccountForThreadDetailed(affinityKey ?? null, config, Date.now(), quotaScope);
   if (resolution.status === "expired") throw new CodexThreadAffinityExpiredError(resolution.accountId);
   let accountId = resolution.status === "selected" ? resolution.accountId : null;
   if (!accountId) throw new CodexPoolAuthenticationError();
@@ -256,6 +285,7 @@ export async function resolveCodexAuthContext(
       accountId,
       accessToken: token.accessToken,
       chatgptAccountId: token.chatgptAccountId,
+      ...(affinityKey ? { affinityKey } : {}),
       ...(quotaScope ? { quotaScope } : {}),
       ...(probeLeaseId ? { probeLeaseId } : {}),
       ...(probeQuotaScope ? { probeQuotaScope } : {}),
@@ -270,6 +300,7 @@ export async function resolveCodexAuthContext(
       generation: token.generation,
       accessToken: token.accessToken,
       chatgptAccountId: token.chatgptAccountId,
+      ...(affinityKey ? { affinityKey } : {}),
       ...(quotaScope ? { quotaScope } : {}),
       ...(probeLeaseId ? { probeLeaseId } : {}),
       ...(probeQuotaScope ? { probeQuotaScope } : {}),

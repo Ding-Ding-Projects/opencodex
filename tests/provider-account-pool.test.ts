@@ -10,6 +10,8 @@ import {
   oauthPoolConfig,
   resolveOAuthAccountForSession,
   rotateOAuthAccountOn429,
+  classifyOAuthPoolFailure,
+  rotateOAuthAccountOnFailure,
 } from "../src/oauth/provider-pool";
 import { getAccountSet, saveCredential, setActiveAccount } from "../src/oauth/store";
 import { clearAccountQuotaCache } from "../src/providers/quota";
@@ -97,6 +99,34 @@ describe("per-provider pool config", () => {
 });
 
 describe("generic selection and failover", () => {
+  test("classifies 401 as account auth failure but leaves generic 403 alone", () => {
+    expect(classifyOAuthPoolFailure("xai", 401, "")).toBe("unauthorized");
+    expect(classifyOAuthPoolFailure("xai", 403, JSON.stringify({ message: "workspace access denied" }))).toBeNull();
+  });
+
+  test("only provider-recognized 403 auth codes are eligible for failover", () => {
+    expect(classifyOAuthPoolFailure("xai", 403, JSON.stringify({ error: { code: "invalid_token" } }))).toBe("forbidden");
+    expect(classifyOAuthPoolFailure("openai", 403, JSON.stringify({ detail: { code: "codex_workspace_access_denied" } }))).toBeNull();
+    expect(classifyOAuthPoolFailure("openai", 403, JSON.stringify({ error: { code: "permission_denied" } }))).toBeNull();
+  });
+
+  test("classified auth failure marks only the failed account and fails over once", async () => {
+    const { idA, idB } = await seedTwoAccounts();
+    const next = await rotateOAuthAccountOnFailure(
+      configWithPool(true),
+      PROVIDER,
+      idA,
+      403,
+      JSON.stringify({ error: { code: "invalid_token" } }),
+      null,
+      "session-auth",
+    );
+    expect(next).toBe(idB);
+    expect(getEligibleOAuthAccounts(PROVIDER)).toEqual([idB]);
+    expect(resolveOAuthAccountForSession(PROVIDER, "session-auth", configWithPool(true)))
+      .toEqual({ accountId: idB, reason: "affinity" });
+  });
+
   test("pool disabled always returns the store's active account", async () => {
     const { idA } = await seedTwoAccounts();
     const selection = resolveOAuthAccountForSession(PROVIDER, "session-1", configWithPool(false));

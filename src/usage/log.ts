@@ -15,6 +15,7 @@ export type AttemptRecoveryKind =
   | "anthropic-oauth-429"
   /** Generic OAuth pool failover (all providers); "anthropic-oauth-429" is its historical spelling. */
   | "oauth-pool-429"
+  | "oauth-pool-auth-failure"
   | "image-413";
 
 export interface PersistedUsageAttempt {
