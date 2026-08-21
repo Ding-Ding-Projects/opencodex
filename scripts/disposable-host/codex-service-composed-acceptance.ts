@@ -1,118 +1,128 @@
 /**
  * Disposable-host service-class acceptance entry point for WP13.
  *
- * This file intentionally lives below scripts/, not tests/, because service-manager
- * acceptance must run only on a disposable host. It is an observe-and-report
- * coordinator: it never starts or stops a service from an ordinary workstation.
- * A host runner supplies the fixture root and a profile-specific evidence manifest.
+ * This runner is deliberately outside ordinary test discovery. It performs the
+ * owned service lifecycle on an explicitly disposable host, proves health after
+ * each lifecycle transition, and emits only scalar evidence. A workstation is
+ * refused before any service command is started.
  */
 import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 export const SERVICE_CLASS_PROFILES = ["P09", "P10", "P18", "P34", "P35", "P36"] as const;
 export type ServiceClassProfile = (typeof SERVICE_CLASS_PROFILES)[number];
+type Phase = "install" | "start" | "probe" | "restart" | "stop" | "uninstall";
+type PhaseResult = { phase: Phase; status: "passed" | "failed"; detail: string };
 
-type CheckStatus = "passed" | "failed" | "not-run";
+export type ServiceHealth = {
+  service: "opencodex";
+  status: "ok";
+  pid: number;
+  port: number;
+  hostname: string;
+  coordinator: "ready";
+  sourceCommit: string;
+  buildCommit: string;
+};
+
 export type ServiceAcceptanceEvidence = {
   profile: ServiceClassProfile;
-  hostRoot: string;
-  startedAt: string;
-  finishedAt: string;
   status: "verified" | "failed" | "refused";
-  checks: readonly {
-    id: string;
-    status: CheckStatus;
-    detail: string;
-  }[];
-  artifacts: Readonly<Record<string, string>>;
+  sourceCommit?: string;
+  buildCommit?: string;
+  serviceId?: string;
+  health?: Pick<ServiceHealth, "pid" | "port" | "hostname" | "coordinator">;
+  phases: readonly PhaseResult[];
   reason?: string;
 };
 
+export type ServiceLifecycleAdapter = {
+  install(): Promise<void> | void;
+  start(): Promise<void> | void;
+  probe(): Promise<ServiceHealth> | ServiceHealth;
+  restart(): Promise<void> | void;
+  stop(): Promise<void> | void;
+  uninstall(): Promise<void> | void;
+};
+
 function parseProfile(value: string | undefined): ServiceClassProfile {
-  if (!value || !(SERVICE_CLASS_PROFILES as readonly string[]).includes(value)) {
-    throw new Error(`profile must be one of ${SERVICE_CLASS_PROFILES.join(", ")}`);
-  }
+  if (!value || !(SERVICE_CLASS_PROFILES as readonly string[]).includes(value)) throw new Error(`profile must be one of ${SERVICE_CLASS_PROFILES.join(", ")}`);
   return value as ServiceClassProfile;
 }
 
-function evidenceFor(profile: ServiceClassProfile, hostRoot: string): ServiceAcceptanceEvidence {
-  const startedAt = new Date().toISOString();
-  const manifestPath = join(hostRoot, "service-acceptance-evidence.json");
-  const checks = [
-    {
-      id: "disposable-host-marker",
-      status: existsSync(join(hostRoot, ".disposable-host")) ? "passed" : "failed",
-      detail: "The host declares itself disposable with a local marker.",
-    },
-    {
-      id: "profile-manifest",
-      status: existsSync(manifestPath) ? "passed" : "failed",
-      detail: "The service-manager runner supplied the profile evidence manifest.",
-    },
-    {
-      id: `service-class-${profile}`,
-      status: existsSync(join(hostRoot, profile, "service-ready.json")) ? "passed" : "failed",
-      detail: `The ${profile} service-class fixture reports its ready state.`,
-    },
-  ] satisfies ServiceAcceptanceEvidence["checks"];
-
-  const artifacts: Record<string, string> = {};
-  if (existsSync(manifestPath)) {
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        for (const [key, value] of Object.entries(parsed)) {
-          if (typeof value === "string" && key.length <= 120 && value.length <= 500) artifacts[key] = value;
-        }
-      }
-    } catch {
-      artifacts.manifest = "unreadable or malformed; no payload retained";
-    }
-  }
-
-  const status = checks.every(check => check.status === "passed") ? "verified" : "failed";
-  return { profile, hostRoot, startedAt, finishedAt: new Date().toISOString(), status, checks, artifacts };
+function exactCommit(value: string | undefined, name: string): string {
+  if (!value || !/^[0-9a-f]{40}$/i.test(value)) throw new Error(`${name} must be a full 40-character commit SHA`);
+  return value.toLowerCase();
 }
 
-export function runServiceAcceptance(options: {
-  profile: string | undefined;
-  hostRoot: string | undefined;
-  disposableHost: string | undefined;
-}): ServiceAcceptanceEvidence {
+function child(args: string[], timeoutMs: number): Promise<void> {
+  const proc = Bun.spawn([process.execPath, "src/cli/index.ts", ...args], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
+  return Promise.race([
+    proc.exited.then(code => { if (code !== 0) throw new Error(`service command exited ${code}`); }),
+    new Promise<never>((_, reject) => setTimeout(() => { try { proc.kill(); } catch { /* bounded teardown */ } reject(new Error("service command timed out")); }, timeoutMs)),
+  ]);
+}
+
+function defaultAdapter(): ServiceLifecycleAdapter {
+  const native = ["service", "--native"];
+  return {
+    install: () => child([...native, "install"], 30_000),
+    start: () => child([...native, "start"], 30_000),
+    probe: async () => {
+      const port = Number(process.env.OCX_DISPOSABLE_HOST_PORT ?? "10100");
+      const hostname = process.env.OCX_DISPOSABLE_HOSTNAME ?? "127.0.0.1";
+      const response = await fetch(`http://${hostname}:${port}/healthz`, { signal: AbortSignal.timeout(10_000) });
+      if (!response.ok) throw new Error(`health probe returned ${response.status}`);
+      const body = await response.json() as Partial<ServiceHealth>;
+      if (body.service !== "opencodex" || body.status !== "ok" || !Number.isSafeInteger(body.pid) || !Number.isSafeInteger(body.port) || typeof body.hostname !== "string" || body.coordinator !== "ready") throw new Error("health probe was incomplete or fabricated");
+      return { service: "opencodex", status: "ok", pid: body.pid, port: body.port, hostname: body.hostname, coordinator: "ready", sourceCommit: exactCommit(process.env.OCX_ACCEPTANCE_SOURCE_COMMIT, "source commit"), buildCommit: exactCommit(process.env.OCX_ACCEPTANCE_BUILD_COMMIT, "build commit") };
+    },
+    restart: () => child([...native, "restart"], 30_000),
+    stop: () => child([...native, "stop"], 30_000),
+    uninstall: () => child([...native, "uninstall"], 30_000),
+  };
+}
+
+function assertFreshDisposableHost(hostRoot: string): void {
+  if (!existsSync(hostRoot) || !lstatSync(hostRoot).isDirectory()) throw new Error("disposable host root must be an existing directory");
+  const attestationPath = resolve(hostRoot, "disposable-host-attestation.json");
+  if (!existsSync(attestationPath)) throw new Error("disposable host attestation is required");
+  const parsed = JSON.parse(readFileSync(attestationPath, "utf8")) as { expiresAt?: string; nonce?: string; hostId?: string };
+  if (!parsed.hostId || !parsed.nonce || !parsed.expiresAt || Date.parse(parsed.expiresAt) <= Date.now()) throw new Error("disposable host attestation is stale or incomplete");
+}
+
+export async function runServiceAcceptance(options: { profile: string | undefined; hostRoot: string | undefined; disposableHost: string | undefined; sourceCommit?: string; buildCommit?: string; adapter?: ServiceLifecycleAdapter }): Promise<ServiceAcceptanceEvidence> {
   const profile = parseProfile(options.profile);
-  if (options.disposableHost !== "1") {
-    return {
-      profile,
-      hostRoot: "",
-      startedAt: new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-      status: "refused",
-      checks: [],
-      artifacts: {},
-      reason: "service-class acceptance requires OCX_DISPOSABLE_HOST_ACCEPTANCE=1",
-    };
-  }
-  if (!options.hostRoot || !isAbsolute(options.hostRoot)) {
-    throw new Error("OCX_DISPOSABLE_HOST_ROOT must be an absolute disposable-host path");
-  }
+  if (options.disposableHost !== "1") return { profile, status: "refused", phases: [], reason: "service-class acceptance requires OCX_DISPOSABLE_HOST_ACCEPTANCE=1" };
+  if (!options.hostRoot || !isAbsolute(options.hostRoot)) throw new Error("OCX_DISPOSABLE_HOST_ROOT must be an absolute disposable-host path");
   const hostRoot = resolve(options.hostRoot);
-  if (!existsSync(hostRoot) || !lstatSync(hostRoot).isDirectory()) {
-    throw new Error("OCX_DISPOSABLE_HOST_ROOT must name an existing directory");
+  assertFreshDisposableHost(hostRoot);
+  const sourceCommit = exactCommit(options.sourceCommit ?? process.env.OCX_ACCEPTANCE_SOURCE_COMMIT, "source commit");
+  const buildCommit = exactCommit(options.buildCommit ?? process.env.OCX_ACCEPTANCE_BUILD_COMMIT, "build commit");
+  const serviceId = `opencodex-${profile.toLowerCase()}`;
+  const adapter = options.adapter ?? defaultAdapter();
+  const phases: PhaseResult[] = [];
+  let installed = false;
+  let health: ServiceHealth | undefined;
+  const run = async (phase: Phase, action: () => Promise<void> | void): Promise<void> => {
+    try { await action(); phases.push({ phase, status: "passed", detail: "completed" }); }
+    catch (error) { phases.push({ phase, status: "failed", detail: error instanceof Error ? error.message : "phase failed" }); throw error; }
+  };
+  try {
+    await run("install", () => adapter.install()); installed = true;
+    await run("start", () => adapter.start());
+    await run("probe", async () => { health = await adapter.probe(); if (health.sourceCommit !== sourceCommit || health.buildCommit !== buildCommit) throw new Error("health evidence commit does not match requested source/build commit"); });
+    await run("restart", () => adapter.restart());
+    await run("probe", async () => { const restarted = await adapter.probe(); if (!health || restarted.pid === health.pid) throw new Error("restart did not produce a new live process identity"); health = restarted; });
+    await run("stop", () => adapter.stop());
+    await run("uninstall", () => adapter.uninstall()); installed = false;
+    return { profile, status: "verified", sourceCommit, buildCommit, serviceId, health: health && { pid: health.pid, port: health.port, hostname: health.hostname, coordinator: health.coordinator }, phases };
+  } catch (error) {
+    if (installed) { try { await adapter.stop(); } catch { /* preserve original failure */ } try { await adapter.uninstall(); } catch { /* preserve original failure */ } }
+    return { profile, status: "failed", sourceCommit, buildCommit, serviceId, health: health && { pid: health.pid, port: health.port, hostname: health.hostname, coordinator: health.coordinator }, phases, reason: error instanceof Error ? error.message : "service acceptance failed" };
   }
-  return evidenceFor(profile, hostRoot);
 }
 
 if (import.meta.main) {
-  try {
-    const evidence = runServiceAcceptance({
-      profile: process.env.OCX_SERVICE_ACCEPTANCE_PROFILE,
-      hostRoot: process.env.OCX_DISPOSABLE_HOST_ROOT,
-      disposableHost: process.env.OCX_DISPOSABLE_HOST_ACCEPTANCE,
-    });
-    console.log(JSON.stringify(evidence));
-    process.exitCode = evidence.status === "verified" ? 0 : evidence.status === "refused" ? 2 : 1;
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : "service acceptance failed");
-    process.exitCode = 1;
-  }
+  runServiceAcceptance({ profile: process.env.OCX_SERVICE_ACCEPTANCE_PROFILE, hostRoot: process.env.OCX_DISPOSABLE_HOST_ROOT, disposableHost: process.env.OCX_DISPOSABLE_HOST_ACCEPTANCE }).then(evidence => { console.log(JSON.stringify(evidence)); process.exitCode = evidence.status === "verified" ? 0 : evidence.status === "refused" ? 2 : 1; }).catch(error => { console.error(error instanceof Error ? error.message : "service acceptance failed"); process.exitCode = 1; });
 }
