@@ -158,11 +158,18 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	preferredPort := cfg.Port
 	selectedPort := preferredPort
 	if preferredPort > 0 {
-		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, preferredPort, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
+		explicitPort := *portOverride >= 0
+		selectedPort, err = selectServePort(cfg.Host, preferredPort, explicitPort, server.FindAvailablePortWithOptions)
 		if err != nil {
 			return err
 		}
 	}
+	lockPath := filepath.Join(configHome, "startup.lock")
+	startupLock, lockErr := acquireStartupLock(lockPath, os.Getpid(), time.Now(), nil)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer func() { _ = releaseStartupLock(lockPath, startupLock) }()
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
 	if err != nil {
 		return err
@@ -224,6 +231,29 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		go func() { _ = applyGrokFence(ctx, cfg, actualPort, cfg.Host, false, streams) }()
 	}
 	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart, proxy.Close, restartRequests, newRestartControl(streams), actualPort)
+}
+
+type servePortChooser func(string, int, server.FindAvailablePortOptions) (int, error)
+
+// selectServePort distinguishes an automatic preference from an explicit pin.
+// Automatic launchers may hop to an ephemeral port when the preference is
+// occupied; a caller that typed --port must receive the requested port or an
+// error, never a silently changed endpoint.
+func selectServePort(host string, preferred int, explicit bool, choose servePortChooser) (int, error) {
+	if choose == nil {
+		choose = server.FindAvailablePortWithOptions
+	}
+	selected, err := choose(host, preferred, server.FindAvailablePortOptions{
+		PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond,
+		AllowEphemeralFallback: !explicit,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if explicit && selected != preferred {
+		return 0, fmt.Errorf("explicit port %d is unavailable", preferred)
+	}
+	return selected, nil
 }
 
 func validateServeAuth(cfg config.Config, token string) error {
