@@ -37,12 +37,24 @@ describe("xAI Priority Processing", () => {
   });
 
   test("priority pricing is exact-provider scoped and doubles xAI's published base", () => {
-    expect(resolveMatchedPrice("xai", "grok-4.6", { serviceTier: "standard" })?.cost4).toEqual({
+    expect(resolveMatchedPrice("xai", "grok-4.6", { serviceTier: "standard", promptInputTokens: 100_000 })?.cost4).toEqual({
       input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0,
     });
-    expect(resolveMatchedPrice("xai", "grok-4.6", { serviceTier: "priority" })?.cost4).toEqual({
+    expect(resolveMatchedPrice("xai", "grok-4.6", { serviceTier: "priority", promptInputTokens: 100_000 })?.cost4).toEqual({
       input: 4, output: 12, cacheRead: 1, cacheWrite: 0,
     });
-    expect(resolveMatchedPrice("openrouter", "grok-4.6", { serviceTier: "priority" })).toBeNull();
+    expect(resolveMatchedPrice("openrouter", "grok-4.6", { serviceTier: "priority", promptInputTokens: 100_000 })).toBeNull();
+  });
+
+  test("uses the exact 200K boundary and model-specific cached rates", () => {
+    expect(resolveMatchedPrice("xai", "grok-4.5", { promptInputTokens: 199_999 })?.cost4).toEqual({
+      input: 2, output: 6, cacheRead: 0.3, cacheWrite: 0,
+    });
+    expect(resolveMatchedPrice("xai", "grok-4.5", { promptInputTokens: 200_000 })?.cost4).toEqual({
+      input: 4, output: 12, cacheRead: 0.6, cacheWrite: 0,
+    });
+    expect(resolveMatchedPrice("xai", "grok-4.6", { serviceTier: "priority", promptInputTokens: 200_000 })?.cost4).toEqual({
+      input: 8, output: 24, cacheRead: 2, cacheWrite: 0,
+    });
   });
 });
