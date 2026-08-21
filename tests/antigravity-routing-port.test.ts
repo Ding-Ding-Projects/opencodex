@@ -28,7 +28,7 @@ describe("Antigravity account cooldown recording", () => {
     await expect(resolveAntigravityBearerDestination(
       "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
       async () => ({ hostname: "daily-cloudcode-pa.googleapis.com", addresses: [{ address: "10.0.0.4", family: 4 }], privateNetwork: false }),
-    )).rejects.toThrow(/resolved to a private/);
+    )).rejects.toThrow(/resolved to private-network/);
   });
   test("records hard quota exhaustion and does not retry the paid POST", async () => {
     let calls = 0;
