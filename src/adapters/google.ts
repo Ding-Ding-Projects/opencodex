@@ -672,15 +672,7 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         const err = raw.error as { message?: string };
         return [{ type: "error", message: err.message ?? "upstream error" }];
       }
-      // Antigravity (CCA) nests the standard Gemini payload under `response`; unwrap it.
-      let json = raw;
-      if (provider.googleMode === "cloud-code-assist") {
-        const wrapped = raw.response;
-        if (!wrapped || typeof wrapped !== "object" || Array.isArray(wrapped)) {
-          return [{ type: "error", message: "google-antigravity response missing response wrapper" }];
-        }
-        json = wrapped as Record<string, unknown>;
-      }
+      const json = raw;
       const events: AdapterEvent[] = [];
 
       const candidates = json.candidates as { content?: { parts?: { text?: string; functionCall?: { name: string; args: unknown } }[] }; finishReason?: string }[] | undefined;
@@ -690,10 +682,6 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
       let toolCallsStarted = 0;
       const imageBudget = createImageBudget();
       if (candidates?.[0]?.content?.parts) {
-        // Non-streaming CCA: observe thoughtSignatures for the next turn, same as the stream path.
-        if (provider.googleMode === "cloud-code-assist" && antigravityModel && antigravitySession) {
-          observeAntigravityReplay(antigravityModel, antigravitySession, candidates[0].content.parts as unknown[]);
-        }
         for (const part of candidates[0].content.parts) {
           if (part.text) events.push({ type: "text_delta", text: part.text });
           const inline = (part as { inlineData?: { mimeType?: string; data?: string } }).inlineData;
@@ -722,7 +710,7 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
 
       // Fail-closed truncation, same as the stream path: a non-stream turn cut off mid tool call
       // (MAX_TOKENS / MALFORMED_FUNCTION_CALL) surfaces an error instead of a silent done.
-      if ((provider.googleMode === "vertex" || provider.googleMode === "cloud-code-assist")
+      if (provider.googleMode === "vertex"
         && toolCallsStarted > 0 && isVertexTruncationReason(candidates?.[0]?.finishReason)) {
         return [{ type: "error", message: vertexTruncationErrorMessage(candidates?.[0]?.finishReason) }];
       }
