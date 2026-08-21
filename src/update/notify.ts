@@ -197,6 +197,8 @@ let versionRefreshAbort: AbortController | null = null;
 let versionRefreshTimeoutTimer: RefreshTimer | null = null;
 let versionRefreshStop: (() => Promise<boolean>) | null = null;
 let versionRefreshTreeExited = true;
+let versionRefreshChannel: Channel | null = null;
+let versionRefreshFlightGeneration = 0;
 let refreshGeneration = 0;
 
 function refreshTimeoutMs(options: VersionRefreshScheduleOptions): number {
@@ -245,6 +247,9 @@ function runRefreshOperation(
   if (versionRefreshFlight) return versionRefreshFlight;
   const controller = new AbortController();
   versionRefreshAbort = controller;
+  versionRefreshChannel = channel;
+  versionRefreshFlightGeneration = refreshGeneration;
+  versionRefreshTreeExited = true;
   let operation: Promise<void>;
   try {
     operation = Promise.resolve(refreshFn(channel, controller.signal));
@@ -275,6 +280,7 @@ function runRefreshOperation(
       versionRefreshFlight = null;
       versionRefreshAbort = null;
       versionRefreshStop = null;
+      versionRefreshChannel = null;
     }
   });
   return settled;
@@ -383,6 +389,21 @@ function scheduleVersionRefresh(
   options: VersionRefreshScheduleOptions = {},
   delayOverrideMs?: number,
 ): void {
+  if (versionRefreshFlight) {
+    if (versionRefreshChannel === channel || !versionRefreshStop) return;
+    const oldFlight = versionRefreshFlight;
+    const oldGeneration = versionRefreshFlightGeneration;
+    const stop = versionRefreshStop;
+    refreshGeneration += 1;
+    versionRefreshAbort?.abort();
+    void stop().then(async treeExited => {
+      if (!treeExited) return;
+      await oldFlight;
+      if (versionRefreshFlight === oldFlight && versionRefreshFlightGeneration === oldGeneration) return;
+      scheduleVersionRefresh(channel, cache, options, delayOverrideMs);
+    });
+    return;
+  }
   if (scheduledVersionRefresh) {
     if (scheduledVersionRefresh.channel === channel) return;
     const previous = scheduledVersionRefresh;

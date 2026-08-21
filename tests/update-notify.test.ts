@@ -260,6 +260,87 @@ describe("bounded background version refresh scheduling", () => {
     expect(timers[1]?.delay).toBe(0);
   });
 
+  test("switching from an active latest helper to preview stops the exact child before arming preview", async () => {
+    const oldChild = new FakeRefreshChild();
+    const previewChild = new FakeRefreshChild();
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const timer = { unref: () => undefined };
+    let previewSpawns = 0;
+    const oldOptions = {
+      setTimeoutFn: (callback: () => void, delay: number) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+      spawnRefreshChildFn: () => oldChild,
+      stopRefreshChildFn: async owned => {
+        expect(owned).toBe(oldChild);
+        owned.kill("SIGTERM");
+        owned.close();
+        return true;
+      },
+    };
+    scheduleVersionRefreshIfStale("latest", null, oldOptions);
+    timers.shift()?.callback();
+    await Promise.resolve();
+
+    scheduleVersionRefreshIfStale("preview", null, {
+      setTimeoutFn: (callback: () => void, delay: number) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+      spawnRefreshChildFn: () => {
+        previewSpawns += 1;
+        return previewChild;
+      },
+      stopRefreshChildFn: async owned => {
+        owned.close();
+        return true;
+      },
+    });
+    await Bun.sleep(0);
+    await Promise.resolve();
+    expect(oldChild.killed).toEqual(["SIGTERM"]);
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.delay).toBe(0);
+
+    oldChild.close();
+    expect(timers).toHaveLength(1);
+    timers.shift()?.callback();
+    await Promise.resolve();
+    expect(previewSpawns).toBe(1);
+  });
+
+  test("a failed active-child stop blocks the channel switch and ignores the late old close", async () => {
+    const oldChild = new FakeRefreshChild();
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const timer = { unref: () => undefined };
+    scheduleVersionRefreshIfStale("latest", null, {
+      setTimeoutFn: (callback: () => void, delay: number) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+      spawnRefreshChildFn: () => oldChild,
+      stopRefreshChildFn: async owned => {
+        expect(owned).toBe(oldChild);
+        owned.kill("SIGTERM");
+        return false;
+      },
+    });
+    timers.shift()?.callback();
+    await Promise.resolve();
+    scheduleVersionRefreshIfStale("preview", null, {
+      setTimeoutFn: (callback: () => void, delay: number) => {
+        timers.push({ callback, delay });
+        return timer;
+      },
+    });
+    await Bun.sleep(0);
+    oldChild.close();
+    await Promise.resolve();
+    expect(oldChild.killed).toEqual(["SIGTERM"]);
+    expect(timers).toHaveLength(0);
+  });
+
   test("failed metadata refresh does not advance the successful timestamp", async () => {
     const cache: VersionCache = {
       latest_version: "2.7.0",
