@@ -78,9 +78,9 @@ describe("replacement applies to authored prose", () => {
   });
 
   test("clearing removes the effect immediately, restoring the original wording", async () => {
-    await activate({ language: "STAND-IN-TERM" });
+    const storage = await activate({ language: "STAND-IN-TERM" });
     expect(translate("en", FUNNY, "narrator.language")).toBe("Narrator STAND-IN-TERM");
-    clearVocabulary();
+    clearVocabulary(storage);
     expect(translate("en", FUNNY, "narrator.language")).toBe("Narrator language");
   });
 
