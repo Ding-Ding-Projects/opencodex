@@ -3,10 +3,10 @@ import { MAIN_CODEX_ACCOUNT_ID } from "../codex/main-account";
 import { resolveEnvValue } from "../config";
 import { getValidAccessToken, getValidAccessTokenForAccount } from "../oauth";
 import { getAccountCredential, getAccountSet, getCredential } from "../oauth/store";
-import { antigravityUserAgent } from "../adapters/client-fingerprint";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "./registry";
 import type { OcxConfig, OcxProviderConfig } from "../types";
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "./openai-tiers";
+import { fetchAntigravityAccountQuota, fetchAntigravityLiveQuota, isTerminalAntigravityQuotaStatus, AntigravityQuotaRpcError } from "./antigravity-quota";
 
 /** Match oauth/index REFRESH_SKEW_MS — use stored access without refresh when still fresh. */
 const ACCOUNT_TOKEN_SKEW_MS = 60_000;
@@ -303,11 +303,22 @@ export interface ProviderAccountQuota {
  * the probe path in the same change, or the pool will rank every account as unknown.
  */
 export function supportsPerAccountQuota(provider: string): boolean {
-  return provider === "anthropic";
+  return provider === "anthropic" || provider === "google-antigravity";
 }
 
-function accountCacheKey(provider: string, accountId: string): string {
-  return `${provider}\u0000${accountId}`;
+function normalizeAntigravityDestination(baseUrl?: string): string {
+  const raw = baseUrl?.trim() || "https://daily-cloudcode-pa.googleapis.com";
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || url.search || url.hash) return "!invalid!";
+    return `${url.origin.toLowerCase()}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "!invalid!";
+  }
+}
+
+function accountCacheKey(provider: string, accountId: string, destination = ""): string {
+  return destination ? `${provider}\u0000${accountId}\u0000${destination}` : `${provider}\u0000${accountId}`;
 }
 
 /**
@@ -376,8 +387,10 @@ async function fetchAccountQuota(
   provider: string,
   accountId: string,
   forceRefresh: boolean,
+  baseUrl?: string,
 ): Promise<AccountQuotaCacheEntry> {
-  const key = accountCacheKey(provider, accountId);
+  const destination = provider === "google-antigravity" ? normalizeAntigravityDestination(baseUrl) : "";
+  const key = accountCacheKey(provider, accountId, destination);
   const cached = accountQuotaCache.get(key);
   if (!forceRefresh && cached && Date.now() - cached.ts < ACCOUNT_QUOTA_TTL_MS) return cached;
   const joinable = accountQuotaInflight.get(key);
@@ -386,7 +399,18 @@ async function fetchAccountQuota(
   const probe = (async (): Promise<AccountQuotaCacheEntry> => {
     try {
       const token = await getTokenForAccountQuotaProbe(provider, accountId);
-      const quota = await fetchAnthropicUsageQuota(token);
+      const quota = provider === "google-antigravity"
+        ? await (async () => {
+            const stored = getAccountCredential(provider, accountId);
+            if (!stored?.projectId || destination === "!invalid!") return null;
+            return fetchAntigravityAccountQuota({
+              accessToken: token,
+              projectId: stored.projectId,
+              baseUrl: baseUrl || "https://daily-cloudcode-pa.googleapis.com",
+              timeoutMs: REQUEST_TIMEOUT_MS,
+            });
+          })()
+        : await fetchAnthropicUsageQuota(token);
       if (!quota) {
         // Preserve last-good bars and mark unavailable; advance TTL so failures
         // negative-cache instead of re-probing on every GUI poll.
@@ -424,12 +448,13 @@ async function fetchAccountQuota(
 export async function fetchProviderAccountQuotas(
   provider: string,
   forceRefresh = false,
+  baseUrl?: string,
 ): Promise<ProviderAccountQuota[]> {
   if (!supportsPerAccountQuota(provider)) return [];
   const set = getAccountSet(provider);
   if (!set) return [];
   return await Promise.all(set.accounts.map(async account => {
-    const entry = await fetchAccountQuota(provider, account.id, forceRefresh);
+    const entry = await fetchAccountQuota(provider, account.id, forceRefresh, baseUrl);
     return {
       accountId: account.id,
       quota: entry.quota,
@@ -799,48 +824,15 @@ async function fetchAntigravityQuota(provider: string, config: OcxProviderConfig
     return null;
   }
   const baseUrl = (config.baseUrl || "https://daily-cloudcode-pa.googleapis.com").replace(/\/+$/, "");
-  const response = await fetch(`${baseUrl}/v1internal:fetchAvailableModels`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "User-Agent": antigravityUserAgent(),
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ project: credential.projectId }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!response.ok) return null;
-  const body = asRecord(await response.json().catch(() => null));
-  const models = asRecord(body?.models);
-  if (!models) return null;
-
-  const windows = new Map<string, ProviderQuotaWindow>();
-  for (const [modelId, rawModelInfo] of Object.entries(models)) {
-    const modelInfo = asRecord(rawModelInfo);
-    if (!modelInfo) continue;
-    for (const quotaInfo of quotaInfoEntries(modelInfo)) {
-      const label = classifyAntigravityFamily(modelId, modelInfo, quotaInfo);
-      if (!label || windows.has(label)) continue;
-      const percent = antigravityUsedPercent(quotaInfo);
-      if (percent === undefined) continue;
-      windows.set(label, {
-        label,
-        percent,
-        ...(normalizeResetAt(quotaInfo.resetTime) !== undefined ? { resetAt: normalizeResetAt(quotaInfo.resetTime) } : {}),
-      });
-    }
+  try {
+    const live = await fetchAntigravityLiveQuota({ accessToken, projectId: credential.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS });
+    const quota = live ?? await fetchAntigravityAccountQuota({ accessToken, projectId: credential.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS });
+    return quota ? report(provider, live ? "google-antigravity:retrieveUserQuota" : "google-antigravity:fetchAvailableModels", quota) : null;
+  } catch (error) {
+    // Terminal auth/quota/geoblock responses must not preserve stale rows or retry on a peer.
+    if (error instanceof AntigravityQuotaRpcError && isTerminalAntigravityQuotaStatus(error.status)) return null;
+    return null;
   }
-
-  const customWindows = ["Gem", "Cla"].flatMap(label => {
-    const window = windows.get(label);
-    return window ? [window] : [];
-  });
-  if (customWindows.length === 0) return null;
-  return report(provider, "google-antigravity:fetchAvailableModels", {
-    customWindows,
-    updatedAt: Date.now(),
-  });
 }
 
 async function maybeFetchProviderQuota(
