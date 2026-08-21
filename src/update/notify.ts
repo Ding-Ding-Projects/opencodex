@@ -16,7 +16,7 @@ import {
 import { OPENCODEX_RELEASE_NOTES_URL } from "./links";
 
 const VERSION_FILENAME = "version.json";
-const REFRESH_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20h, matching codex-rs
+export const VERSION_REFRESH_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20h, matching codex-rs
 const RELEASE_NOTES_URL = OPENCODEX_RELEASE_NOTES_URL;
 
 export interface VersionCache {
@@ -149,19 +149,31 @@ export function getUpgradeVersionForPopup(
   return cache.latest_version;
 }
 
-function cacheIsStale(cache: VersionCache | null): boolean {
+function cacheIsStale(cache: VersionCache | null, now = Date.now()): boolean {
   if (!cache) return true;
   const checked = Date.parse(cache.last_checked_at);
   if (!Number.isFinite(checked)) return true;
-  return Date.now() - checked > REFRESH_INTERVAL_MS;
+  return now - checked >= VERSION_REFRESH_INTERVAL_MS;
 }
 
-/**
- * If the cache is missing or older than 20h, kick off a detached helper to
- * refresh it without blocking this (soon-to-be daemon) process. Fire-and-forget.
- */
-export function triggerBackgroundRefreshIfStale(channel: Channel, cache: VersionCache | null): void {
-  if (!cacheIsStale(cache)) return;
+type RefreshTimer = ReturnType<typeof setTimeout>;
+
+export interface VersionRefreshScheduleOptions {
+  now?: () => number;
+  setTimeoutFn?: (callback: () => void, delayMs: number) => RefreshTimer;
+  clearTimeoutFn?: (timer: RefreshTimer) => void;
+  /** Test seam; production uses one detached, non-interactive helper. */
+  refreshFn?: (channel: Channel) => Promise<void> | void;
+}
+
+let scheduledVersionRefresh: {
+  channel: Channel;
+  timer: RefreshTimer;
+  clearTimeoutFn: (timer: RefreshTimer) => void;
+} | null = null;
+let versionRefreshFlight: Promise<void> | null = null;
+
+function spawnVersionRefresh(channel: Channel): void {
   try {
     const entry = process.argv[1];
     if (!entry || !existsSync(entry)) return;
@@ -173,8 +185,58 @@ export function triggerBackgroundRefreshIfStale(channel: Channel, cache: Version
     });
     child.unref();
   } catch {
-    /* best-effort */
+    /* best-effort; the next process start can try again */
   }
+}
+
+/**
+ * Schedule at most one detached metadata refresh. A fresh cache schedules the
+ * one refresh at its freshness deadline; a missing/stale cache schedules it
+ * immediately. The timer is unref'd so a service can shut down normally.
+ */
+export function scheduleVersionRefreshIfStale(
+  channel: Channel,
+  cache: VersionCache | null,
+  options: VersionRefreshScheduleOptions = {},
+): void {
+  if (scheduledVersionRefresh || versionRefreshFlight) return;
+  const now = options.now ?? Date.now;
+  const checked = cache ? Date.parse(cache.last_checked_at) : Number.NaN;
+  const dueAt = Number.isFinite(checked) ? checked + VERSION_REFRESH_INTERVAL_MS : now();
+  const delayMs = Math.max(0, dueAt - now());
+  const setTimeoutFn = options.setTimeoutFn ?? ((callback, delay) => setTimeout(callback, delay));
+  const clearTimeoutFn = options.clearTimeoutFn ?? ((timer: RefreshTimer) => clearTimeout(timer));
+  const refreshFn = options.refreshFn ?? (async (tag: Channel) => { spawnVersionRefresh(tag); });
+  const timer = setTimeoutFn(() => {
+    scheduledVersionRefresh = null;
+    const flight = Promise.resolve().then(() => refreshFn(channel));
+    const settled = flight.then(() => undefined, () => undefined);
+    versionRefreshFlight = settled;
+    void settled.then(() => {
+      if (versionRefreshFlight === settled) versionRefreshFlight = null;
+    });
+  }, delayMs);
+  timer.unref?.();
+  scheduledVersionRefresh = { channel, timer, clearTimeoutFn };
+}
+
+/** Cancel the one pending refresh timer during process shutdown or test teardown. */
+export function cancelVersionRefreshSchedule(): void {
+  if (!scheduledVersionRefresh) return;
+  const { timer, clearTimeoutFn } = scheduledVersionRefresh;
+  scheduledVersionRefresh = null;
+  clearTimeoutFn(timer);
+}
+
+process.once("exit", cancelVersionRefreshSchedule);
+
+/**
+ * If the cache is missing or older than 20h, kick off a detached helper to
+ * refresh it without blocking this (soon-to-be daemon) process. Fire-and-forget.
+ */
+export function triggerBackgroundRefreshIfStale(channel: Channel, cache: VersionCache | null): void {
+  if (!cacheIsStale(cache)) return;
+  scheduleVersionRefreshIfStale(channel, cache);
 }
 
 /**
@@ -182,16 +244,29 @@ export function triggerBackgroundRefreshIfStale(channel: Channel, cache: Version
  * for the channel and persist it. Only advances `last_checked_at` on success so
  * a failed fetch retries on the next start.
  */
-export async function refreshVersionCache(channel: Channel): Promise<void> {
-  const latest = latestVersion(channel);
-  if (!latest) return; // do not dirty the cache or advance the timestamp
-  const prev = readVersionCache(channel);
-  writeVersionCache({
-    latest_version: latest,
-    last_checked_at: new Date().toISOString(),
-    dismissed_version: prev?.dismissed_version,
-    tag: channel,
+export async function refreshVersionCache(
+  channel: Channel,
+  resolveLatest: (tag: Channel) => string | null = latestVersion,
+  now: () => string = () => new Date().toISOString(),
+): Promise<void> {
+  if (versionRefreshFlight) return versionRefreshFlight;
+  const flight = Promise.resolve().then(() => {
+    const latest = resolveLatest(channel);
+    if (!latest) return; // do not dirty the cache or advance the timestamp
+    const prev = readVersionCache(channel);
+    writeVersionCache({
+      latest_version: latest,
+      last_checked_at: now(),
+      dismissed_version: prev?.dismissed_version,
+      tag: channel,
+    });
   });
+  const settled = flight.then(() => undefined, () => undefined);
+  versionRefreshFlight = settled;
+  void settled.then(() => {
+    if (versionRefreshFlight === settled) versionRefreshFlight = null;
+  });
+  return settled;
 }
 
 /** Persist a dismissal so this exact version stops prompting. */
@@ -225,13 +300,18 @@ function renderPrompt(current: string, latest: string, channel: Channel): string
  */
 export async function maybeShowUpdatePrompt(): Promise<void> {
   try {
+    // Schedule before the interactive guard so service/background starts also
+    // refresh metadata at most once without ever opening a prompt.
+    const currentForSchedule = currentVersion();
+    if (detectInstall() !== "source" && currentForSchedule !== "?" && !isSourceBuildVersion(currentForSchedule)) {
+      const channel = updateTag(currentForSchedule);
+      scheduleVersionRefreshIfStale(channel, readVersionCache(channel));
+    }
     const eligible = shouldConsider();
     if (!eligible) return;
     const { channel, current } = eligible;
 
     const cache = readVersionCache(channel);
-    triggerBackgroundRefreshIfStale(channel, cache);
-
     const latest = getUpgradeVersionForPopup(cache, current, channel);
     if (!latest) return;
 

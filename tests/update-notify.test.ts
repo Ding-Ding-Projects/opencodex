@@ -3,10 +3,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  cancelVersionRefreshSchedule,
   getUpgradeVersionForPopup,
   isNewer,
   isSourceBuildVersion,
   readVersionCache,
+  scheduleVersionRefreshIfStale,
+  refreshVersionCache,
   writeVersionCache,
   type VersionCache,
 } from "../src/update/notify";
@@ -21,9 +24,70 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cancelVersionRefreshSchedule();
   if (prevHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = prevHome;
   try { removeTempDir(dir); } catch { /* ignore */ }
+});
+
+describe("bounded background version refresh scheduling", () => {
+  test("schedules exactly one refresh when a long-running service crosses freshness", async () => {
+    let timerCallback: (() => void) | undefined;
+    let timerCount = 0;
+    let refreshCount = 0;
+    const timer = { unref: () => undefined };
+    const now = Date.parse("2026-08-21T12:00:00.000Z");
+    const cache: VersionCache = {
+      latest_version: "2.7.0",
+      last_checked_at: new Date(now).toISOString(),
+      tag: "latest",
+    };
+
+    scheduleVersionRefreshIfStale("latest", cache, {
+      now: () => now,
+      setTimeoutFn: (callback, delay) => {
+        timerCount += 1;
+        expect(delay).toBe(20 * 60 * 60 * 1000);
+        timerCallback = callback;
+        return timer;
+      },
+      refreshFn: async () => { refreshCount += 1; },
+    });
+    scheduleVersionRefreshIfStale("latest", cache, {
+      now: () => now,
+      setTimeoutFn: () => { throw new Error("must stay single-flight"); },
+      refreshFn: async () => { refreshCount += 1; },
+    });
+
+    expect(timerCount).toBe(1);
+    timerCallback?.();
+    await Promise.resolve();
+    expect(refreshCount).toBe(1);
+  });
+
+  test("failed metadata refresh does not advance the successful timestamp", async () => {
+    const cache: VersionCache = {
+      latest_version: "2.7.0",
+      last_checked_at: "2026-08-20T12:00:00.000Z",
+      tag: "latest",
+    };
+    writeVersionCache(cache);
+    await refreshVersionCache("latest", () => null);
+    expect(readVersionCache("latest")).toMatchObject(cache);
+  });
+
+  test("shutdown cancellation clears the single scheduled timer", () => {
+    let clearCount = 0;
+    const timer = { unref: () => undefined };
+    scheduleVersionRefreshIfStale("latest", null, {
+      setTimeoutFn: () => timer,
+      clearTimeoutFn: () => { clearCount += 1; },
+    });
+    cancelVersionRefreshSchedule();
+    expect(clearCount).toBe(1);
+    cancelVersionRefreshSchedule();
+    expect(clearCount).toBe(1);
+  });
 });
 
 describe("isNewer — latest channel", () => {

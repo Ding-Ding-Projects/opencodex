@@ -100,6 +100,8 @@ export interface UpdateJobState {
   exitCode?: number | null;
   signal?: string | null;
   restarted?: boolean;
+  /** Honest recovery state when the runtime is preserved but health is unverified. */
+  recoveryState?: "health-unverified" | "recovery-blocked";
 }
 
 export class UpdateJobError extends Error {
@@ -1049,7 +1051,11 @@ async function recoverFailedGuiUpdate(
   const oldPidIdentityMatches = captured.oldPid != null
     && (io.verifyPidIdentityFn ?? verifyPidIdentityFresh)(captured.oldPid) === captured.oldPid;
   if (oldPidIdentityMatches) {
-    updateJob(job, {}, `Update command failed and health probes timed out, but pre-update PID ${captured.oldPid} still identifies as OpenCodex; refusing an automatic restart.`);
+    updateJob(
+      job,
+      { recoveryState: "health-unverified" },
+      `Update command failed and health probes timed out, but pre-update PID ${captured.oldPid} still identifies as OpenCodex; health is unverified, refusing an automatic restart and leaving that PID untouched. Retry health or run 'ocx start --port ${captured.port}' manually.`,
+    );
     return "still-running";
   }
 
@@ -1381,7 +1387,7 @@ export async function runGuiUpdateWorker(jobId: string, channel: Channel, restar
       }
       let recovery: FailedUpdateRecovery | null = null;
       if (!mayRecover) {
-        updateJob(job, {}, `Automatic proxy recovery was skipped because installer process-tree shutdown was not confirmed. Wait for installer processes to exit before restoring the package or proxy.${trayWasRunning ? " The Windows tray also remains stopped; run 'ocx tray start' after the installer processes exit." : ""}`);
+        updateJob(job, { recoveryState: "recovery-blocked" }, `Automatic proxy recovery was skipped because installer process-tree shutdown was not confirmed. Wait for installer processes to exit before restoring the package or proxy.${trayWasRunning ? " The Windows tray also remains stopped; run 'ocx tray start' after the installer processes exit." : ""}`);
       } else {
         recovery = await recoverFailedGuiUpdate(job, captured, proxyWasActive);
       }
