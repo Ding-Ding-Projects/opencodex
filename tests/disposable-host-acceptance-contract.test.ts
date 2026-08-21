@@ -47,4 +47,14 @@ describe("disposable-host service acceptance contract", () => {
     await expect(runServiceAcceptance({ profile: "P10", hostRoot: root, disposableHost: "1", sourceCommit: "a".repeat(40), buildCommit: "b".repeat(40), adapter: { install: () => { called = true; }, start: () => {}, probe: () => { throw new Error("should not probe"); }, restart: () => {}, stop: () => {}, uninstall: () => {}, verifyGone: () => {} } })).rejects.toThrow(/stale/);
     expect(called).toBe(false);
   });
+
+  test("consumes a valid attestation nonce before lifecycle work", async () => {
+    const root = mkdtempSync(join(process.env.TEMP ?? ".", "ocx-service-acceptance-"));
+    writeFileSync(join(root, "disposable-host-attestation.json"), JSON.stringify({ hostId: "test-host", nonce: "one-use", owner: `${process.env.USERDOMAIN}\\${process.env.USERNAME}`, expiresAt: new Date(Date.now() + 60_000).toISOString() }));
+    let pid = 1;
+    const adapter = { install: () => {}, start: () => {}, probe: () => ({ service: "opencodex" as const, status: "ok" as const, pid: pid++, port: 1, hostname: "127.0.0.1", coordinator: "ready" as const, sourceCommit: "a".repeat(40), buildCommit: "b".repeat(40) }), restart: () => {}, stop: () => {}, uninstall: () => {}, verifyGone: () => {} };
+    const first = await runServiceAcceptance({ profile: "P09", hostRoot: root, disposableHost: "1", sourceCommit: "a".repeat(40), buildCommit: "b".repeat(40), adapter });
+    expect(first.status).toBe("verified");
+    await expect(runServiceAcceptance({ profile: "P09", hostRoot: root, disposableHost: "1", sourceCommit: "a".repeat(40), buildCommit: "b".repeat(40), adapter })).rejects.toThrow(/attestation/);
+  });
 });
