@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { KiroOAuthMetadata, OAuthController, OAuthCredentials } from "./types";
 import { parseCallbackInput } from "./callback-server";
 import type { OcxConfig, OcxProviderConfig, RefreshPolicy } from "../types";
@@ -869,7 +870,7 @@ export async function runLogin(
  * localhost), the GUI can POST the final redirect URL or authorization code via
  * submitManualLoginCode(), which feeds OAuthController.onManualCodeInput.
  */
-const loginState = new Map<string, { error?: string; done: boolean }>();
+const loginState = new Map<string, { error?: string; done: boolean; attemptId: string }>();
 const loginAbort = new Map<string, AbortController>();
 
 /** Pending paste for a login in progress: either a waiter or a stashed early submission. */
@@ -878,6 +879,7 @@ interface ManualCodeSlot {
   resolve?: (value: string) => void;
   /** Registered by the callback flow so submits can validate state synchronously. */
   expectedState?: string;
+  attemptId?: string;
 }
 const loginManual = new Map<string, ManualCodeSlot>();
 
@@ -885,21 +887,22 @@ function clearManualCodeSlot(provider: string): void {
   loginManual.delete(provider);
 }
 
-function ensureManualCodeSlot(provider: string): ManualCodeSlot {
+function ensureManualCodeSlot(provider: string, attemptId?: string): ManualCodeSlot {
   let slot = loginManual.get(provider);
   if (!slot) {
     slot = {};
     loginManual.set(provider, slot);
   }
+  if (attemptId !== undefined) slot.attemptId = attemptId;
   return slot;
 }
 
 /** Wait for a GUI/CLI paste of the OAuth redirect URL or code (or return a stashed early submit). */
-function waitForManualLoginCode(provider: string, signal: AbortSignal, expectedState?: string): Promise<string> {
+function waitForManualLoginCode(provider: string, signal: AbortSignal, expectedState?: string, attemptId?: string): Promise<string> {
   if (signal.aborted) {
     return Promise.reject(new Error(`OAuth callback cancelled: ${signal.reason}`));
   }
-  const slot = ensureManualCodeSlot(provider);
+  const slot = ensureManualCodeSlot(provider, attemptId);
   if (expectedState !== undefined) slot.expectedState = expectedState;
   if (slot.pendingInput !== undefined) {
     const value = slot.pendingInput;
@@ -925,12 +928,13 @@ function waitForManualLoginCode(provider: string, signal: AbortSignal, expectedS
  * Returns ok:false when no login is waiting (or input is empty). Invalid pastes are accepted
  * here and re-prompted by the OAuth callback loop if they cannot be parsed / fail state checks.
  */
-export function submitManualLoginCode(provider: string, input: string): { ok: true } | { ok: false; error: string } {
+export function submitManualLoginCode(provider: string, input: string, attemptId?: string): { ok: true } | { ok: false; error: string } {
   const trimmed = input.trim();
   if (!trimmed) return { ok: false, error: "empty code" };
   const st = loginState.get(provider);
   if (!st || st.done) return { ok: false, error: "no login in progress" };
-  const slot = ensureManualCodeSlot(provider);
+  if (attemptId !== undefined && attemptId !== st.attemptId) return { ok: false, error: "stale login attempt" };
+  const slot = ensureManualCodeSlot(provider, st.attemptId);
   // Synchronous validation (validated request/ack): reject un-parseable input and
   // authorization responses (url/query kind) whose state is missing or mismatched
   // once the flow has registered its expected state. Raw codes stay in-session-PKCE
@@ -992,14 +996,15 @@ export function clearLoginState(provider: string): void {
   loginState.delete(provider);
 }
 
-export function cancelLoginFlow(provider: string): boolean {
+export function cancelLoginFlow(provider: string, attemptId?: string): boolean {
   const ctrl = loginAbort.get(provider);
   const existing = loginState.get(provider);
   if (!ctrl && (!existing || existing.done)) return false;
+  if (attemptId !== undefined && existing?.attemptId !== attemptId) return false;
   ctrl?.abort("cancelled");
   loginAbort.delete(provider);
   clearManualCodeSlot(provider);
-  loginState.set(provider, { done: true, error: "Login cancelled" });
+  if (existing) loginState.set(provider, { ...existing, done: true, error: "Login cancelled" });
   return true;
 }
 
@@ -1007,7 +1012,7 @@ export async function startLoginFlow(
   provider: string,
   opts?: LoginOpts,
   lifecycle?: LoginFlowLifecycle,
-): Promise<{ url: string; instructions?: string; deviceCode?: string }> {
+): Promise<{ url: string; instructions?: string; deviceCode?: string; attemptId: string }> {
   const def = OAUTH_PROVIDERS[provider];
   if (!def) throw new UnsupportedOAuthProviderError(provider);
   const existing = loginState.get(provider);
@@ -1015,7 +1020,8 @@ export async function startLoginFlow(
     throw new Error(`A login for ${provider} is already in progress`);
   }
   clearManualCodeSlot(provider);
-  loginState.set(provider, { done: false });
+  const attemptId = randomUUID();
+  loginState.set(provider, { done: false, attemptId });
   const abort = new AbortController();
   loginAbort.set(provider, abort);
   return new Promise((resolve, reject) => {
@@ -1023,11 +1029,11 @@ export async function startLoginFlow(
     const ctrl: OAuthController = {
       onAuth: ({ url, instructions, deviceCode }) => {
         urlResolved = true;
-        resolve({ url, instructions, deviceCode });
+        resolve({ url, instructions, deviceCode, attemptId });
       },
       onProgress: () => {},
       // GUI fallback when the browser cannot hit the loopback callback server.
-      onManualCodeInput: (expectedState?: string) => waitForManualLoginCode(provider, abort.signal, expectedState),
+      onManualCodeInput: (expectedState?: string) => waitForManualLoginCode(provider, abort.signal, expectedState, attemptId),
       signal: abort.signal,
     };
     const settle = async (error?: unknown): Promise<void> => {
@@ -1042,10 +1048,10 @@ export async function startLoginFlow(
       if (finalError === undefined) {
         loginAbort.delete(provider);
         clearManualCodeSlot(provider);
-        loginState.set(provider, { done: true });
+        loginState.set(provider, { done: true, attemptId });
         // Local-token import (grok-cli / Claude Code keychain) completes WITHOUT firing onAuth —
         // resolve so the GUI call returns instead of hanging.
-        if (!urlResolved) resolve({ url: "", instructions: "Logged in via an existing local CLI/keychain token — no browser needed." });
+        if (!urlResolved) resolve({ url: "", instructions: "Logged in via an existing local CLI/keychain token — no browser needed.", attemptId });
         return;
       }
 
@@ -1053,7 +1059,7 @@ export async function startLoginFlow(
       loginAbort.delete(provider);
       clearManualCodeSlot(provider);
       const msg = e instanceof Error ? e.message : String(e);
-      loginState.set(provider, { done: true, error: msg });
+      loginState.set(provider, { done: true, error: msg, attemptId });
       if (!urlResolved) reject(e);
     };
     // Background: runLogin persists the credential + provider entry to disk. The lifecycle hook
@@ -1066,7 +1072,7 @@ export async function startLoginFlow(
       loginAbort.delete(provider);
       clearManualCodeSlot(provider);
       const msg = e instanceof Error ? e.message : String(e);
-      loginState.set(provider, { done: true, error: msg });
+      loginState.set(provider, { done: true, error: msg, attemptId });
       if (!urlResolved) reject(e);
     });
   });

@@ -106,7 +106,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       // request may already have mutated live config and yielded before its save.
       const persistedBaseline = readConfigDiagnostics().config;
       // addAccount / reauth forces a fresh browser identity (skips local-CLI token import).
-      const { url: authUrl, instructions, deviceCode } = await startLoginFlow(provider, {
+      const { url: authUrl, instructions, deviceCode, attemptId } = await startLoginFlow(provider, {
         forceLogin: body.addAccount === true || reauth,
         ...(accountId ? { reauthAccountId: accountId } : {}),
       }, {
@@ -121,7 +121,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         const { openUrl } = await import("../../lib/open-url");
         openUrl(authUrl);
       }
-      return jsonResponse({ url: authUrl, instructions, deviceCode });
+      return jsonResponse({ url: authUrl, instructions, deviceCode, attemptId });
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 409);
     }
@@ -130,25 +130,26 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
   // Cancel an in-progress browser/device OAuth login (GUI "Cancel" / modal close). Guarded by
   // the same public predicate as /api/oauth/login — only publicly startable flows are cancellable.
   if (url.pathname === "/api/oauth/login/cancel" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { provider?: string };
+    const body = await req.json().catch(() => ({})) as { provider?: string; attemptId?: string };
     const provider = (body.provider ?? "").trim().toLowerCase();
     if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
     const { cancelLoginFlow } = await import("../../oauth");
-    const cancelled = cancelLoginFlow(provider);
+    const cancelled = cancelLoginFlow(provider, body.attemptId);
     return jsonResponse({ ok: true, cancelled });
   }
 
   // Manual fallback for browser OAuth: paste the final redirect URL (or authorization code)
   // when the browser cannot reach the loopback callback (remote/SSH/blocked localhost).
   if (url.pathname === "/api/oauth/login/code" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { provider?: string; input?: string; code?: string };
+    const body = await req.json().catch(() => ({})) as { provider?: string; input?: string; code?: string; attemptId?: string };
     const provider = (body.provider ?? "").trim().toLowerCase();
     if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
     const input = typeof body.input === "string" ? body.input : typeof body.code === "string" ? body.code : "";
     // Authorization responses are measured in hundreds of bytes; never accept the
     // generic management-body allowance here.
     if (input.length > 4096) return jsonResponse({ error: "input too long" }, 400);
-    const result = submitManualLoginCode(provider, input);
+    if (typeof body.attemptId !== "string" || !body.attemptId.trim()) return jsonResponse({ error: "missing login attempt" }, 409);
+    const result = submitManualLoginCode(provider, input, body.attemptId);
     if (!result.ok) return jsonResponse({ error: result.error }, 409);
     return jsonResponse({ ok: true });
   }

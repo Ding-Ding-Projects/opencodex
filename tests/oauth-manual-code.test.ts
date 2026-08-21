@@ -110,6 +110,11 @@ describe("OAuth manual login code fallback", () => {
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("startLoginFlow timed out")), 10_000)),
       ]);
       expect(started.url).toContain("https://auth.x.ai/authorize");
+      expect(started.attemptId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(submitManualLoginCode("xai", "manual-auth-code", `${started.attemptId}-stale`)).toEqual({
+        ok: false,
+        error: "stale login attempt",
+      });
       const authUrl = new URL(started.url);
       const state = authUrl.searchParams.get("state")!;
       const challenge = authUrl.searchParams.get("code_challenge")!;
@@ -229,7 +234,7 @@ describe("OAuth manual login code fallback", () => {
 
       const noLogin = await post({ provider: "xai", input: "some-code" });
       expect(noLogin.status).toBe(409);
-      expect(((await noLogin.json()) as { error?: string }).error).toContain("no login in progress");
+      expect(((await noLogin.json()) as { error?: string }).error).toContain("missing login attempt");
     } finally {
       await server.stop(true);
     }
