@@ -11,6 +11,7 @@ export type AttemptRecoveryKind =
   | "transient-5xx"
   | "connection-reset"
   | "oauth-401"
+  | "codex-main-401"
   | "key-429"
   | "anthropic-oauth-429"
   /** Generic OAuth pool failover (all providers); "anthropic-oauth-429" is its historical spelling. */

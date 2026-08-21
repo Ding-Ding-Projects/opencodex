@@ -1,6 +1,6 @@
 import { getCodexAccountCredential } from "./account-store";
 import { isAccountNeedsReauth } from "./account-runtime-state";
-import { MAIN_CODEX_ACCOUNT_ID, isMainAccountTokenLive } from "./main-account";
+import { MAIN_CODEX_ACCOUNT_ID, isMainAccountCredentialUsable } from "./main-account";
 import { hasLegacyMainCodexPoolAccount, isSelectableCodexPoolAccount } from "./account-id";
 import type { OcxConfig } from "../types";
 
@@ -10,7 +10,7 @@ export function isCodexAccountUsable(config: OcxConfig, accountId: string): bool
     // Fail closed until the authenticated compatibility-delete path removes it.
     if (hasLegacyMainCodexPoolAccount(config.codexAccounts)) return false;
     // Main account: credential is the read-only ~/.codex/auth.json token (Option A).
-    return isMainAccountTokenLive() && !isAccountNeedsReauth(accountId);
+    return isMainAccountCredentialUsable() && !isAccountNeedsReauth(accountId);
   }
   const exists = (config.codexAccounts ?? [])
     .some(account => isSelectableCodexPoolAccount(account) && account.id === accountId);

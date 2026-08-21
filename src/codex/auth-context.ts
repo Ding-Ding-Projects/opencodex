@@ -8,7 +8,8 @@ import {
 import { markAccountNeedsReauth } from "./account-runtime-state";
 import { isCodexAccountUsable } from "./account-usability";
 import { reconcileMainCodexAccountRuntimeState } from "./account-lifecycle";
-import { MAIN_CODEX_ACCOUNT_ID, getMainAccountToken } from "./main-account";
+import { MAIN_CODEX_ACCOUNT_ID, getValidMainAccountToken } from "./main-account";
+import type { NativeMainRefreshDependencies } from "./main-account";
 import {
   codexQuotaScopeForModel,
   getCodexQuotaHealthSnapshot,
@@ -216,6 +217,8 @@ export interface ResolveCodexAuthContextOptions {
   excludeAccountId?: string;
   /** Final native model selected for this request, used to select its quota group. */
   modelId?: string;
+  /** Test-only seam for native main refresh transport. */
+  nativeMainRefreshDependencies?: NativeMainRefreshDependencies;
 }
 
 export async function resolveCodexAuthContext(
@@ -272,8 +275,8 @@ export async function resolveCodexAuthContext(
   }
 
   if (accountId === MAIN_CODEX_ACCOUNT_ID) {
-    // Main account in rotation: inject the read-only auth.json token and fail closed if it vanished.
-    const token = getMainAccountToken();
+    // Main account in rotation: refresh from auth.json before any upstream I/O.
+    const token = await getValidMainAccountToken({ dependencies: options.nativeMainRefreshDependencies });
     if (!token) {
       // Nothing will reach upstream, so give the probe back instead of burning it.
       if (probeLeaseId && probeQuotaScope) releaseCodexQuotaScopeProbeLease(accountId, probeQuotaScope, probeLeaseId);

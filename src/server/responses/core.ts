@@ -77,6 +77,9 @@ import {
   stripCodexRuntimeProviderFields,
   type CodexAuthContext,
 } from "../../codex/auth-context";
+import { forceRefreshMainAccountToken } from "../../codex/main-account";
+import type { NativeMainRefreshDependencies } from "../../codex/main-account";
+import { TokenRefreshError } from "../../codex/account-store";
 import {
   computeQuotaCooldown,
   formatCodexProviderForLog,
@@ -531,6 +534,8 @@ export interface HandleResponsesOptions {
   deferCodexResetDerivedCooldown?: boolean;
   /** 030-owned handoff when a child consumed the original failure under bounds. */
   onConsumedComboFailure?: (failure: ConsumedComboFailure) => void;
+  /** Internal test seam for native auth.json refresh transport. */
+  nativeMainRefreshDependencies?: NativeMainRefreshDependencies;
 }
 
 
@@ -718,7 +723,10 @@ async function resolveResponsesCodexAuth(
     if (route.codexAccountMode === "direct") validateForwardAdmissionCredential(req.headers, config);
     let authCtx: CodexAuthContext;
     if (route.codexAccountMode) {
-      authCtx = await resolveCodexAuthContext(req.headers, config, route.codexAccountMode, { modelId: route.modelId });
+      authCtx = await resolveCodexAuthContext(req.headers, config, route.codexAccountMode, {
+        modelId: route.modelId,
+        nativeMainRefreshDependencies: options.nativeMainRefreshDependencies,
+      });
       options.onCodexAuthContextResolved?.(authCtx);
     } else {
       authCtx = { kind: "main", accountId: null };
@@ -737,6 +745,9 @@ async function resolveResponsesCodexAuth(
       headers: headersForCodexAuthContext(req.headers, authCtx),
     };
   } catch (err) {
+    if (err instanceof TokenRefreshError) {
+      return { ok: false, response: formatErrorResponse(401, "authentication_error", "Selected Codex account needs reauthentication") };
+    }
     if (err instanceof CodexAccountCooldownError) {
       return { ok: false, response: cooldownErrorResponse(err) };
     }
@@ -2259,6 +2270,7 @@ export async function handleResponses(
     // 413→429 rotation cannot silently undo the tightening.
     let imageTierBias = 0;
     let imageRetryAttempted = false;
+    let nativeMain401ReplayAttempted = false;
     let oauth401ReplayAttempted = false;
     const rebuildAndRefetch = async (
       recovery: AttemptRecoveryKind,
@@ -2292,6 +2304,45 @@ export async function handleResponses(
       }
     };
     recovery: for (;;) {
+      if (
+        upstreamResponse.status === 401
+        && authCtx.kind === "main-pool"
+        && usesCodexForwardPoolAuth(authCtx, route.provider)
+        && !nativeMain401ReplayAttempted
+      ) {
+        nativeMain401ReplayAttempted = true;
+        try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already closed */ }
+        let refreshed: { accessToken: string; chatgptAccountId: string } | null;
+        try {
+          refreshed = await forceRefreshMainAccountToken(authCtx.accessToken, {
+            signal: options.abortSignal,
+            dependencies: options.nativeMainRefreshDependencies,
+          });
+        } catch {
+          cleanupUpstreamAbort();
+          return formatErrorResponse(401, "authentication_error", "Selected Codex account needs reauthentication");
+        }
+        if (!refreshed) {
+          cleanupUpstreamAbort();
+          return formatErrorResponse(401, "authentication_error", "Selected Codex account needs reauthentication");
+        }
+        authCtx = { ...authCtx, accessToken: refreshed.accessToken, chatgptAccountId: refreshed.chatgptAccountId };
+        selectedForwardHeaders = headersForCodexAuthContext(req.headers, authCtx);
+        route.provider = applyCodexAuthContextToProvider(
+          stripCodexRuntimeProviderFields(route.provider),
+          authCtx,
+          route.codexAccountMode,
+        );
+        activeAdapter = resolveAdapter(
+          resolveWireProtocolOverride(route.providerName, route.modelId, route.provider),
+          config.cacheRetention,
+        );
+        const result = await rebuildAndRefetch("codex-main-401");
+        if ("failed" in result) return result.failed;
+        upstreamResponse = result;
+        continue recovery;
+      }
+
       if (
         upstreamResponse.status === 401
         && isOAuth401ReplayProvider
