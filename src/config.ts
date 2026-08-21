@@ -16,6 +16,7 @@ import { recordOwnedConfigPath } from "./lib/config-ownership";
 import { announceDebugSandboxOnce, debugSandboxEnabled } from "./lib/debug-sandbox";
 import { providerDestinationConfigError } from "./lib/destination-policy";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
+import { vercelGatewayRoutingConfigError } from "./providers/vercel-gateway-routing";
 import {
   isWirePinnedModel,
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
@@ -774,6 +775,20 @@ const configSchema = z.object({
             : "openRouterRouting",
         ],
         message: openRouterRoutingError,
+      });
+    }
+    const vercelGatewayRoutingError = vercelGatewayRoutingConfigError(provider);
+    if (vercelGatewayRoutingError) {
+      ctx.addIssue({
+        code: "custom",
+        path: [
+          "providers",
+          name,
+          vercelGatewayRoutingError.startsWith("modelVercelGatewayRouting")
+            ? "modelVercelGatewayRouting"
+            : "vercelGatewayRouting",
+        ],
+        message: vercelGatewayRoutingError,
       });
     }
     if (Object.hasOwn(provider, "virtualModels")) {
