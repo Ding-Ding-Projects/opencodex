@@ -450,6 +450,10 @@ const providerConfigSchema = z.object({
   apiKeyTransport: z.enum(["x-api-key", "bearer"]).optional(),
   responsesPath: z.string().min(1).optional(),
   allowPrivateNetwork: z.boolean().optional(),
+  modelDisplayNames: z.record(z.string().min(1).max(256), z.string().trim().min(1).max(128)
+    .refine(value => !/[\u0000-\u001f\u007f]/u.test(value) && !value.includes("/"), {
+      message: "modelDisplayNames values must be printable labels without slash characters",
+    })).optional(),
   retainModels: z.array(z.string().trim().min(1))
     .transform(normalizeNonBlankStringArray)
     .optional(),

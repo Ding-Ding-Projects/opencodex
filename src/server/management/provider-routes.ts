@@ -82,6 +82,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         allowPrivateNetwork: p.allowPrivateNetwork === true,
         liveModels: p.liveModels !== false,
         models: p.models ?? [],
+        retainModels: p.retainModels ?? [],
+        modelDisplayNames: p.modelDisplayNames ?? {},
         authMode: p.authMode,
         apiKeyTransport: p.apiKeyTransport,
         keyOptional: p.keyOptional === true,
@@ -272,11 +274,31 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
      touched = true;
    }
 
-   if (Object.hasOwn(rawBody, "liveModels")) {
+    if (Object.hasOwn(rawBody, "liveModels")) {
      if (typeof rawBody.liveModels !== "boolean") return jsonResponse({ error: "liveModels must be a boolean" }, 400);
      next.liveModels = rawBody.liveModels;
-     touched = true;
-   }
+      touched = true;
+    }
+
+    if (Object.hasOwn(rawBody, "modelDisplayNames")) {
+      const labels = rawBody.modelDisplayNames;
+      if (labels === undefined || labels === null) {
+        delete next.modelDisplayNames;
+      } else if (!labels || typeof labels !== "object" || Array.isArray(labels)) {
+        return jsonResponse({ error: "modelDisplayNames must be an object" }, 400);
+      } else {
+        for (const [modelId, label] of Object.entries(labels as Record<string, unknown>)) {
+          if (!modelId.trim() || modelId.length > 256 || typeof label !== "string"
+            || !label.trim() || label.trim().length > 128 || /[\u0000-\u001f\u007f]/u.test(label) || label.includes("/")) {
+            return jsonResponse({ error: "modelDisplayNames must contain bounded printable labels without slash characters" }, 400);
+          }
+        }
+        next.modelDisplayNames = Object.fromEntries(
+          Object.entries(labels as Record<string, string>).map(([modelId, label]) => [modelId, label.trim()]),
+        );
+      }
+      touched = true;
+    }
 
     if (!touched) return jsonResponse({ error: "no recognized fields to update" }, 400);
 

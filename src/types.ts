@@ -933,6 +933,8 @@ export interface OcxProviderConfig {
    * as before.
    */
   modelAdapters?: Record<string, string>;
+  /** Display-only labels for live-discovered models, keyed by native model id. */
+  modelDisplayNames?: Record<string, string>;
   baseUrl: string;
   /**
    * Optional relative resource path for key-auth openai-responses requests. Must start with `/`
