@@ -37,11 +37,15 @@ const outDir = process.argv[2];
 if (!outDir) throw new Error("usage: bun scripts/bun-gc-relief-eval.ts <outDir>");
 mkdirSync(outDir, { recursive: true });
 
+const sourceCommit = process.env.OCX_GC_EVAL_SOURCE_COMMIT;
+if (!sourceCommit || !/^[0-9a-f]{40}$/i.test(sourceCommit)) {
+  throw new Error("OCX_GC_EVAL_SOURCE_COMMIT must be the exact 40-character source commit");
+}
 const CELL_ORDER = ["rss/control", "rss/gc", "latency/control", "latency/gc"] as const;
 const SOURCE = {
   harness: "scripts/bun-gc-relief-eval.ts",
   child: "scripts/macos-rss-retention-harness-child.ts",
-  sourceCommit: process.env.OCX_GC_EVAL_SOURCE_COMMIT ?? "unknown",
+  sourceCommit,
 };
 
 type Arm = "control" | "gc";
@@ -333,3 +337,4 @@ const report = {
 };
 writeFileSync(join(outDir, "report.json"), JSON.stringify(report, null, 2));
 console.log("report: " + join(outDir, "report.json"));
+if (errors.length > 0) process.exitCode = 1;
