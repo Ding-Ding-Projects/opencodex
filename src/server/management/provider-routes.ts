@@ -146,15 +146,22 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // let the (possibly new) apiKey join the pool as the active entry.
     const existingPool = config.providers[name]?.apiKeyPool;
     if (existingPool && !prov.apiKeyPool) prov.apiKeyPool = existingPool;
+    const providersBeforeWrite = structuredClone(config.providers);
+    const defaultProviderBeforeWrite = config.defaultProvider;
     const incomingApiKey = prov.apiKey;
     if (incomingApiKey && config.providerApiKeyVault === "windows") delete prov.apiKey;
     config.providers[name] = stripRegistryOnlyStaticHeaders(name, prov);
     if (body.setDefault) config.defaultProvider = name;
-    save(config);
     if (incomingApiKey) {
       const { addProviderApiKey } = await import("../../providers/api-keys");
       const result = addProviderApiKey(config, name, incomingApiKey);
-      if ("error" in result) return jsonResponse({ error: result.error }, 503);
+      if ("error" in result) {
+        config.providers = providersBeforeWrite;
+        config.defaultProvider = defaultProviderBeforeWrite;
+        return jsonResponse({ error: result.error }, 503);
+      }
+    } else {
+      save(config);
     }
     const { clearModelCache } = await import("../../codex/model-cache");
     clearModelCache(name);

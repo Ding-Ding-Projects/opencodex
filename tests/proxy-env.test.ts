@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { applyProxyEnv } from "../src/config";
+import { applyProxyEnv, ConfiguredProxyReferenceError } from "../src/config";
 import { mergeNoProxyEntries, proxyEnvironment } from "../src/lib/proxy-env";
 import type { OcxConfig } from "../src/types";
 
@@ -84,4 +84,22 @@ test("child environment builder does not mutate inherited environment", () => {
   expect(child.HTTPS_PROXY).toBe("https://inherited.example:443");
   expect(child.HTTP_PROXY).toBe("http://configured.example:8080");
   expect(child.NO_PROXY).toContain("internal.example");
+});
+
+test("an unresolved explicit proxy reference fails closed instead of discovering a system proxy", () => {
+  const previous = process.env.OCX_MISSING_PROXY_REF;
+  delete process.env.OCX_MISSING_PROXY_REF;
+  try {
+    expect(() => applyProxyEnv({ ...configWithProxy("${OCX_MISSING_PROXY_REF}"), systemProxy: "static" }, {
+      platform: "win32",
+      detectSystemProxy: () => { throw new Error("system discovery must not run"); },
+    })).toThrow(ConfiguredProxyReferenceError);
+  } finally {
+    if (previous === undefined) delete process.env.OCX_MISSING_PROXY_REF; else process.env.OCX_MISSING_PROXY_REF = previous;
+  }
+});
+
+test("inherited standard wildcard NO_PROXY is preserved while configured wildcard is rejected", () => {
+  expect(mergeNoProxyEntries(undefined, { NO_PROXY: "*.corp.example" })).toContain("*.corp.example");
+  expect(() => mergeNoProxyEntries("*.corp.example", {})).toThrow(/wildcards/);
 });

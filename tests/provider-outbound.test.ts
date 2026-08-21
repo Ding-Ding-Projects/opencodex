@@ -91,6 +91,44 @@ describe("provider outbound GET transport", () => {
     expect(captured.address).toBeUndefined();
   });
 
+  test.each([undefined, false])("NO_PROXY never authorizes private destinations without allowPrivateNetwork (%j)", async allowPrivateNetwork => {
+    const proxyUrl = "http://127.0.0.1:9";
+    process.env.HTTPS_PROXY = proxyUrl;
+    process.env.https_proxy = proxyUrl;
+    process.env.NO_PROXY = "private.example";
+    process.env.no_proxy = "private.example";
+    const { providerOutboundGet } = await import("../src/lib/provider-outbound");
+    const { dependencies, captured } = directDependencies(new Response(null, { status: 200 }), {
+      privateNetwork: true,
+      address: "192.168.1.50",
+    });
+    await expect(providerOutboundGet(
+      "private-no-opt-in",
+      { baseUrl: "https://private.example/v1", ...(allowPrivateNetwork === true ? { allowPrivateNetwork: true } : {}) },
+      "https://private.example/v1/models",
+      {},
+      dependencies,
+    )).rejects.toThrow();
+    expect(captured.address).toBeUndefined();
+  });
+
+  test("inherited standard wildcard NO_PROXY remains a matcher, but still requires private opt-in", async () => {
+    const proxyUrl = "http://127.0.0.1:9";
+    process.env.HTTPS_PROXY = proxyUrl;
+    process.env.https_proxy = proxyUrl;
+    process.env.NO_PROXY = "*";
+    process.env.no_proxy = "*";
+    const { providerOutboundGet } = await import("../src/lib/provider-outbound");
+    const { dependencies } = directDependencies(new Response(null, { status: 200 }), { privateNetwork: true, address: "192.168.1.50" });
+    await expect(providerOutboundGet(
+      "private-wildcard",
+      { baseUrl: "https://private.example/v1" },
+      "https://private.example/v1/models",
+      {},
+      dependencies,
+    )).rejects.toThrow();
+  });
+
   test("direct redirects return the same credential-safe final-URL guidance", async () => {
     for (const key of proxyKeys) delete process.env[key];
     const redirectTarget = new URL("https://final.example/v1/models?token=secret#fragment");

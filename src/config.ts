@@ -244,6 +244,13 @@ export class OpenAiTierBackupSecretResidualError extends Error {
   }
 }
 
+export class ConfiguredProxyReferenceError extends Error {
+  constructor() {
+    super("config.proxy is an explicit environment reference but the referenced proxy is unavailable");
+    this.name = "ConfiguredProxyReferenceError";
+  }
+}
+
 export interface OpenAiTierBackupIO {
   exists(path: string): boolean;
   read(path: string): Uint8Array;
@@ -1661,14 +1668,18 @@ export type ProxyEnvApplicationDeps = {
 
 export function applyProxyEnv(config: OcxConfig, deps: ProxyEnvApplicationDeps = {}): void {
   let detectedProxy: string | undefined;
-  if (config.systemProxy === "static" && !resolveEnvValue(config.proxy)) {
+  const configuredProxy = typeof config.proxy === "string" ? config.proxy.trim() : "";
+  const resolvedProxy = resolveEnvValue(config.proxy);
+  const explicitReference = configuredProxy.startsWith("$");
+  if (explicitReference && !resolvedProxy?.trim()) throw new ConfiguredProxyReferenceError();
+  if (config.systemProxy === "static" && !resolvedProxy) {
     const platform = deps.platform ?? process.platform;
     const detector = deps.detectSystemProxy ?? ((targetPlatform: NodeJS.Platform) => detectStaticWindowsSystemProxy(undefined, targetPlatform));
     detectedProxy = detector(platform)?.proxy;
     if (!detectedProxy) throw new StaticSystemProxyUnavailableError();
   }
   const env = proxyEnvironment({
-    proxy: resolveEnvValue(config.proxy),
+    proxy: resolvedProxy,
     noProxy: config.noProxy,
     systemProxy: config.systemProxy,
   }, process.env, detectedProxy);

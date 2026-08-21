@@ -56,6 +56,7 @@ import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled, setSa
 import { cancelPairing, claimPairingToken, createPairingToken, hasOutstandingPairing } from "../../lib/pairing";
 import { takeClaimAttempt } from "../../lib/pairing-rate-limit";
 import { listStateHistory, listStateHistoryEntries, recordStateSnapshot, restoreStateFromHistory } from "../../lib/state-history";
+import { providerVaultExportRefusal } from "../../lib/provider-credentials";
 import {
   QUICK_RESTORE_SNAPSHOT_DEADLINE_MS,
   describeQuickRestoreAll,
@@ -400,6 +401,8 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
 
   if (url.pathname === "/api/host/export" && req.method === "GET") {
     const dir = getConfigDir();
+    const vaultRefusal = providerVaultExportRefusal(config);
+    if (vaultRefusal) return noStore(jsonResponse({ error: vaultRefusal, omitted: ["provider API-key vault ciphertext"] }, 409, req, config));
     const bundle = {
       kind: "opencodex-export",
       exportedAt: new Date().toISOString(),

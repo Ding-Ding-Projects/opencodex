@@ -1,6 +1,7 @@
 import { fetchMainAccountInfo, listCodexAuthAccounts } from "../codex/auth-api";
 import { MAIN_CODEX_ACCOUNT_ID } from "../codex/main-account";
 import { resolveEnvValue } from "../config";
+import { resolveProviderCredential } from "../lib/provider-credentials";
 import { getValidAccessToken, getValidAccessTokenForAccount } from "../oauth";
 import { getAccountCredential, getAccountSet, getCredential } from "../oauth/store";
 import { antigravityUserAgent } from "../adapters/client-fingerprint";
@@ -559,7 +560,7 @@ async function resolveKimiQuotaBearer(config: OcxProviderConfig): Promise<string
   // ACTIVE key only: silently walking apiKeyPool when the primary env reference is
   // unresolved would render a quota bar for a DIFFERENT account than the one routing
   // requests — a wrong meter is worse than no meter.
-  const primary = resolveEnvValue(config.apiKey)?.trim();
+  const primary = resolveProviderCredential(resolveEnvValue(config.apiKey))?.trim();
   return primary || null;
 }
 

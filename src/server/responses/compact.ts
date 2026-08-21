@@ -5,6 +5,7 @@ import {
   multiAgentGuidanceEnabled,
   resolveEnvValue,
 } from "../../config";
+import { resolveProviderCredential } from "../../lib/provider-credentials";
 import { parseRequest } from "../../responses/parser";
 import { buildCompactV1Output, COMPACT_PROMPT, decodeCompactionSummary, extractCompactUserMessages } from "../../responses/compaction";
 import { FORWARD_HEADERS, sanitizeReasoningInputContent } from "../../adapters/openai-responses";
@@ -247,7 +248,8 @@ export async function handleResponsesCompact(
       throw err;
     }
     const base = (compactProvider.baseUrl ?? "").replace(/\/$/, "");
-    if (compactProvider.apiKey) headers.set("authorization", `Bearer ${resolveEnvValue(compactProvider.apiKey)}`);
+    const compactApiKey = resolveProviderCredential(resolveEnvValue(compactProvider.apiKey));
+    if (compactApiKey) headers.set("authorization", `Bearer ${compactApiKey}`);
     const { reasoning: _reasoning, ...compactBodyRaw } = raw as typeof raw & { reasoning?: unknown };
     // The regular /v1/responses path applies sanitizeReasoningInputContent via the adapter's
     // buildRequest, but the compact endpoint forwards directly. Apply the same sanitizer here

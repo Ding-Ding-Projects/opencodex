@@ -16,13 +16,13 @@ export function outboundProxyConfigured(env: ProxyEnvMap = process.env): boolean
   return OUTBOUND_PROXY_ENV_KEYS.some(key => proxyEnvPresent(key, env));
 }
 
-export function validateNoProxyEntry(value: unknown): string | null {
+export function validateNoProxyEntry(value: unknown, options: { allowWildcard?: boolean } = {}): string | null {
   if (typeof value !== "string") return "NO_PROXY entries must be strings";
   const entry = value.trim();
   if (!entry) return "NO_PROXY entries must not be empty";
   if (entry.length > MAX_NO_PROXY_ENTRY_LENGTH) return "NO_PROXY entries are too long";
   if (CONTROL_OR_SPACE.test(entry)) return "NO_PROXY entries must not contain spaces or control characters";
-  if (entry === "*" || entry.includes("*")) return "NO_PROXY wildcards are not supported";
+  if (!options.allowWildcard && (entry === "*" || entry.includes("*"))) return "configured noProxy wildcards are not supported";
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(entry) || entry.includes("@") || entry.includes("?") || entry.includes("#")) {
     return "NO_PROXY entries must be host, address, or host:port values without URLs or credentials";
   }
@@ -36,7 +36,7 @@ export function validateNoProxyEntry(value: unknown): string | null {
   return null;
 }
 
-export function normalizeNoProxyEntries(value: unknown): string[] {
+export function normalizeNoProxyEntries(value: unknown, options: { allowWildcard?: boolean; inherited?: boolean } = {}): string[] {
   const raw = value === undefined || value === null
     ? []
     : Array.isArray(value) ? value.flatMap(item => typeof item === "string" ? item.split(",") : [item])
@@ -46,8 +46,13 @@ export function normalizeNoProxyEntries(value: unknown): string[] {
   const result: string[] = [];
   const seen = new Set<string>();
   for (const item of filtered) {
-    const error = validateNoProxyEntry(item);
-    if (error) throw new Error(error);
+    if (options.inherited) {
+      const text = (item as string).trim();
+      if (CONTROL_OR_SPACE.test(text)) throw new Error("inherited NO_PROXY entries must not contain spaces or control characters");
+    } else {
+      const error = validateNoProxyEntry(item, options);
+      if (error) throw new Error(error);
+    }
     const normalized = (item as string).trim();
     const key = normalized.toLowerCase();
     if (!seen.has(key)) { seen.add(key); result.push(normalized); }
@@ -60,7 +65,10 @@ export function mergeNoProxyEntries(
   inherited: ProxyEnvMap = process.env,
 ): string[] {
   const inheritedValue = inherited.NO_PROXY ?? inherited.no_proxy ?? "";
-  const entries = normalizeNoProxyEntries(inheritedValue);
+  // Inherited NO_PROXY is user/environment policy and must retain standard
+  // matcher semantics, including `*` and leading-dot suffix entries. Only the
+  // explicit config.noProxy surface uses the stricter ambiguity policy.
+  const entries = normalizeNoProxyEntries(inheritedValue, { allowWildcard: true, inherited: true });
   for (const entry of normalizeNoProxyEntries(configured)) {
     if (!entries.some(existing => existing.toLowerCase() === entry.toLowerCase())) entries.push(entry);
   }

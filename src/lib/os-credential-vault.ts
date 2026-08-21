@@ -104,6 +104,14 @@ export function setCredentialVaultSpawnForTests(next: typeof spawn | null): void
   spawnForTests = next;
 }
 
+export type CredentialVaultSyncRunner = (script: string, stdinPayload: string) => string;
+let syncRunnerForTests: CredentialVaultSyncRunner | null = null;
+let platformForTests: NodeJS.Platform | null = null;
+export function setCredentialVaultSyncSeamForTests(next: { runner?: CredentialVaultSyncRunner; platform?: NodeJS.Platform } | null): void {
+  syncRunnerForTests = next?.runner ?? null;
+  platformForTests = next?.platform ?? null;
+}
+
 /** Reads a JSON payload on stdin, writes a bounded base64 result to stdout. */
 const ENCRYPT_SCRIPT = [
   "Add-Type -AssemblyName System.Security",
@@ -187,7 +195,8 @@ function runVaultScript(script: string, stdinPayload: string): Promise<string> {
 }
 
 function runVaultScriptSync(script: string, stdinPayload: string): string {
-  if (process.platform !== "win32") throw new CredentialVaultError("unsupported-platform", "The OS credential vault is only available on Windows.");
+  if ((platformForTests ?? process.platform) !== "win32") throw new CredentialVaultError("unsupported-platform", "The OS credential vault is only available on Windows.");
+  if (syncRunnerForTests) return syncRunnerForTests(script, stdinPayload);
   try {
     return execFileSync(resolveTrustedWindowsPowerShellExe(), [
       "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,

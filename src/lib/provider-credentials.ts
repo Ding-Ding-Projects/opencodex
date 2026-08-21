@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { deleteVaultSecret, readVaultSecretSync, storeVaultSecretSync } from "./os-credential-vault";
+import { createHash } from "node:crypto";
+import { deleteVaultSecret, hasVaultSecret, readVaultSecretSync, storeVaultSecretSync } from "./os-credential-vault";
 
 export const PROVIDER_VAULT_REF_PREFIX = "vault:";
 const REF_RE = /^vault:([A-Za-z0-9_-]{1,80})$/;
@@ -13,6 +13,10 @@ export function providerVaultReferenceId(value: string): string | null {
   return match?.[1] ?? null;
 }
 
+export function providerVaultReferenceForSecret(secret: string): string {
+  return `${PROVIDER_VAULT_REF_PREFIX}provider-${createHash("sha256").update(secret).digest("hex").slice(0, 32)}`;
+}
+
 export function resolveProviderCredential(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const ref = providerVaultReferenceId(value);
@@ -21,12 +25,27 @@ export function resolveProviderCredential(value: string | undefined): string | u
 }
 
 export function createProviderVaultReference(secret: string): string {
-  const ref = `${PROVIDER_VAULT_REF_PREFIX}provider-${randomBytes(12).toString("hex")}`;
-  storeVaultSecretSync(ref.slice(PROVIDER_VAULT_REF_PREFIX.length), secret);
+  // The digest is an opaque equality handle, not a credential. It keeps repeated
+  // adds of the same secret on one stable pool identity without storing plaintext
+  // or making the reference reversible.
+  const ref = providerVaultReferenceForSecret(secret);
+  const id = ref.slice(PROVIDER_VAULT_REF_PREFIX.length);
+  if (!hasVaultSecret(id)) storeVaultSecretSync(id, secret);
   return ref;
 }
 
 export function deleteProviderVaultReference(value: string): void {
   const ref = providerVaultReferenceId(value);
   if (ref) deleteVaultSecret(ref);
+}
+
+export function providerVaultReferenceExists(value: string): boolean {
+  const ref = providerVaultReferenceId(value);
+  return ref ? hasVaultSecret(ref) : false;
+}
+
+export function providerVaultExportRefusal(config: { providerApiKeyVault?: string }): string | null {
+  return config.providerApiKeyVault === "windows"
+    ? "provider API-key vault ciphertext is intentionally omitted from exports; refusing an incomplete full-state backup"
+    : null;
 }
