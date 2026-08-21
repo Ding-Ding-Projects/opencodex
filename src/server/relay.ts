@@ -6,6 +6,8 @@ import {
   httpStatusForRequestLogTerminal,
   inspectResponseLogJson,
   inspectResponseLogSsePayload,
+  recordStreamFailure,
+  recordStreamStage,
   recordFirstOutput,
   type RequestLogContext,
   type RequestLogEntry,
@@ -181,6 +183,7 @@ export function trackSseForRequestLog(
   onCancel: () => void,
   logCtx?: RequestLogContext,
   onFirstOutput?: () => void,
+  requestStartedAt?: number,
 ): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -219,17 +222,24 @@ export function trackSseForRequestLog(
           buffer += decoder.decode();
           if (buffer.trim()) inspectPayload(sseDataPayload(buffer));
           if (!terminalReported) reportTerminal("incomplete");
+          if (logCtx) recordStreamStage(logCtx, "upstreamEndMs", requestStartedAt);
           controller.close();
           return;
+        }
+        if (logCtx) {
+          recordStreamStage(logCtx, "upstreamFirstByteMs", requestStartedAt);
+          recordStreamStage(logCtx, "downstreamFirstWriteMs", requestStartedAt);
         }
         inspectChunk(value);
         controller.enqueue(value);
       } catch (err) {
+        if (logCtx) recordStreamFailure(logCtx, "upstream", "upstream_read");
         if (!terminalReported) reportTerminal("incomplete");
         try { controller.error(err); } catch { /* already torn down */ }
       }
     },
     cancel(reason) {
+      if (logCtx) recordStreamFailure(logCtx, "client", "client_cancel");
       onCancel();
       reader.cancel(reason).catch(() => {});
     },
@@ -244,6 +254,9 @@ export function responseWithDeferredRequestLog(
   addLog: (entry: RequestLogEntry) => void = addRequestLog,
 ): Response {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  // This is the first point common to native and translated upstream paths after fetch
+  // resolves. Keep the milestone scalar-only and first-observation-wins.
+  recordStreamStage(logCtx, "upstreamHeadersMs", start);
   if (isUsageDebugEnabled() && !logCtx.usageDebugContentType && contentType) {
     logCtx.usageDebugContentType = contentType;
   }
@@ -304,6 +317,7 @@ export function responseWithDeferredRequestLog(
     },
     logCtx,
     () => recordFirstOutput(logCtx, start),
+    start,
   );
   return new Response(body, {
     status: response.status,
@@ -438,6 +452,7 @@ export type SseInspector = {
 export function createSseInspector(handlers: {
   onTerminal?: (status: ResponsesTerminalStatus, httpStatusOverride?: number) => void;
   logCtx?: RequestLogContext;
+  requestStartedAt?: number;
   onCompletedResponse?: (response: { id?: unknown; output?: unknown; status?: unknown }) => void;
   onFirstOutput?: () => void;
 }): SseInspector {
@@ -451,6 +466,10 @@ export function createSseInspector(handlers: {
     : null;
 
   const scanPayload = (payload: string | null): void => {
+    if (handlers.logCtx && payload) {
+      recordStreamStage(handlers.logCtx, "upstreamFirstByteMs", handlers.requestStartedAt);
+      recordStreamStage(handlers.logCtx, "downstreamFirstWriteMs", handlers.requestStartedAt);
+    }
     if (!reported && handlers.logCtx) inspectResponseLogSsePayload(handlers.logCtx, payload);
     reportFirstOutput(payload);
     if (!payload) return;
@@ -461,6 +480,7 @@ export function createSseInspector(handlers: {
         if (handlers.logCtx) {
           handlers.logCtx.transportPhase = "terminal_sse";
           handlers.logCtx.terminalSource = "upstream";
+          if (status === "failed") recordStreamFailure(handlers.logCtx, "upstream", "terminal_delivery");
         }
         handlers.onTerminal(status);
       }
@@ -516,6 +536,7 @@ export function createSseInspector(handlers: {
         scanPayload(sseDataPayload(buffer));
       }
       buffer = "";
+      if (handlers.logCtx) recordStreamStage(handlers.logCtx, "upstreamEndMs", handlers.requestStartedAt);
     },
     reported: () => reported,
   };
@@ -530,9 +551,10 @@ export function consumeForInspection(
   onCancel?: () => void,
   onCompletedResponse?: (response: { id?: unknown; output?: unknown; status?: unknown }) => void,
   onFirstOutput?: () => void,
+  requestStartedAt?: number,
 ): void {
   const reader = body.getReader();
-  const inspector = createSseInspector({ onTerminal, logCtx, onCompletedResponse, onFirstOutput });
+  const inspector = createSseInspector({ onTerminal, logCtx, onCompletedResponse, onFirstOutput, requestStartedAt });
   let cancelled = false;
   if (signal) {
     if (signal.aborted) {
@@ -540,6 +562,7 @@ export function consumeForInspection(
       // Finalize as a client-cancel and release the turn — the early return skips pump()'s finally,
       // so onDone/onCancel must run here or the entry is silently dropped (#44).
       cancelled = true;
+      if (logCtx) recordStreamFailure(logCtx, "client", "client_cancel");
       reader.cancel(signal.reason).catch(() => {});
       onCancel?.();
       onDone?.();
@@ -549,6 +572,7 @@ export function consumeForInspection(
       // Mid-drain disconnect: record a client-cancel entry (idempotent downstream) instead of the
       // suppressed onTerminal path. onDone still fires via pump()'s finally after the read rejects.
       cancelled = true;
+      if (logCtx) recordStreamFailure(logCtx, "client", "client_cancel");
       reader.cancel(signal.reason).catch(() => {});
       onCancel?.();
     }, { once: true });
@@ -559,8 +583,11 @@ export function consumeForInspection(
         const { done, value } = await reader.read();
         if (done) {
           inspector.finish();
-          if (!inspector.reported() && !cancelled) {
-            if (logCtx) logCtx.terminalSource = "synthetic";
+      if (!inspector.reported() && !cancelled) {
+        if (logCtx) {
+          logCtx.terminalSource = "synthetic";
+          recordStreamFailure(logCtx, "upstream", "upstream_read");
+        }
             onTerminal("incomplete");
           }
           return;
@@ -575,6 +602,7 @@ export function consumeForInspection(
         if (logCtx) {
           logCtx.transportPhase = "mid_stream";
           logCtx.terminalSource = "synthetic";
+          recordStreamFailure(logCtx, "upstream", "upstream_read");
         }
         onTerminal("failed", 502);
       }
@@ -592,11 +620,12 @@ export function consumeForResponseLogMetadata(
   onDone?: () => void,
   onCompletedResponse?: (response: { id?: unknown; output?: unknown; status?: unknown }) => void,
   onFirstOutput?: () => void,
+  requestStartedAt?: number,
 ): void {
   const reader = body.getReader();
   // No onTerminal → the inspector's `reported` gate stays permanently false,
   // reproducing this consumer's unconditional logCtx inspection.
-  const inspector = createSseInspector({ logCtx, onCompletedResponse, onFirstOutput });
+  const inspector = createSseInspector({ logCtx, onCompletedResponse, onFirstOutput, requestStartedAt });
   if (signal) {
     if (signal.aborted) {
       reader.cancel(signal.reason).catch(() => {});

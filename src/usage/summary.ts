@@ -76,6 +76,14 @@ export interface UsageDayModel {
   provider: string;
   requests: number;
   attemptCount: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  /** Input-token denominator covered by a known cache-read counter. */
+  cacheCoveredInputTokens?: number;
+  cacheHitRate?: number;
+  cacheCoverage?: "complete" | "partial" | "unknown";
   totalTokens: number;
 }
 
@@ -91,6 +99,12 @@ export interface UsageModel {
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  /** Hit-rate denominator; excludes rows whose cache-read counter is unknown. */
+  cacheCoveredInputTokens?: number;
+  cacheHitRate?: number;
+  cacheCoverage?: "complete" | "partial" | "unknown";
   shareRatio: number;
   /** Direct API-key spend only, unchanged. Absent for subscription/OAuth rows. */
   estimatedCostUsd?: number;
@@ -101,6 +115,10 @@ export interface UsageModel {
    * different kinds of number and must never be summed into one.
    */
   apiEquivalentCostUsd?: number;
+  pricedRequests: number;
+  unpricedRequests: number;
+  unmeteredRequests: number;
+  costCoverage: "priced" | "partial" | "unknown";
 }
 
 export interface UsageProvider {
@@ -118,11 +136,23 @@ export interface UsageProvider {
    */
   estimatedRequests: number;
   totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  /** Hit-rate denominator; excludes rows whose cache-read counter is unknown. */
+  cacheCoveredInputTokens?: number;
+  cacheHitRate?: number;
+  cacheCoverage?: "complete" | "partial" | "unknown";
   shareRatio: number;
   /** Direct API-key spend only, unchanged. Absent for subscription/OAuth rows. */
   estimatedCostUsd?: number;
   /** Non-billing API-equivalent total; see `UsageModel.apiEquivalentCostUsd`. */
   apiEquivalentCostUsd?: number;
+  pricedRequests: number;
+  unpricedRequests: number;
+  unmeteredRequests: number;
+  costCoverage: "priced" | "partial" | "unknown";
 }
 
 export interface UsageSummary {
@@ -218,6 +248,9 @@ interface UsageAttribution {
   usageStatus: UsageStatus;
   usage?: PersistedUsageEntry["usage"];
   totalTokens?: number;
+  promptInputTokens?: number;
+  timestamp?: number;
+  cacheRetention?: PersistedUsageEntry["cacheRetention"];
 }
 
 
@@ -250,6 +283,34 @@ function usageModelKey(providerKey: string, model: string): string {
   return `${providerKey}/${model}`;
 }
 
+function cacheParts(usage: PersistedUsageEntry["usage"] | undefined): {
+  read?: number;
+  write?: number;
+  complete: boolean;
+} {
+  if (!usage) return { complete: false };
+  const validCounter = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const write = validCounter(usage.cacheCreationInputTokens) ? usage.cacheCreationInputTokens : undefined;
+  const read = validCounter(usage.cacheReadInputTokens)
+    ? usage.cacheReadInputTokens
+    : validCounter(usage.cachedInputTokens) && write !== undefined
+      ? Math.max(0, usage.cachedInputTokens - write)
+      : validCounter(usage.cachedInputTokens) ? usage.cachedInputTokens : undefined;
+  return { ...(read !== undefined ? { read } : {}), ...(write !== undefined ? { write } : {}), complete: read !== undefined && write !== undefined };
+}
+
+function setCacheCoverage(target: { cacheCoverage?: "complete" | "partial" | "unknown" }, usage: PersistedUsageEntry["usage"] | undefined): { read?: number; write?: number } {
+  const parts = cacheParts(usage);
+  if (!usage || (parts.read === undefined && parts.write === undefined)) {
+    if (target.cacheCoverage === "complete") target.cacheCoverage = "partial";
+    return parts;
+  }
+  if (parts.read !== undefined || parts.write !== undefined) {
+    target.cacheCoverage = target.cacheCoverage === undefined && parts.complete ? "complete" : "partial";
+  }
+  return parts;
+}
+
 function antigravityUsageModel(provider: string, model: string): string {
   if (baseProviderLabel(provider) !== "google-antigravity") return model;
   return canonicalAntigravityUsageModel(model);
@@ -264,6 +325,9 @@ function usageAttributions(entry: PersistedUsageEntry): UsageAttribution[] {
       usageStatus: entry.usageStatus,
       ...(entry.usage ? { usage: entry.usage } : {}),
       ...(entry.totalTokens !== undefined ? { totalTokens: entry.totalTokens } : {}),
+      ...(entry.promptInputTokens !== undefined ? { promptInputTokens: entry.promptInputTokens } : {}),
+      timestamp: entry.timestamp,
+      ...(entry.cacheRetention ? { cacheRetention: entry.cacheRetention } : {}),
     }];
   }
   return entry.attempts.map(attempt => ({
@@ -273,6 +337,13 @@ function usageAttributions(entry: PersistedUsageEntry): UsageAttribution[] {
     usageStatus: attempt.usageStatus,
     ...(attempt.usage ? { usage: attempt.usage } : {}),
     ...(attempt.totalTokens !== undefined ? { totalTokens: attempt.totalTokens } : {}),
+    ...((attempt.promptInputTokens ?? entry.promptInputTokens) !== undefined
+      ? { promptInputTokens: attempt.promptInputTokens ?? entry.promptInputTokens }
+      : {}),
+    timestamp: attempt.timestamp ?? entry.timestamp,
+    ...((attempt.cacheRetention ?? entry.cacheRetention)
+      ? { cacheRetention: attempt.cacheRetention ?? entry.cacheRetention }
+      : {}),
   }));
 }
 
@@ -306,12 +377,9 @@ function addTokens(
   // Prefer the explicit read/write split; legacy claude-route rows stored read+write
   // combined in cachedInputTokens with only the creation split present (devlog 070),
   // so recover reads by subtracting the write share for those rows.
-  const creation = entry.usage.cacheCreationInputTokens;
-  const read = typeof entry.usage.cacheReadInputTokens === "number"
-    ? entry.usage.cacheReadInputTokens
-    : typeof entry.usage.cachedInputTokens === "number" && typeof creation === "number"
-      ? Math.max(0, entry.usage.cachedInputTokens - creation)
-      : entry.usage.cachedInputTokens;
+  const parts = cacheParts(entry.usage);
+  const creation = parts.write;
+  const read = parts.read;
   if (typeof read === "number") {
     totals.cachedInputTokens += read;
     totals.cacheReadInputTokens += read;
@@ -481,8 +549,15 @@ function buildDayGrid(range: UsageRange, since: number | null, now: number, entr
     const mKey = usageModelKey(providerKey, attribution.model);
     let m = models.get(mKey);
     if (!m) {
-      m = { model: attribution.model, provider: providerKey, requests: 0, attemptCount: 0, totalTokens: 0 };
-      models.set(mKey, m);
+      const created: UsageDayModel = {
+        model: attribution.model,
+        provider: providerKey,
+        requests: 0,
+        attemptCount: 0,
+        totalTokens: 0,
+      };
+      models.set(mKey, created);
+      m = created;
     }
     const requestKey = `${dayKey}\0${mKey}`;
     let requests = dayModelRequests.get(requestKey);
@@ -490,6 +565,16 @@ function buildDayGrid(range: UsageRange, since: number | null, now: number, entr
     requests.add(attribution.requestId);
     m.requests = requests.size;
     m.attemptCount += 1;
+    if (attribution.usage) {
+      const cache = setCacheCoverage(m, attribution.usage);
+      if (cache.read !== undefined || cache.write !== undefined) {
+        m.inputTokens = (m.inputTokens ?? 0) + attribution.usage.inputTokens;
+        m.outputTokens = (m.outputTokens ?? 0) + attribution.usage.outputTokens;
+        if (cache.read !== undefined) m.cacheCoveredInputTokens = (m.cacheCoveredInputTokens ?? 0) + attribution.usage.inputTokens;
+        if (cache.read !== undefined) m.cacheReadInputTokens = (m.cacheReadInputTokens ?? 0) + cache.read;
+        if (cache.write !== undefined) m.cacheCreationInputTokens = (m.cacheCreationInputTokens ?? 0) + cache.write;
+      }
+    }
     m.totalTokens += usageDisplayTotalTokens(attribution.usage, attribution.totalTokens) ?? 0;
   };
   for (let i = days - 1; i >= 0; i--) {
@@ -513,7 +598,15 @@ function buildDayGrid(range: UsageRange, since: number | null, now: number, entr
   const out = [...grid.values()].sort((a, b) => a.date.localeCompare(b.date));
   for (const day of out) {
     const models = dayModels.get(day.date);
-    if (models) day.models = [...models.values()].sort((a, b) => b.requests - a.requests);
+    if (models) {
+      day.models = [...models.values()].sort((a, b) => b.requests - a.requests);
+      for (const model of day.models) {
+        const cacheCoveredInputTokens = model.cacheCoveredInputTokens ?? 0;
+        if (model.cacheReadInputTokens !== undefined && cacheCoveredInputTokens > 0) {
+          model.cacheHitRate = model.cacheReadInputTokens / cacheCoveredInputTokens;
+        }
+      }
+    }
   }
   return out;
 }
@@ -540,7 +633,12 @@ function buildModels(entries: PersistedUsageEntry[], totalTokens: number): Usage
           totalTokens: 0,
           inputTokens: 0,
           outputTokens: 0,
+          cacheCoverage: "unknown",
           shareRatio: 0,
+          pricedRequests: 0,
+          unpricedRequests: 0,
+          unmeteredRequests: 0,
+          costCoverage: "unknown",
         };
         byKey.set(key, model);
       }
@@ -553,6 +651,10 @@ function buildModels(entries: PersistedUsageEntry[], totalTokens: number): Usage
       if (attribution.usage) {
         model.inputTokens += attribution.usage.inputTokens;
         model.outputTokens += attribution.usage.outputTokens;
+        const cache = setCacheCoverage(model, attribution.usage);
+        if (cache.read !== undefined) model.cacheCoveredInputTokens = (model.cacheCoveredInputTokens ?? 0) + attribution.usage.inputTokens;
+        if (cache.read !== undefined) model.cacheReadInputTokens = (model.cacheReadInputTokens ?? 0) + cache.read;
+        if (cache.write !== undefined) model.cacheCreationInputTokens = (model.cacheCreationInputTokens ?? 0) + cache.write;
         model.totalTokens += usageDisplayTotalTokens(attribution.usage, attribution.totalTokens) ?? 0;
       }
     }
@@ -565,6 +667,29 @@ function buildModels(entries: PersistedUsageEntry[], totalTokens: number): Usage
       if (isMeasuredStatus(status)) model.measuredRequests += 1;
       if (status === "reported") model.reportedRequests += 1;
       else if (status === "estimated") model.estimatedRequests += 1;
+    }
+  }
+  // Coverage is counted per attributable provider/model request, not from the
+  // aggregate dollar total, so an unknown row can never masquerade as $0.
+  for (const entry of entries) {
+    const context = { serviceTier: effectiveServiceTier(entry), cacheRetention: entry.cacheRetention, promptInputTokens: entry.promptInputTokens, timestamp: entry.timestamp };
+    for (const attribution of usageAttributions(entry)) {
+      const key = usageModelKey(baseProviderLabel(attribution.provider), attribution.model);
+      const model = byKey.get(key);
+      if (!model) continue;
+      const estimate = estimateRequestCost({
+        provider: attribution.provider,
+        model: attribution.model,
+        usage: attribution.usage,
+        usageStatus: attribution.usageStatus,
+        serviceTier: context.serviceTier,
+        cacheRetention: attribution.cacheRetention ?? context.cacheRetention,
+        promptInputTokens: attribution.promptInputTokens ?? context.promptInputTokens,
+        timestamp: attribution.timestamp ?? context.timestamp,
+      });
+      if (estimate) model.pricedRequests += 1;
+      else if (!attribution.usage || attribution.usageStatus === "unreported" || attribution.usageStatus === "unsupported") model.unmeteredRequests += 1;
+      else model.unpricedRequests += 1;
     }
   }
   // Accumulate per-model estimated cost
@@ -629,7 +754,14 @@ function buildModels(entries: PersistedUsageEntry[], totalTokens: number): Usage
     }
   }
   const models = [...byKey.values()];
-  for (const m of models) m.shareRatio = totalTokens === 0 ? 0 : m.totalTokens / totalTokens;
+  for (const m of models) {
+    m.shareRatio = totalTokens === 0 ? 0 : m.totalTokens / totalTokens;
+    if (m.cacheReadInputTokens !== undefined && (m.cacheCoveredInputTokens ?? 0) > 0) m.cacheHitRate = m.cacheReadInputTokens / m.cacheCoveredInputTokens!;
+    const accounted = m.pricedRequests + m.unpricedRequests + m.unmeteredRequests;
+    m.costCoverage = accounted === 0 || m.pricedRequests === 0
+      ? "unknown"
+      : m.unpricedRequests + m.unmeteredRequests > 0 ? "partial" : "priced";
+  }
   return models.sort((a, b) => b.requests - a.requests);
 }
 
@@ -649,7 +781,14 @@ function buildProviders(entries: PersistedUsageEntry[], totalTokens: number): Us
           reportedRequests: 0,
           estimatedRequests: 0,
           totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCoverage: "unknown",
           shareRatio: 0,
+          pricedRequests: 0,
+          unpricedRequests: 0,
+          unmeteredRequests: 0,
+          costCoverage: "unknown",
         };
         byKey.set(providerKey, provider);
       }
@@ -660,6 +799,12 @@ function buildProviders(entries: PersistedUsageEntry[], totalTokens: number): Us
       statuses.push(attribution.usageStatus);
       requests.set(attribution.requestId, statuses);
       if (attribution.usage) {
+        provider.inputTokens += attribution.usage.inputTokens;
+        provider.outputTokens += attribution.usage.outputTokens;
+        const cache = setCacheCoverage(provider, attribution.usage);
+        if (cache.read !== undefined) provider.cacheCoveredInputTokens = (provider.cacheCoveredInputTokens ?? 0) + attribution.usage.inputTokens;
+        if (cache.read !== undefined) provider.cacheReadInputTokens = (provider.cacheReadInputTokens ?? 0) + cache.read;
+        if (cache.write !== undefined) provider.cacheCreationInputTokens = (provider.cacheCreationInputTokens ?? 0) + cache.write;
         provider.totalTokens += usageDisplayTotalTokens(attribution.usage, attribution.totalTokens) ?? 0;
       }
     }
@@ -672,6 +817,26 @@ function buildProviders(entries: PersistedUsageEntry[], totalTokens: number): Us
       if (isMeasuredStatus(status)) provider.measuredRequests += 1;
       if (status === "reported") provider.reportedRequests += 1;
       else if (status === "estimated") provider.estimatedRequests += 1;
+    }
+  }
+  for (const entry of entries) {
+    const context = { serviceTier: effectiveServiceTier(entry), cacheRetention: entry.cacheRetention, promptInputTokens: entry.promptInputTokens, timestamp: entry.timestamp };
+    for (const attribution of usageAttributions(entry)) {
+      const provider = byKey.get(baseProviderLabel(attribution.provider));
+      if (!provider) continue;
+      const estimate = estimateRequestCost({
+        provider: attribution.provider,
+        model: attribution.model,
+        usage: attribution.usage,
+        usageStatus: attribution.usageStatus,
+        serviceTier: context.serviceTier,
+        cacheRetention: attribution.cacheRetention ?? context.cacheRetention,
+        promptInputTokens: attribution.promptInputTokens ?? context.promptInputTokens,
+        timestamp: attribution.timestamp ?? context.timestamp,
+      });
+      if (estimate) provider.pricedRequests += 1;
+      else if (!attribution.usage || attribution.usageStatus === "unreported" || attribution.usageStatus === "unsupported") provider.unmeteredRequests += 1;
+      else provider.unpricedRequests += 1;
     }
   }
   for (const entry of entries) {
@@ -728,7 +893,14 @@ function buildProviders(entries: PersistedUsageEntry[], totalTokens: number): Us
     }
   }
   const providers = [...byKey.values()];
-  for (const p of providers) p.shareRatio = totalTokens === 0 ? 0 : p.totalTokens / totalTokens;
+  for (const p of providers) {
+    p.shareRatio = totalTokens === 0 ? 0 : p.totalTokens / totalTokens;
+    if (p.cacheReadInputTokens !== undefined && (p.cacheCoveredInputTokens ?? 0) > 0) p.cacheHitRate = p.cacheReadInputTokens / p.cacheCoveredInputTokens!;
+    const accounted = p.pricedRequests + p.unpricedRequests + p.unmeteredRequests;
+    p.costCoverage = accounted === 0 || p.pricedRequests === 0
+      ? "unknown"
+      : p.unpricedRequests + p.unmeteredRequests > 0 ? "partial" : "priced";
+  }
   return providers.sort((a, b) => b.requests - a.requests);
 }
 

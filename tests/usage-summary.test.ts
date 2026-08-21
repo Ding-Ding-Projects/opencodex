@@ -947,4 +947,129 @@ describe("summarizeUsage", () => {
     expect(sum.models[0]?.resolvedModel).toBeUndefined();
   });
 
+  test("exposes provider/model cache counters, deterministic hit rate, and explicit cost coverage", () => {
+    const entries: PersistedUsageEntry[] = [
+      entry({
+        ts: FIXED_NOW - 1,
+        provider: "openai",
+        model: "gpt-5.5",
+        usageStatus: "reported",
+        usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 40, cacheCreationInputTokens: 5 },
+      }),
+      entry({
+        ts: FIXED_NOW - 2,
+        requestId: "unknown-cache",
+        provider: "openai",
+        model: "gpt-5.5",
+        usageStatus: "reported",
+        usage: { inputTokens: 20, outputTokens: 2 },
+      }),
+      entry({
+        ts: FIXED_NOW - 3,
+        requestId: "unmetered",
+        provider: "openai",
+        model: "gpt-5.5",
+        usageStatus: "unreported",
+      }),
+    ];
+    const sum = summarizeUsage(entries, "30d", FIXED_NOW);
+    expect(sum.models[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.5",
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 5,
+      cacheCoveredInputTokens: 100,
+      cacheHitRate: 0.4,
+      cacheCoverage: "partial",
+      pricedRequests: 0,
+      unpricedRequests: 2,
+      unmeteredRequests: 1,
+      costCoverage: "unknown",
+    });
+    expect(sum.providers[0]).toMatchObject({
+      provider: "openai",
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 5,
+      cacheCoveredInputTokens: 100,
+      cacheHitRate: 0.4,
+      cacheCoverage: "partial",
+    });
+    const dayModel = sum.days.find(day => day.requests === 3)?.models[0];
+    expect(dayModel).toMatchObject({
+      cacheReadInputTokens: 40,
+      cacheCreationInputTokens: 5,
+      cacheCoveredInputTokens: 100,
+      cacheHitRate: 0.4,
+      cacheCoverage: "partial",
+    });
+  });
+
+  test("combo row pricing keeps attempt prompt/timestamp/cache context and never reports zero priced rows", () => {
+    const combo = entry({
+      ts: FIXED_NOW - 4,
+      requestId: "combo-priced",
+      provider: "combo",
+      model: "combo-model",
+      usageStatus: "reported",
+      attempts: [
+        {
+          ordinal: 1,
+          timestamp: FIXED_NOW - 4,
+          provider: "deepseek",
+          model: "deepseek-v4-flash",
+          adapter: "openai-chat",
+          status: 200,
+          durationMs: 10,
+          sendCount: 1,
+          recoveryKinds: [],
+          usageStatus: "reported",
+          promptInputTokens: 1_000_000,
+          usage: { inputTokens: 1_000_000, outputTokens: 0 },
+        },
+        {
+          ordinal: 2,
+          timestamp: FIXED_NOW - 4,
+          provider: "moonshot",
+          model: "kimi-k2.5",
+          adapter: "openai-chat",
+          status: 200,
+          durationMs: 10,
+          sendCount: 1,
+          recoveryKinds: [],
+          usageStatus: "reported",
+          promptInputTokens: 1_000_000,
+          usage: { inputTokens: 1_000_000, outputTokens: 0 },
+        },
+      ],
+    });
+    const sum = summarizeUsage([combo], "30d", FIXED_NOW);
+    const deepseek = sum.models.find(row => row.provider === "deepseek");
+    const moonshot = sum.models.find(row => row.provider === "moonshot");
+    expect(deepseek?.pricedRequests).toBe(1);
+    expect(moonshot?.pricedRequests).toBe(1);
+    expect(deepseek?.estimatedCostUsd).toBeGreaterThan(0);
+    expect(moonshot?.estimatedCostUsd).toBeGreaterThan(0);
+    expect(deepseek?.pricedRequests).toBeGreaterThan(0);
+    expect(moonshot?.pricedRequests).toBeGreaterThan(0);
+  });
+
+  test("summary ignores malformed negative or non-finite cache counters", () => {
+    const sum = summarizeUsage([entry({
+      ts: FIXED_NOW - 5,
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      usageStatus: "reported",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 2,
+        cacheReadInputTokens: -4,
+        cacheCreationInputTokens: Number.POSITIVE_INFINITY,
+      },
+    })], "30d", FIXED_NOW);
+    expect(sum.models[0]?.cacheReadInputTokens).toBeUndefined();
+    expect(sum.models[0]?.cacheHitRate).toBeUndefined();
+    expect(sum.providers[0]?.cacheHitRate).toBeUndefined();
+    expect(sum.days.find(day => day.requests === 1)?.models[0]?.cacheHitRate).toBeUndefined();
+  });
+
 });

@@ -31,7 +31,7 @@ export async function handleSystemRoutes(ctx: ManagementContext): Promise<Respon
   const { req, url, config } = ctx;
   if (url.pathname === "/api/system/memory" && req.method === "GET") {
     const usage = process.memoryUsage();
-    let jscHeap: { heapSize: number; heapCapacity: number; objectCount: number } | null = null;
+    let jscHeap: { heapSize: number; heapCapacity: number; objectCount: number; extraMemorySize?: number } | null = null;
     try {
       const { heapStats } = await import("bun:jsc");
       const stats = heapStats();
@@ -39,6 +39,9 @@ export async function handleSystemRoutes(ctx: ManagementContext): Promise<Respon
         heapSize: stats.heapSize,
         heapCapacity: stats.heapCapacity,
         objectCount: stats.objectCount,
+        ...(typeof stats.extraMemorySize === "number" && Number.isFinite(stats.extraMemorySize) && stats.extraMemorySize >= 0
+          ? { extraMemorySize: stats.extraMemorySize }
+          : {}),
       };
     } catch {
       /* non-Bun tooling or unavailable introspection — omit the discriminator */

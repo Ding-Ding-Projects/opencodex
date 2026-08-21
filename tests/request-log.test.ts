@@ -19,6 +19,8 @@ import {
   noteAttemptSend,
   recordAdapterReasoning,
   recordFirstOutput,
+  recordStreamFailure,
+  recordStreamStage,
   requestLogEntryFromPersistedUsage,
   sealRequestAttemptIdentity,
   type RequestLogContext,
@@ -29,6 +31,37 @@ import type { AdapterEvent, OcxConfig } from "../src/types";
 import type { PersistedUsageEntry } from "../src/usage/log";
 
 describe("effective pricing context logging", () => {
+  test("stream stages are bounded and first-observation-wins", () => {
+    const logCtx: RequestLogContext = { model: "gpt", provider: "openai", requestStartedAt: 1_000 };
+    recordStreamStage(logCtx, "upstreamDispatchMs", 1_000, 1_010);
+    recordStreamStage(logCtx, "upstreamDispatchMs", 1_000, 9_999);
+    recordStreamStage(logCtx, "upstreamEndMs", 1_000, 1_000 + 8 * 24 * 60 * 60 * 1000);
+    recordStreamFailure(logCtx, "upstream", "upstream_read");
+    recordStreamFailure(logCtx, "client", "client_cancel");
+    expect(logCtx.streamTimeline).toEqual({ upstreamDispatchMs: 10, upstreamEndMs: 7 * 24 * 60 * 60 * 1000 });
+    expect(logCtx.failureSide).toBe("upstream");
+    expect(logCtx.failureStage).toBe("upstream_read");
+  });
+
+  test("final request log retains timeline and attribution for restart persistence", () => {
+    clearRequestLogsForTests();
+    const started = Date.now();
+    const logCtx: RequestLogContext = {
+      model: "gpt",
+      provider: "openai",
+      requestStartedAt: started,
+      streamTimeline: { upstreamDispatchMs: 2, upstreamHeadersMs: 5, downstreamFirstWriteMs: 8 },
+      failureSide: "downstream",
+      failureStage: "downstream_write",
+    };
+    addFinalRequestLog("ocx-stage-final", started, logCtx, 502, { closeReason: "terminal", terminalStatus: "failed" });
+    expect(getRequestLogEntries().at(-1)).toMatchObject({
+      requestId: "ocx-stage-final",
+      streamTimeline: { upstreamDispatchMs: 2, upstreamHeadersMs: 5, downstreamFirstWriteMs: 8 },
+      failureSide: "downstream",
+      failureStage: "downstream_write",
+    });
+  });
   test("malformed pre-route requests do not claim a cache tier", async () => {
     const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
     const response = await handleResponses(
