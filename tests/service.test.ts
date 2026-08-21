@@ -5,6 +5,7 @@ import { saveConfig } from "../src/config";
 import { windowsEnvIndirectBatchValue } from "../src/lib/win-paths";
 import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsServiceScript, buildWindowsTaskXml, deriveWindowsServiceDiagnostic, normalizeServiceSubcommand, parseServiceInstallState, parseWindowsSchedulerRuntimeState, planServiceCommand, probeServiceInstallation, readWindowsSchedulerXmlState, repairService, resolveServiceListenPort, runServiceStopGate, serviceLogPath, serviceStartPostcondition, serviceStartableFromTray, serviceStatusSummary, stopManagerWithVerification, uninstallSchedulerSafely, waitForServiceProxy, windowsTaskRegistrationHealthy } from "../src/service";
 import { serviceApiTokenFilePath } from "../src/lib/service-secrets";
+import { resetHardenedStateForTests, setIcaclsRunnerForTests, setPlatformForTests } from "../src/lib/windows-secret-acl";
 import type { OcxConfig } from "../src/types";
 import { removeTempDir } from "./helpers/temp-dir";
 
@@ -378,6 +379,30 @@ describe("service install auth preflight", () => {
     writeFileSync(serviceApiTokenFilePath(), "persisted-token\n");
 
     expect(() => assertServiceAuthEnvironment()).not.toThrow();
+  });
+
+  test("refuses a persisted token when ACL hardening returns a timeout/false result", () => {
+    if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    writeFileSync(serviceApiTokenFilePath(), "persisted-token\n");
+    resetHardenedStateForTests();
+    setPlatformForTests("win32");
+    setIcaclsRunnerForTests(() => ({ success: false, exitCode: null, timedOut: true, stdout: "" }));
+    try {
+      expect(() => assertServiceAuthEnvironment()).toThrow("validated persisted service token");
+    } finally {
+      setIcaclsRunnerForTests(null);
+      setPlatformForTests(null);
+      resetHardenedStateForTests();
+    }
   });
 
   test("rejects restore operations from a different CODEX_HOME than service install", () => {

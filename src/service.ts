@@ -255,8 +255,8 @@ export function assertServiceAuthEnvironment(): void {
     // The file is written with owner-only permissions and Windows ACL hardening by
     // writeServiceApiTokenFile. Re-validate that boundary before trusting a token
     // left by an earlier installation when the current shell has no token.
-    hardenSecretPath(persisted, { required: true });
-    if (loadServiceTokenFromFile({ OCX_API_TOKEN_FILE: persisted })) return;
+    const hardened = hardenSecretPath(persisted, { required: true });
+    if (hardened.ok && loadServiceTokenFromFile({ OCX_API_TOKEN_FILE: persisted })) return;
   } catch {
     // Fall through to the same actionable refusal without exposing token material.
   }
