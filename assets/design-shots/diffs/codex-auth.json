@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "codex-auth",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/codex-auth.png",
+      "sha256": "5cc1b44a405cdf43521551b034d71c6c7e26b51dd7479b92abc9a8a80953e52a",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/codex-auth.png",
+      "sha256": "2548dbd6617b3b98bfc2d1e231fa8002354adb3cdb082c20d7f253b88b62809d",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 2458115,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.4741734182098765,
+    "meanAbsoluteChannelDifference": 15.849753022119343,
+    "rmsChannelDifference": 42.72664541219086,
+    "maxChannelDifference": 248
+  },
+  "tuple": {
+    "screen": "codex-auth",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}

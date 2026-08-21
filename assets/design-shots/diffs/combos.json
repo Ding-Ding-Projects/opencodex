@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "combos",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/combos.png",
+      "sha256": "c0204041e1fa98739544aca4b9fe23e73f38b46cd4c1168e3c3652fbd8e98815",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/combos.png",
+      "sha256": "937335c2ebe9a42dd78a6d872456782350151d68f50a12ece51f3dfc48004505",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 2362835,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.45579378858024694,
+    "meanAbsoluteChannelDifference": 19.706913901748973,
+    "rmsChannelDifference": 51.6275952790051,
+    "maxChannelDifference": 247
+  },
+  "tuple": {
+    "screen": "combos",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}

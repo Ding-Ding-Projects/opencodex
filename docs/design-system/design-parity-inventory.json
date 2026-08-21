@@ -1,0 +1,3851 @@
+{
+  "schemaVersion": "design-parity-inventory/v1",
+  "inventoryId": "desktop-material-design-parity",
+  "sourceCommitAtGeneration": "dc9401145e99c1dc6a5e981e257575749a38f882",
+  "captureSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+  "referenceFile": "design/OpenCodex M3.dc.html",
+  "screenIds": [
+    "dashboard",
+    "codex-auth",
+    "providers",
+    "models",
+    "combos",
+    "subagents",
+    "logs",
+    "usage",
+    "storage",
+    "api",
+    "claude",
+    "grok",
+    "startup",
+    "appearance",
+    "language",
+    "regex",
+    "changelog",
+    "history",
+    "notifications"
+  ],
+  "rowCount": 19,
+  "rows": [
+    {
+      "id": "dashboard",
+      "name": "Dashboard",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Dashboard\"]",
+        "selector": "[data-screen-label=\"Dashboard\"]"
+      },
+      "realApp": {
+        "route": "#/dashboard",
+        "heading": "Dashboard",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "dashboard",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "dashboard",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "dashboard",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/dashboard.png",
+          "sha256": "d242f01a778774c89585c1567e269d8a7f3a94a90c2c3f8093da5b89272bfaee",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/dashboard.png",
+          "sha256": "a701e17563806d37ecd8ca18f49ed82b6e17b837b5406bc7847273dd3637153e",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/dashboard.png",
+          "sha256": "bc5168331f8eba615356d27c34f9b9feb1513807e1a717f5b2d3971011816170",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/dashboard.json",
+          "sha256": "bc26900fb5c9e1437f568b09748eb47cf1f5ef84e5193bcab00539d6f84ff050"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "codex-auth",
+      "name": "Codex Auth",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Codex Auth\"]",
+        "selector": "[data-screen-label=\"Codex Auth\"]"
+      },
+      "realApp": {
+        "route": "#/codex-auth",
+        "heading": "Codex Auth",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "codex-auth",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "codex-auth",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "codex-auth",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/codex-auth.png",
+          "sha256": "5cc1b44a405cdf43521551b034d71c6c7e26b51dd7479b92abc9a8a80953e52a",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/codex-auth.png",
+          "sha256": "2548dbd6617b3b98bfc2d1e231fa8002354adb3cdb082c20d7f253b88b62809d",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/codex-auth.png",
+          "sha256": "3b587b480db5d6ad7459b35113d5209d735729e2efdd9a7b865ac515595de32c",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/codex-auth.json",
+          "sha256": "f2cc3dee6b4eeabbff2c4acfa1c34b04b494a4ee44da016d12b5da509fbb0f7d"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "providers",
+      "name": "Providers",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Providers\"]",
+        "selector": "[data-screen-label=\"Providers\"]"
+      },
+      "realApp": {
+        "route": "#/providers",
+        "heading": "Providers",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "providers",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "providers",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "providers",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/providers.png",
+          "sha256": "a520b899bffe89a62c6e150051467907142998a29b4604452d03fc9f0cd7bc83",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/providers.png",
+          "sha256": "0f47dbebe10d7f86173898695634ac32dd681f4d9ca84f2f3881599f7d8ae580",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/providers.png",
+          "sha256": "1ad05d457f5d1b9d929e5a8ad78a7c070bb5264f4c5dc63e66cddd51cf4f04ac",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/providers.json",
+          "sha256": "bfd728a08270ed563f06fc9556ce0715b30044db8f1278158754e83264c27f11"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "models",
+      "name": "Models",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Models\"]",
+        "selector": "[data-screen-label=\"Models\"]"
+      },
+      "realApp": {
+        "route": "#/models",
+        "heading": "Models",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "models",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "models",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "models",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/models.png",
+          "sha256": "02d481f02688b5f62f2c3a0620a3d59702122cddbc64074a0290addcd2d6a9fb",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/models.png",
+          "sha256": "a69b4f29e1a56c8436f298d468f5278c35a61be2b0bebcd69475172d79bc4fd6",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/models.png",
+          "sha256": "8901cfff252cc9dd5d9a865df75010a9aa090a9caa01cc528b0436d3ff76e771",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/models.json",
+          "sha256": "98ad9ce9c671a2920cf3e365767185da3c66f269a5046576f0cb8109641340ea"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "combos",
+      "name": "Combos",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Combos\"]",
+        "selector": "[data-screen-label=\"Combos\"]"
+      },
+      "realApp": {
+        "route": "#/combos",
+        "heading": "Combos",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "combos",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "combos",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "combos",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/combos.png",
+          "sha256": "c0204041e1fa98739544aca4b9fe23e73f38b46cd4c1168e3c3652fbd8e98815",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/combos.png",
+          "sha256": "937335c2ebe9a42dd78a6d872456782350151d68f50a12ece51f3dfc48004505",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/combos.png",
+          "sha256": "8ea46c228e12c81c044cdbfe8d8fb26ff848b75714a06a89eab5fc015e0757cc",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/combos.json",
+          "sha256": "329ab8e3b083ea7f821db689edb80d44b82078242d642b1fdc434a300ebe58c3"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "subagents",
+      "name": "Subagents",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Subagents\"]",
+        "selector": "[data-screen-label=\"Subagents\"]"
+      },
+      "realApp": {
+        "route": "#/subagents",
+        "heading": "Subagents",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "subagents",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "subagents",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "subagents",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/subagents.png",
+          "sha256": "234ab5a91d6c8d13f0fbffd6d64f2db21cc23068984f822c149d1c2cd7c51974",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/subagents.png",
+          "sha256": "499d994a13cd1cebc3b4fffb9f8ee13105d383401b6f069eb9a1ad4ca1066c85",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/subagents.png",
+          "sha256": "3c4431f90878289094c7e4b5406a639bd8cf3ce0372ddf9b664651dff0de8362",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/subagents.json",
+          "sha256": "cf801cc8cad5f43e9fc38ade0bbb374c2191dad1072a4cd21816b6afa621eadf"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "logs",
+      "name": "Logs & Debug",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Logs and Debug\"]",
+        "selector": "[data-screen-label=\"Logs and Debug\"]"
+      },
+      "realApp": {
+        "route": "#/logs",
+        "heading": "Logs & Debug",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "logs",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "logs",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "logs",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/logs.png",
+          "sha256": "ec7ea3132b41036f3f09a9f37356443d2aa8c8dd15e20780561ec11c7599fcae",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/logs.png",
+          "sha256": "187071fbbf36ebb69c884cdbc0cbc041b9135d4d47c3959b590df1ec852ee84f",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/logs.png",
+          "sha256": "999a36cb301e0effe41ac78b4a94a6f5446daf70043c60ea0d17fb3a3bd4592d",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/logs.json",
+          "sha256": "03cc33c488e2da558bfa4101e1c43fedfdecb4d0989b1cc4b214a9f802c5c1b9"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "usage",
+      "name": "Usage",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Usage\"]",
+        "selector": "[data-screen-label=\"Usage\"]"
+      },
+      "realApp": {
+        "route": "#/usage",
+        "heading": "Usage",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "usage",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "usage",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "usage",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/usage.png",
+          "sha256": "e1af6189a2d94cc457a13697a5bff6ed07a0e985b2c281cb4f576ac5fe52fafc",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/usage.png",
+          "sha256": "69f90d370f9fec3213c7317004c0ecfb0a05e4122e53912c7cd9c650cc17eded",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/usage.png",
+          "sha256": "a43fd939873f18b513bf5140c99298494bde5de6f542517a6872246a450ff29e",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/usage.json",
+          "sha256": "f56838ecb311f68cab79d6e5d3d6dd47eb6d88de8230e4fb2095f812e68945b0"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "storage",
+      "name": "Storage",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Storage\"]",
+        "selector": "[data-screen-label=\"Storage\"]"
+      },
+      "realApp": {
+        "route": "#/storage",
+        "heading": "Storage",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "storage",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "storage",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "storage",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/storage.png",
+          "sha256": "92963a0ecdc1fdb620d99f161ae1b38fd0ad3680e213b2f2d9a47d5e830c3e86",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/storage.png",
+          "sha256": "046254f811c6992346627f932891e3357f6b720637584b5541b38035626cd55e",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/storage.png",
+          "sha256": "2512ad5cd011468c162e546ed90bd4385ddcdd15d8bd11c1694b64e9422ec5ab",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/storage.json",
+          "sha256": "1e06a4e3c7985b43233f480a80f959f1a6aaab452478950a0c3727b1ad99931b"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "api",
+      "name": "API",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"API access\"]",
+        "selector": "[data-screen-label=\"API access\"]"
+      },
+      "realApp": {
+        "route": "#/api",
+        "heading": "API",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "api",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "api",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "api",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/api.png",
+          "sha256": "81f099d7bd1c22284920d1c472864376363ae78f692e12256fe53aaa74d90aeb",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/api.png",
+          "sha256": "61e313a095c42f501a9ac6a6f0291d85fcdd39d0dc2a628bc6c35742425730a2",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/api.png",
+          "sha256": "4cb2750ed56acad4abb6c30da266f72be91e6656fe57e05babd4cf3ea0266973",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/api.json",
+          "sha256": "21ba90eec5b7b863da018750900ac3fc6b6a06b1de79e6982c410c40ea952525"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "claude",
+      "name": "Claude",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Claude\"]",
+        "selector": "[data-screen-label=\"Claude\"]"
+      },
+      "realApp": {
+        "route": "#/claude",
+        "heading": "Claude",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "claude",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "claude",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "claude",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/claude.png",
+          "sha256": "bc49932f4a8f2066f9ab790f9c96376f2e58eae7126d4a49e0dd961def99040d",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/claude.png",
+          "sha256": "ac29def179e84c565389c4928da3ac8f53ba1aaa06e9cdb8179d170e12b4583c",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/claude.png",
+          "sha256": "b831a94036ef4a8852d0b577602d7d41564b7e2b36d38026d00b97ca5199a5fc",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/claude.json",
+          "sha256": "4ba35b09b52ae0dc4f4d816f42675dc2769515f7547533ef4520ea2f6a91a06a"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "grok",
+      "name": "Grok",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Grok\"]",
+        "selector": "[data-screen-label=\"Grok\"]"
+      },
+      "realApp": {
+        "route": "#/grok",
+        "heading": "Grok",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "grok",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "grok",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "grok",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/grok.png",
+          "sha256": "4577d449e7fbd07b940de8e8bb9c05e096553dea81668e7eb9bf6c5c1b1b06bd",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/grok.png",
+          "sha256": "4f630265175715f8db401077e3b31070ef040e26001ecc23ba40c3a050716207",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/grok.png",
+          "sha256": "3fcb7d916203455e737766bc543a7a2e924cb53e25b2c5052c30be96d0c77ff5",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/grok.json",
+          "sha256": "bf39567b29a271cfff9d59532b809511463b4506334d83ce859da7de6f164c3e"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "startup",
+      "name": "Startup",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Startup safety\"]",
+        "selector": "[data-screen-label=\"Startup safety\"]"
+      },
+      "realApp": {
+        "route": "#/startup",
+        "heading": "Startup",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "startup",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "startup",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "startup",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/startup.png",
+          "sha256": "df4b17687b1321034280fb32debaa04193f60f3c412b81fc3e9d052b510dcc38",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/startup.png",
+          "sha256": "dd6f83ce992f81303b7b37488722d2f957603ef2e6790eedcabdb21aba18b2f1",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/startup.png",
+          "sha256": "a0de45eb3e37a8c9a8777e1e0a6e0e929124c0326d789bbc460ef8ef87b7578a",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/startup.json",
+          "sha256": "1620696ee44d3d7230aa2ed16b62bb61640432e8bad9ab81c8267a61769c45a6"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "appearance",
+      "name": "Appearance",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Appearance\"]",
+        "selector": "[data-screen-label=\"Appearance\"]"
+      },
+      "realApp": {
+        "route": "#/appearance",
+        "heading": "Appearance",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "appearance",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "appearance",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "appearance",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/appearance.png",
+          "sha256": "87fd35be4113fe35959b82ad6be0a4deced790fd63f9cd6a310b6b60dc8e9801",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/appearance.png",
+          "sha256": "1588870ab8726466bea5178e3c877d4ae99813a6738f1a36d972ae8e9c297f76",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/appearance.png",
+          "sha256": "1252fc8a964d6957aecc10c0e45cee24037af5bdcf6b0d0f560f80312a1a150a",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/appearance.json",
+          "sha256": "b282a78e2cb0b50bc27a3b07a81bf330055760b000f6fa11ddfcb1007ee22373"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "language",
+      "name": "Language & voice",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Language and voice\"]",
+        "selector": "[data-screen-label=\"Language and voice\"]"
+      },
+      "realApp": {
+        "route": "#/language",
+        "heading": "Language & voice",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "language",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "language",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "language",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/language.png",
+          "sha256": "9d362607e702d01cf40a0c79c9be417781f543a2b0c21da214c190245687f821",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/language.png",
+          "sha256": "67c94712b0b81f3c101aff134bb14add4520d0a9b96f41fd30f2f1ab55899168",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/language.png",
+          "sha256": "5e7d881070bcdfb12660dce7ecc08c4310544cbc2544ef45098c021d59bfa692",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/language.json",
+          "sha256": "d98c0d7beabd0f03339a96e674615040d4e2ae73ffc000244d11c8fff519a8f0"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "regex",
+      "name": "Regex builder",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Regex builder\"]",
+        "selector": "[data-screen-label=\"Regex builder\"]"
+      },
+      "realApp": {
+        "route": "#/regex",
+        "heading": "Regex builder",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "regex",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "regex",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "regex",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/regex.png",
+          "sha256": "15f2bf9f1f29395f75021736d7cbc1104b33ad7d2a27cc8c1b4cfab50cd2a797",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/regex.png",
+          "sha256": "01f324200af25698e420a35a9f917bf4a354ac2675042a49d8924e03398c65e0",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/regex.png",
+          "sha256": "1a069e03a302251650a8db5df430b048a2d08b1a8d4926752d7f92ff7b8d3796",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/regex.json",
+          "sha256": "e2176a69b08b26a43f1ac3ec4e757dfe260b055083d1ab0a2ef5b3285fb90dc4"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "changelog",
+      "name": "Changelog",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Changelog\"]",
+        "selector": "[data-screen-label=\"Changelog\"]"
+      },
+      "realApp": {
+        "route": "#/changelog",
+        "heading": "Changelog",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "changelog",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "changelog",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "changelog",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/changelog.png",
+          "sha256": "24fd6a5f217872bea61a348086743315fa61601a164c0a62bbc6fb1b1001655c",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/changelog.png",
+          "sha256": "c0357d1dd88474af6784854d1270b7e5eac04f51a8eb6532a20a4c6cdfafd345",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/changelog.png",
+          "sha256": "1dcd184ce35e14a68a998767064ba2cd69ecb9a1e82468493095c952b573bf14",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/changelog.json",
+          "sha256": "4c51d1791e44708707adf5b39124f2ad3167b23246ccf902990f620b73d9e009"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "history",
+      "name": "Version history",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Version history\"]",
+        "selector": "[data-screen-label=\"Version history\"]"
+      },
+      "realApp": {
+        "route": "#/history",
+        "heading": "Version history",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "history",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "history",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "history",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/history.png",
+          "sha256": "c761c07d1b6b63a7ecd68400ede493a7e723750cf84200bfa26ac2d0f50479d2",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/history.png",
+          "sha256": "00f29b7200ec9593820243f872c5ae283af67b622673208805fb75b9526b15ed",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/history.png",
+          "sha256": "84e3e077fa5e30c94ec368d458f5d7f655b2481a726f1abf7fa9c3f7b312fa33",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/history.json",
+          "sha256": "63533ac9d08406ad4a133b64a4d5d9cdd43e6769dd3b6f1482120851b2d8a59e"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    },
+    {
+      "id": "notifications",
+      "name": "Notifications",
+      "reference": {
+        "file": "design/OpenCodex M3.dc.html",
+        "fileSha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "route": "design/OpenCodex M3.dc.html :: [data-screen-label=\"Notifications\"]",
+        "selector": "[data-screen-label=\"Notifications\"]"
+      },
+      "realApp": {
+        "route": "#/notifications",
+        "heading": "Notifications",
+        "sourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "sourceHash": "dc9401145e99c1dc6a5e981e257575749a38f882"
+      },
+      "tuple": {
+        "screen": "notifications",
+        "state": "historical-seeded-default",
+        "theme": "light",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "scale": 2,
+        "locale": "en-US"
+      },
+      "captureTuples": {
+        "reference": {
+          "screen": "notifications",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "en-US"
+        },
+        "built": {
+          "screen": "notifications",
+          "state": "historical-seeded-default",
+          "theme": "light",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "scale": 2,
+          "locale": "bi"
+        }
+      },
+      "deterministicInputs": {
+        "fixture": "historical design mock data versus seeded real-app data",
+        "time": "not-frozen; historical capture receipt unavailable",
+        "motion": "not-recorded; historical capture receipt unavailable",
+        "random": "real-app capture stubbed Math.random=0.001; reference seed not recorded",
+        "fonts": "reference Noto Sans HK/Roboto Flex/Roboto Mono; real app local font stack; receipt unavailable",
+        "network": "reference loopback shell with prototype font request; real app isolated capture; receipt unavailable",
+        "localePolicy": "reference default en; real capture forced bi"
+      },
+      "evidence": {
+        "referenceRaw": {
+          "path": "assets/design-shots/notifications.png",
+          "sha256": "b4ebcdd38a9e3ae30dcc73623158f6624def26839579de517f94443313e3e531",
+          "width": 2880,
+          "height": 1800
+        },
+        "builtRaw": {
+          "path": "assets/shots/notifications.png",
+          "sha256": "ba5174d19cb3cc15f61b4c4ebaf1794f2f9bf94f077645df7bf70b05e71f8afd",
+          "width": 2880,
+          "height": 1800
+        },
+        "sideBySide": {
+          "path": "assets/design-shots/side-by-side/notifications.png",
+          "sha256": "2686df44c355d064cadaa96d96bf4e406ed486dfda89c78ecffc5236b93e8265",
+          "width": 1956,
+          "height": 685
+        },
+        "diff": {
+          "path": "assets/design-shots/diffs/notifications.json",
+          "sha256": "3333a8d5be1605658ab831edb00e4f7790a74bb9d358b0e2abe1182e3be69cdb"
+        }
+      },
+      "md3Audit": {
+        "status": "not-reviewed",
+        "source": "docs/design-system/side-by-side-audit.md",
+        "primitives": {
+          "buttons": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "fields": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "menus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "tabs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "dialogs": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "navigation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "selection": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "typography": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "color": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "shape": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "elevation": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "state": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "focus": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "motion": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          },
+          "accessibility": {
+            "verdict": "not-reviewed",
+            "reason": "No per-primitive receipt exists for this historical capture; parity remains unverified."
+          }
+        }
+      },
+      "deviations": [
+        {
+          "id": "frameless-window-chrome",
+          "scope": "chrome",
+          "reason": "The shipped Windows app uses a custom frameless title bar and controls; the reference app captures only its client area.",
+          "approval": "docs/design-system/m3-port-handoff.md#8 (documented project decision)"
+        },
+        {
+          "id": "svg-icons",
+          "scope": "icons",
+          "reason": "The shipped app uses local hand-authored SVG icons instead of the prototype's ligature font; placement and color remain reviewable, glyph geometry is not pixel-equivalent.",
+          "approval": "gui/src/icons.tsx (documented implementation decision)"
+        },
+        {
+          "id": "system-cjk-fallback",
+          "scope": "typography",
+          "reason": "The shipped app relies on platform CJK fallback rather than bundling the prototype's network font; the fallback is intentionally documented.",
+          "approval": "ROADMAP.md#appearance (documented project decision)"
+        }
+      ],
+      "provenance": {
+        "inventorySourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceSourceHash": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d",
+        "realSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
+        "referenceCapture": {
+          "tool": "scripts/design-capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt was not committed."
+        },
+        "builtCapture": {
+          "tool": "scripts/capture-shots.ts",
+          "receipt": "not-recorded",
+          "status": "stale",
+          "reason": "Historical PNG exists but its immutable capture receipt and build artifact hash were not committed."
+        },
+        "comparison": {
+          "tool": "scripts/build-side-by-side.py",
+          "status": "reconstructed-from-existing-bytes"
+        },
+        "diff": {
+          "tool": "scripts/build-design-parity-evidence.py",
+          "status": "generated-from-existing-bytes"
+        }
+      },
+      "verdict": "stale-evidence",
+      "verdictReasons": [
+        "Reference and built captures use different locale tuples (en versus bi).",
+        "Historical capture receipts and built-artifact hashes are unavailable.",
+        "Per-primitive Material Design 3 review is not recorded for this historical pair."
+      ]
+    }
+  ],
+  "status": "stale-evidence; no row is parity-verified"
+}

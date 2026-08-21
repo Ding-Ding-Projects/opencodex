@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "claude",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/claude.png",
+      "sha256": "bc49932f4a8f2066f9ab790f9c96376f2e58eae7126d4a49e0dd961def99040d",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/claude.png",
+      "sha256": "ac29def179e84c565389c4928da3ac8f53ba1aaa06e9cdb8179d170e12b4583c",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 1412223,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.2724195601851852,
+    "meanAbsoluteChannelDifference": 10.278786008230453,
+    "rmsChannelDifference": 36.51139984801591,
+    "maxChannelDifference": 247
+  },
+  "tuple": {
+    "screen": "claude",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}

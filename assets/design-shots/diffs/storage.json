@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "storage",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/storage.png",
+      "sha256": "92963a0ecdc1fdb620d99f161ae1b38fd0ad3680e213b2f2d9a47d5e830c3e86",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/storage.png",
+      "sha256": "046254f811c6992346627f932891e3357f6b720637584b5541b38035626cd55e",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 3136163,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.6049697145061729,
+    "meanAbsoluteChannelDifference": 12.692277327674896,
+    "rmsChannelDifference": 34.63801725028373,
+    "maxChannelDifference": 247
+  },
+  "tuple": {
+    "screen": "storage",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}
