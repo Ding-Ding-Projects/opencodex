@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -181,7 +182,23 @@ func (a *API) handleParityRoutes(w http.ResponseWriter, r *http.Request) bool {
 		}
 		return true
 	case path == "/api/host/discover" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
-		writeJSON(w, http.StatusOK, map[string]any{"hosts": []map[string]any{{"hostname": a.config.Host, "port": a.config.Port, "reachable": true, "source": "local"}}})
+		host := strings.Trim(strings.TrimSpace(a.config.Host), "[]")
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "127.0.0.1"
+		}
+		reachable := false
+		if a.config.Port > 0 {
+			connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(a.config.Port)), 250*time.Millisecond)
+			if err == nil {
+				reachable = true
+				_ = connection.Close()
+			}
+		}
+		found := []map[string]any{}
+		if reachable {
+			found = append(found, map[string]any{"hostname": host, "port": a.config.Port, "reachable": true, "source": "local-probe"})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"found": found, "hosts": found})
 		return true
 	case path == "/api/launch" && r.Method == http.MethodGet:
 		return a.handleNativeLaunchList(w)

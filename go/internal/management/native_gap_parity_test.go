@@ -182,3 +182,14 @@ func TestLoopbackTerminalRunsFixedShellAndSupportsSessionLifecycle(t *testing.T)
 		t.Fatalf("delete=%d %s", deleted.Code, deleted.Body.String())
 	}
 }
+
+func TestHostDiscoveryDoesNotFabricateReachableHosts(t *testing.T) {
+	cfg := config.Default()
+	cfg.Host = "127.0.0.1"
+	cfg.Port = 1
+	api := newParityAPI(t, &cfg)
+	response := serveManagement(api, http.MethodPost, "/api/host/discover", "")
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"reachable":true`) {
+		t.Fatalf("discovery fabricated reachability: %d %s", response.Code, response.Body.String())
+	}
+}
