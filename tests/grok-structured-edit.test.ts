@@ -19,6 +19,7 @@ import {
   translateGrokShellCall,
   translateGrokStructuredEditCall,
 } from "../src/adapters/grok-structured-edit";
+import { createOpenAIChatAdapter } from "../src/adapters/openai-chat";
 
 const xai = { baseUrl: "https://api.x.ai/v1" };
 const openai = { baseUrl: "https://api.openai.com/v1" };
@@ -44,6 +45,28 @@ async function* replay(events: AdapterEvent[]): AsyncGenerator<AdapterEvent> {
 }
 
 describe("Grok structured edit tools", () => {
+  test("the real Chat adapter replaces code-mode exec only on xAI", async () => {
+    const parsed = {
+      modelId: "grok-4.5",
+      context: { messages: [], tools: [codeModeExec(liveCodexExecHelper)] },
+      stream: true,
+      options: {},
+    } as Parameters<ReturnType<typeof createOpenAIChatAdapter>["buildRequest"]>[0];
+    const xaiBody = JSON.parse((await createOpenAIChatAdapter({
+      adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", apiKey: "test-key",
+    }).buildRequest(parsed)).body) as { tools: Array<{ function: { name: string } }>; messages: Array<{ content?: string }> };
+    expect(xaiBody.tools.map(tool => tool.function.name)).toEqual([
+      "read_file", "grep", "list_dir", "search_replace", "write", "run_terminal_command",
+    ]);
+    expect(xaiBody.tools.some(tool => tool.function.name === "exec")).toBe(false);
+    expect(xaiBody.messages[0]?.content).toContain("search_replace");
+
+    const openaiBody = JSON.parse((await createOpenAIChatAdapter({
+      adapter: "openai-chat", baseUrl: "https://api.openai.com/v1", apiKey: "test-key",
+    }).buildRequest(parsed)).body) as { tools: Array<{ function: { name: string } }> };
+    expect(openaiBody.tools.map(tool => tool.function.name)).toEqual(["exec"]);
+  });
+
   test("rewrites Codex apply_patch edit constraints to Grok write/search_replace", () => {
     const codex = [
       "## File editing constraints",

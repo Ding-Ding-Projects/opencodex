@@ -346,6 +346,41 @@ Grounded in the open-sourced official client (xai-org/grok-build); unit + eviden
   `fetchWithHeaderTimeout` takes an executor so provider fetch wrappers stay inside the
   timeout race.
 
+### Routed custom tools and native Grok edits
+
+Routed Responses destinations are capability-gated for native custom tools. The provider registry
+marks xAI's Responses destination as `supportsResponsesCustomTools: false`; the adapter lowers
+`custom` declarations and their matching `custom_tool_call`/`custom_tool_call_output` history to
+function wire items, then the client-facing SSE rewrite restores only the request-authorized
+names and call ids. Canonical OpenAI forwarding and unclassified destinations retain the native
+shape. The lowering is implemented in `src/responses/custom-tool-compat.ts` and covered by
+`tests/custom-tool-compat.test.ts`; unknown or unrelated calls remain byte-identical.
+
+The xAI Chat Completions route advertises Grok Build's native `read_file`, `grep`, `list_dir`,
+`search_replace`, `write`, and `run_terminal_command` tools only when the current Codex code-mode
+catalog has a collision-free `exec` sink. Structured edits become Codex `apply_patch` input and
+shell/read operations become `tools.exec_command` calls. Native calls are buffered until complete,
+interleaving is preserved, caller-owned names are never reinterpreted, and Windows read/list
+history uses bounded PowerShell commands. The guidance rewrite is request-local and is absent from
+non-xAI routes. Evidence is in `tests/grok-structured-edit.test.ts` and the bridge integration.
+
+### Apply-patch envelope repair boundary
+
+Some routed models add a trailing `***` to the outer `*** Begin Patch`/`*** End Patch` lines.
+`src/responses/apply-patch-envelope.ts` removes that decoration only for a complete,
+structurally-recognized top-level `apply_patch` payload. It never rewrites internal patch lines or
+arbitrary `exec` JavaScript; `tests/bridge.test.ts` proves both branches.
+
+### Reasoning replay scope (not ported from upstream PR2313)
+
+The current integration head does not contain the serving-identity/reasoning-replay cache,
+request-local durable identity tuple, or proven opaque-blob rejection memo required by upstream
+PR2313. Its exact current-head checks therefore cannot be reproduced safely here. That behavior is
+deliberately left unported rather than introducing a parallel cache with weaker scope, so native
+reasoning bytes and existing compaction ordering remain unchanged. A later port must first land
+the identity and invariant seams, then reproduce the three-turn, switch-back, failed-retry, and
+TTL regressions before enabling the memo.
+
 ## Parallel tool calls (default-on for chat providers)
 
 The openai-chat adapter buffers ALL streamed `tool_calls` deltas (keyed by `index`, falling back to

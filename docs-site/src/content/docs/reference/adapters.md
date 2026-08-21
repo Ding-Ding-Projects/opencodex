@@ -31,6 +31,10 @@ provider — xAI, Kimi, DeepSeek, GLM, Groq, OpenRouter, Ollama (local & cloud),
 
 - Converts internal messages to OpenAI roles; maps tools to `{type:"function", function:{…}}` and
   `tool_choice` (`auto`/`none`/`required` or a named function).
+- On xAI, a collision-free Codex code-mode `exec` catalog is replaced with Grok Build's native
+  `read_file`, `grep`, `list_dir`, `search_replace`, `write`, and `run_terminal_command` tools.
+  Completed calls are translated back into Codex `exec`/`apply_patch` input only for the current
+  request; caller-owned tools and non-xAI routes are left alone.
 - **Rewrites Codex's GPT-5 identity prompt** to a model-agnostic intro so routed models don't claim to
   be OpenAI.
 - **Clamps `reasoning_effort`** to the model's advertised subset when an exact tier is unavailable;
@@ -47,6 +51,11 @@ streams the response back **untranslated**.
 
 - `forward` URL → `{baseUrl}/responses`. A `key` provider defaults to the legacy `{baseUrl}/v1/responses` construction.
 - A `key` provider may set a validated relative `responsesPath`; the adapter removes one trailing slash from `baseUrl` and sends `{trimmedBaseUrl}{responsesPath}`. For Ark Agent Plan, use `baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3"` with `responsesPath: "/responses"`.
+- Routed destinations declare `supportsResponsesCustomTools` when their native Responses wire
+  accepts custom tools. xAI declares `false`, so `apply_patch` is lowered to function items on the
+  upstream hop and restored only for authorized matching calls on the client-facing hop.
+- Complete decorated `apply_patch` outer delimiters are normalized at the bridge boundary; arbitrary
+  `exec` JavaScript and incomplete/non-patch payloads remain byte-identical.
 - In `forward` mode only a safe header allowlist is relayed (`FORWARD_HEADERS`): authorization,
   ChatGPT account id, and the OpenAI beta/originator/session headers. This is the ChatGPT-login path
   that also powers the [sidecars](/guides/sidecars/).
