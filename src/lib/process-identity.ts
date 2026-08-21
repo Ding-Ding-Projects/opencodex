@@ -207,5 +207,20 @@ export function isProcessIdentity(value: unknown): value is ProcessIdentity {
 }
 
 export function isPersistedProcessIdentity(value: unknown): value is PersistedProcessIdentity {
-  return isProcessIdentity(value) && (value as ProcessIdentity).commandLine === undefined;
+  if (!isProcessIdentity(value) || (value as ProcessIdentity).commandLine !== undefined) return false;
+  const keys = Object.keys(value as unknown as Record<string, unknown>);
+  return keys.every(key => key === "pid" || key === "startIdentity" || key === "executablePath");
+}
+
+/**
+ * Normalize a version-1 owner record. The first identity implementation wrote
+ * commandLine beside the comparison fields; accept that bounded legacy shape
+ * in memory, but never carry the command line into a persisted record.
+ */
+export function normalizePersistedProcessIdentity(value: unknown): PersistedProcessIdentity | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (!keys.every(key => key === "pid" || key === "startIdentity" || key === "executablePath" || key === "commandLine")) return null;
+  if (!isProcessIdentity(value)) return null;
+  return toPersistedProcessIdentity(value);
 }

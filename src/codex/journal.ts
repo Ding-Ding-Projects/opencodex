@@ -6,6 +6,7 @@ import { hasInjectedCodexRouting } from "./injected-marker";
 import { CODEX_HOME, CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "./paths";
 import {
   isPersistedProcessIdentity,
+  normalizePersistedProcessIdentity,
   readProcessIdentity,
   sameProcessIdentity,
   toPersistedProcessIdentity,
@@ -113,7 +114,14 @@ function readJournal(): Journal | null {
   try {
     const journal = JSON.parse(readFileSync(JOURNAL_PATH, "utf-8")) as Journal;
     if (journal.version !== 1) throw new Error("unknown version");
-    if (journal.ownerIdentity !== undefined && !isPersistedProcessIdentity(journal.ownerIdentity)) throw new Error("invalid owner identity");
+    if (journal.ownerIdentity !== undefined) {
+      const normalized = normalizePersistedProcessIdentity(journal.ownerIdentity);
+      // Preserve an invalid identity record as recovery evidence. It cannot
+      // authorize recovery, but deleting it would destroy the only snapshot
+      // a later repair may be able to use.
+      if (!normalized || !isPersistedProcessIdentity(normalized)) return null;
+      journal.ownerIdentity = normalized;
+    }
     return journal;
   } catch {
     removeJournal();
