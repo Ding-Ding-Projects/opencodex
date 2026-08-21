@@ -15,6 +15,7 @@ import {
   cliShimPath,
   ensurePathScriptPath,
   installCliOnPath,
+  uninstallCliOnPath,
   installRoot,
   planCliPathInstall,
   recordDesktopCliPathStatus,
@@ -66,6 +67,8 @@ describe("shim content", () => {
     // Windows batch files: CRLF line endings, matching a real npm cmd-shim.
     expect(content.split("\r\n").length).toBeGreaterThan(1);
     expect(content).not.toMatch(/[^\r]\n/); // no bare LF
+    expect(content).toContain("setlocal");
+    expect(content).toContain("endlocal & exit /b");
   });
 });
 
@@ -86,7 +89,8 @@ describe("installCliOnPath", () => {
   function baseDeps(overrides: Record<string, unknown> = {}) {
     return {
       platform: "win32",
-      exists: () => true,
+      exists: (path: string) => path === ensurePathScriptPath(EXEC),
+      readFile: () => undefined,
       mkdir: () => {},
       writeFile: () => {},
       runPowerShell: () => ({
@@ -199,6 +203,40 @@ describe("installCliOnPath", () => {
     const result = installCliOnPath(EXEC, baseDeps({ runPowerShell: () => ({ status: 0, stdout: "not json", stderr: "" }) }));
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("could not be parsed");
+  });
+
+  test("rolls the shim back to its exact prior bytes when PATH repair fails", () => {
+    const prior = "@echo off\r\nold shim\r\n";
+    let current = prior;
+    let existed = true;
+    const result = installCliOnPath(
+      EXEC,
+      baseDeps({
+        exists: (path: string) => path === ensurePathScriptPath(EXEC) || (path === cliShimPath(EXEC) && existed),
+        readFile: () => current,
+        writeFile: (_path: string, content: string) => { current = content; existed = true; },
+        removeFile: () => { current = ""; existed = false; },
+        runPowerShell: () => ({ status: 1, stdout: "", stderr: "path denied" }),
+      }),
+    );
+    expect(result).toMatchObject({ ok: false });
+    expect(existed).toBe(true);
+    expect(current).toBe(prior);
+  });
+
+  test("uninstall accepts only the exact owned shim and removes its stable directory", () => {
+    const calls: string[] = [];
+    const result = uninstallCliOnPath(EXEC, {
+      platform: "win32",
+      exists: (path: string) => path === cliShimPath(EXEC) || path === ensurePathScriptPath(EXEC),
+      readFile: () => cliShimContent(EXEC),
+      runPowerShell: (scriptPath: string, binDir: string, options: Record<string, string>) => {
+        calls.push(`${scriptPath}|${binDir}|${options.action}`);
+        return { status: 0, stdout: JSON.stringify({ ok: true, owned: true, removed: true }), stderr: "" };
+      },
+    });
+    expect(result).toMatchObject({ ok: true, owned: true, removed: true });
+    expect(calls[0]).toContain("|uninstall");
   });
 });
 

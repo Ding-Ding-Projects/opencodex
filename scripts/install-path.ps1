@@ -117,6 +117,165 @@ function Add-NpmGlobalBinToUserPath {
     }
 }
 
+function Add-DesktopCliPath {
+    <#
+    Desktop-only transactional wrapper. The npm installer intentionally keeps
+    its historical process-refresh behaviour; the Squirrel lifecycle cannot
+    leave a half-repaired user PATH behind when its short-lived helper fails.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BinDir,
+        [scriptblock]$ReadMachinePath = { [Environment]::GetEnvironmentVariable("Path", "Machine") },
+        [scriptblock]$ReadUserPath = { [Environment]::GetEnvironmentVariable("Path", "User") },
+        [scriptblock]$WriteUserPath = { param([string]$Path) [Environment]::SetEnvironmentVariable("Path", $Path, "User") },
+        [scriptblock]$ReadProcessPath = { $env:Path },
+        [scriptblock]$WriteProcessPath = { param([string]$Path) $env:Path = $Path },
+        [string[]]$ResolvedOcxPaths = @(),
+        [switch]$ForceFailure
+    )
+
+    $beforeUser = [string](& $ReadUserPath)
+    $beforeProcess = [string](& $ReadProcessPath)
+    $recovered = $false
+    try {
+        $repair = Add-NpmGlobalBinToUserPath -NpmGlobalBin $BinDir -TestDirectory { $true } -ReadUserPath $ReadUserPath -WriteUserPath $WriteUserPath -ReadProcessPath $ReadProcessPath -WriteProcessPath $WriteProcessPath
+        if ($repair.ProcessPathRefreshFailed) {
+            throw "the process PATH could not be refreshed"
+        }
+        if ($ForceFailure) {
+            throw "forced desktop PATH transaction failure"
+        }
+        $machineValue = & $ReadMachinePath
+        $userValue = & $ReadUserPath
+        $freshShellPath = @($machineValue, $userValue) -join ";"
+        $resolved = if ($ResolvedOcxPaths -and $ResolvedOcxPaths.Count -gt 0) { $ResolvedOcxPaths } else { Get-OcxCommandPaths -PathValue $freshShellPath }
+        $collision = Resolve-OcxPathCollision -NpmGlobalBin $BinDir -ResolvedOcxPaths $resolved -ReadMachinePath $ReadMachinePath -ReadUserPath $ReadUserPath -WriteUserPath $WriteUserPath -ReadProcessPath $ReadProcessPath -WriteProcessPath $WriteProcessPath
+        return [pscustomobject]@{
+            Ok = $true
+            UserPathChanged = $repair.UserPathChanged
+            ProcessPathChanged = $repair.ProcessPathChanged
+            Collision = $collision.Collision
+            Winner = $collision.Winner
+            Reordered = $collision.Reordered
+            MachineBlocked = $collision.MachineBlocked
+            TransactionRecovered = $false
+        }
+    } catch {
+        try {
+            & $WriteUserPath $beforeUser
+            & $WriteProcessPath $beforeProcess
+            $recovered = $true
+        } catch {
+            $recovered = $false
+        }
+        return [pscustomobject]@{
+            Ok = $false
+            Reason = $_.Exception.Message
+            TransactionRecovered = $recovered
+        }
+    }
+}
+
+function Remove-OcxPathRegistration {
+    <#
+    Remove only a registration proven to belong to this build. The exact shim
+    bytes are the ownership marker; a missing or edited shim is never a target.
+    PATH changes, shim removal, and empty-directory removal are one transaction
+    with bounded, explicit rollback. No recursive deletion is used.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BinDir,
+        [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$ShimPath,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$ExpectedShimContent,
+        [scriptblock]$ReadUserPath = { [Environment]::GetEnvironmentVariable("Path", "User") },
+        [scriptblock]$WriteUserPath = { param([string]$Path) [Environment]::SetEnvironmentVariable("Path", $Path, "User") },
+        [scriptblock]$ReadProcessPath = { $env:Path },
+        [scriptblock]$WriteProcessPath = { param([string]$Path) $env:Path = $Path },
+        [scriptblock]$ReadShim = { if (Test-Path -LiteralPath $ShimPath -PathType Leaf) { [pscustomobject]@{ Exists = $true; Content = [IO.File]::ReadAllText($ShimPath) } } else { [pscustomobject]@{ Exists = $false; Content = $null } } },
+        [scriptblock]$WriteShim = { param([string]$Content) [IO.File]::WriteAllText($ShimPath, $Content, [Text.UTF8Encoding]::new($false)) },
+        [scriptblock]$RemoveShim = { Remove-Item -LiteralPath $ShimPath -Force },
+        [scriptblock]$TestDirectory = { Test-Path -LiteralPath $BinDir -PathType Container },
+        [scriptblock]$GetDirectoryEntries = { Get-ChildItem -LiteralPath $BinDir -Force },
+        [scriptblock]$RemoveDirectory = { Remove-Item -LiteralPath $BinDir -Force },
+        [scriptblock]$CreateDirectory = { [IO.Directory]::CreateDirectory($BinDir) | Out-Null }
+    )
+
+    $shim = & $ReadShim
+    if (-not $shim.Exists) {
+        return [pscustomobject]@{ Ok = $true; Owned = $false; Removed = $false; Reason = "the stable ocx shim does not exist" }
+    }
+    if ([string]$shim.Content -cne $ExpectedShimContent) {
+        return [pscustomobject]@{ Ok = $true; Owned = $false; Removed = $false; Reason = "the stable ocx shim is not owned by this install" }
+    }
+
+    $beforeUser = [string](& $ReadUserPath)
+    $beforeProcess = [string](& $ReadProcessPath)
+    $beforeShim = [string]$shim.Content
+    $beforeDir = [bool](& $TestDirectory)
+    $userChanged = $false
+    $processChanged = $false
+    $dirRemoved = $false
+    $ownershipLost = $false
+    try {
+        $normalizedBin = Normalize-WindowsPathEntry $BinDir
+        $userEntries = if ([string]::IsNullOrWhiteSpace($beforeUser)) { @() } else { @($beforeUser -split ";") }
+        $newUserEntries = @($userEntries | Where-Object { (Normalize-WindowsPathEntry $_) -ine $normalizedBin })
+        $newUser = $newUserEntries -join ";"
+        if ($newUser -cne $beforeUser) {
+            & $WriteUserPath $newUser
+            $userChanged = $true
+        }
+
+        $processEntries = if ([string]::IsNullOrWhiteSpace($beforeProcess)) { @() } else { @($beforeProcess -split ";") }
+        $newProcessEntries = @($processEntries | Where-Object { (Normalize-WindowsPathEntry $_) -ine $normalizedBin })
+        $newProcess = $newProcessEntries -join ";"
+        if ($newProcess -cne $beforeProcess) {
+            & $WriteProcessPath $newProcess
+            $processChanged = $true
+        }
+
+        # Re-read immediately before deletion so a concurrent update or user
+        # edit cannot turn an ownership proof from an earlier read into a
+        # deletion of somebody else's replacement shim.
+        $latestShim = & $ReadShim
+        if (-not $latestShim.Exists -or [string]$latestShim.Content -cne $ExpectedShimContent) {
+            $ownershipLost = $true
+            throw "the stable ocx shim changed during uninstall; refusing cleanup"
+        }
+        & $RemoveShim
+        if (& $TestDirectory) {
+            $children = @(& $GetDirectoryEntries)
+            if ($children.Count -eq 0) {
+                & $RemoveDirectory
+                $dirRemoved = $true
+            }
+        }
+        return [pscustomobject]@{
+            Ok = $true; Owned = $true; Removed = $true
+            UserPathChanged = $userChanged; ProcessPathChanged = $processChanged; StableDirRemoved = $dirRemoved
+            TransactionRecovered = $false
+        }
+    } catch {
+        $recovered = $true
+        try {
+            if ($userChanged) { & $WriteUserPath $beforeUser }
+            if ($processChanged) { & $WriteProcessPath $beforeProcess }
+            if (-not $ownershipLost) {
+                if (-not (Test-Path -LiteralPath $ShimPath -PathType Leaf)) { & $CreateDirectory }
+                & $WriteShim $beforeShim
+            }
+        } catch {
+            $recovered = $false
+        }
+        return [pscustomobject]@{
+            Ok = $false; Owned = $true; Removed = $false; Reason = $_.Exception.Message
+            TransactionRecovered = $recovered
+        }
+    }
+}
+
 function Get-OcxCommandPaths {
     <#
     .SYNOPSIS
@@ -128,14 +287,15 @@ function Get-OcxCommandPaths {
     shell, an npm script, or a CI runner would never invoke — which would
     report a "collision" that does not actually exist for anything other than
     this one interactive session. Walking PATH by hand and testing each
-    directory for `ocx.cmd` / `ocx.exe` / `ocx` (PATHEXT order) answers the
+    directory for `ocx` plus the actual PATHEXT suffixes answers the
     question this script actually needs: which file does this fork's shim
     have to beat to be the one that runs.
     #>
     param(
         [AllowNull()]
         [string]$PathValue,
-        [string[]]$Extensions = @(".cmd", ".exe", ""),
+        [string]$PathextValue = $env:PATHEXT,
+        [string[]]$Extensions,
         [scriptblock]$TestFile = {
             param([string]$Path)
             Test-Path -LiteralPath $Path -PathType Leaf
@@ -151,6 +311,10 @@ function Get-OcxCommandPaths {
     # in Resolve-OcxPathCollision below misfire. `,$found` forces the array to
     # survive the return intact at every length.
     if ([string]::IsNullOrWhiteSpace($PathValue)) { return ,$found }
+    if (-not $Extensions -or $Extensions.Count -eq 0) {
+        $Extensions = @($PathextValue -split ";" | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+        if (-not $Extensions -or $Extensions.Count -eq 0) { $Extensions = @(".com", ".exe", ".bat", ".cmd") }
+    }
 
     foreach ($dir in ($PathValue -split ";")) {
         $trimmed = $dir.Trim()

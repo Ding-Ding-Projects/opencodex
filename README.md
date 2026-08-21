@@ -19,6 +19,13 @@ On Windows, `scripts/install.ps1` also repairs the current user's PATH using the
 reports that `ocx` is not recognized, add that exact prefix to the user PATH and open a new PowerShell
 window before retrying.
 
+The Windows desktop installer uses a stable `cli-bin\ocx.cmd` shim beside its Squirrel `Update.exe`
+and regenerates that shim on install and update. The shim scopes its child-only runtime environment,
+so invoking `ocx` does not change the caller's environment. Final uninstall removes only the exact
+user-PATH entry and shim bytes owned by this installation; edited shims, unrelated PATH entries,
+non-empty data, and machine PATH are preserved. The obsolete-version update event intentionally leaves
+the shared shim in place for the incoming version.
+
 <table align="center">
   <tr>
     <td width="50%" align="center">

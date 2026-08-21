@@ -216,6 +216,114 @@ describe("install scripts", () => {
     ]);
   });
 
+  test.skipIf(process.platform !== "win32")("Get-OcxCommandPaths follows the supplied PATHEXT order across all executable suffixes", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $files = @('C:\\Tools\\ocx.com', 'C:\\Tools\\ocx.exe', 'C:\\Tools\\ocx.bat', 'C:\\Tools\\ocx.cmd')
+      $found = Get-OcxCommandPaths -PathValue 'C:\\Tools' -PathextValue '.COM;.EXE;.BAT;.CMD' -TestFile { param($p) $files -contains $p }
+      ConvertTo-Json -InputObject $found -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual(["C:\\Tools\\ocx.com"]);
+  });
+
+  test.skipIf(process.platform !== "win32")("desktop PATH repair exposes a transaction rollback instead of false success", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Other'; Process = 'C:\\Other'; Writes = 0 }
+      $result = Add-DesktopCliPath -BinDir 'C:\\Stable\\cli-bin' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p; $state.Writes++ } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p; $state.Writes++ } -ReadMachinePath { '' } -ResolvedOcxPaths @() -ForceFailure
+      [pscustomobject]@{ Ok = $result.Ok; Recovered = $result.TransactionRecovered; User = $state.User; Process = $state.Process } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Recovered: true, User: "C:\\Other", Process: "C:\\Other" });
+  });
+
+  test.skipIf(process.platform !== "win32")("uninstall removes only an exact owned shim and its exact user PATH entry", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Other;C:\\Stable\\cli-bin;C:\\Data'; Process = 'C:\\Stable\\cli-bin;C:\\Other'; Shim = '@echo off'; ShimExists = $true; DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent '@echo off' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
+      [pscustomobject]@{ Ok = $result.Ok; Owned = $result.Owned; User = $state.User; Process = $state.Process; ShimExists = $state.ShimExists; DirExists = $state.DirExists } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: true, Owned: true, User: "C:\\Other;C:\\Data", Process: "C:\\Other", ShimExists: false, DirExists: false });
+  });
+
+  test.skipIf(process.platform !== "win32")("uninstall preserves an edited shim and every PATH/data entry", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Other;C:\\Stable\\cli-bin;C:\\Data'; Process = 'C:\\Stable\\cli-bin;C:\\Other'; Shim = 'user-owned'; ShimExists = $true; DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { $state.DirExists = $false }
+      [pscustomobject]@{ Ok = $result.Ok; Owned = $result.Owned; User = $state.User; Process = $state.Process; Shim = $state.Shim; ShimExists = $state.ShimExists; DirExists = $state.DirExists } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: true, Owned: false, User: "C:\\Other;C:\\Stable\\cli-bin;C:\\Data", Process: "C:\\Stable\\cli-bin;C:\\Other", Shim: "user-owned", ShimExists: true, DirExists: true });
+  });
+
+  test.skipIf(process.platform !== "win32")("uninstall keeps a stable directory that contains unrelated data", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Stable\\cli-bin'; Process = 'C:\\Stable\\cli-bin'; Shim = 'generated'; ShimExists = $true; DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @('unrelated-data.json') } -RemoveDirectory { $state.DirExists = $false }
+      [pscustomobject]@{ Ok = $result.Ok; Removed = $result.Removed; DirRemoved = $result.StableDirRemoved; DirExists = $state.DirExists } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: true, Removed: true, DirRemoved: false, DirExists: true });
+  });
+
+  test.skipIf(process.platform !== "win32")("uninstall rolls PATH and shim back when stable-directory removal fails", async () => {
+    const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
+    const escapedPath = scriptPath.replace(/'/g, "''");
+    const probe = `
+      . '${escapedPath}'
+      $state = @{ User = 'C:\\Other;C:\\Stable\\cli-bin'; Process = 'C:\\Stable\\cli-bin;C:\\Other'; Shim = 'generated'; ShimExists = $true; DirExists = $true }
+      $result = Remove-OcxPathRegistration -BinDir 'C:\\Stable\\cli-bin' -ShimPath 'C:\\Stable\\cli-bin\\ocx.cmd' -ExpectedShimContent 'generated' -ReadUserPath { $state.User } -WriteUserPath { param($p) $state.User = $p } -ReadProcessPath { $state.Process } -WriteProcessPath { param($p) $state.Process = $p } -ReadShim { [pscustomobject]@{ Exists = $state.ShimExists; Content = $state.Shim } } -WriteShim { param($p) $state.Shim = $p; $state.ShimExists = $true } -RemoveShim { $state.ShimExists = $false } -TestDirectory { $state.DirExists } -GetDirectoryEntries { @() } -RemoveDirectory { throw 'sharing violation' } -CreateDirectory { $state.DirExists = $true }
+      [pscustomobject]@{ Ok = $result.Ok; Recovered = $result.TransactionRecovered; User = $state.User; Process = $state.Process; Shim = $state.Shim; ShimExists = $state.ShimExists } | ConvertTo-Json -Compress
+    `;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({ Ok: false, Recovered: true, User: "C:\\Other;C:\\Stable\\cli-bin", Process: "C:\\Stable\\cli-bin;C:\\Other", Shim: "generated", ShimExists: true });
+  });
+
   test.skipIf(process.platform !== "win32")("Get-OcxCommandPaths returns nothing when no directory has an ocx binary", async () => {
     const scriptPath = fileURLToPath(new URL("scripts/install-path.ps1", root));
     const escapedPath = scriptPath.replace(/'/g, "''");
