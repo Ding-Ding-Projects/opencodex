@@ -119,6 +119,18 @@ Get-Command ocx
 > protected or npm was installed for all users, use a user-owned Node/npm installation rather than
 > granting the installer machine-wide access.
 
+### Windows desktop identity and icon
+
+The packaged Windows desktop shell presents the product as **OpenCodex**. Its original mark is
+available as a deterministic, content-addressed multi-resolution ICO at
+[`https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico`](https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico), which Squirrel uses for the
+Add/Remove Programs entry. The filename is immutable by name: the suffix is the full SHA-256 of
+the ICO bytes, so a changed mark receives a new filename. The `com.opencodex.desktop` app id, `opencodex` executable and
+shortcut target, `opencodex-desktop` update-feed name, npm package name, and `.opencodex` data
+identity remain stable when the display capitalization is presented correctly. Code signing stays
+disabled by policy; the installer may therefore show the operating system's unknown-publisher or
+SmartScreen warning.
+
 ### Release channels
 
 The stable `latest` channel already includes GPT-5.6 Sol/Terra/Luna catalog support for ChatGPT,

@@ -101,6 +101,17 @@ index and full `.nupkg` update package. Windows may show an Unknown Publisher or
 Release workflows verify the installer is `NotSigned`, fail closed on an incomplete update feed, and
 retain safe installer/feed evidence as a GitHub Actions artifact even when a later step fails.
 
+The packaged Windows desktop shell presents the product as **OpenCodex**. Its committed original
+mark is emitted as a deterministic multi-resolution, content-addressed
+`assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico`; the same
+bytes are served at
+`https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico` for Squirrel's Add/Remove Programs icon. The
+`com.opencodex.desktop` app id, `opencodex` executable/shortcut target, `opencodex-desktop` update
+feed name, npm package name, and `.opencodex` data identity remain stable across that presentation
+change. The filename is immutable-by-name: its 64-character suffix is the full SHA-256 of the ICO
+bytes, and a changed mark must receive a new filename. The icon generator and its round-trip
+validation are `scripts/generate-windows-icon.mjs`.
+
 ## Quick start
 
 ```bash

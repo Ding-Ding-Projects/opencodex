@@ -9,7 +9,10 @@
 electronVersion: 43.2.0
 
 appId: com.opencodex.desktop
-productName: opencodex
+productName: OpenCodex
+# Keep the executable, shortcut target, and Squirrel identity stable while the
+# human-facing product name uses the proper OpenCodex capitalization.
+executableName: opencodex
 copyright: MIT
 
 # The published npm package keeps its own `name` and `main`; overriding them only
@@ -82,7 +85,7 @@ win:
   target:
     - target: squirrel
       arch: [x64]
-  icon: gui/public/logo.png
+  icon: assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico
   # Code signing is permanently disabled. Keep all three controls explicit so
   # neither electron-builder nor the Squirrel target can discover or invoke a
   # signer when a developer machine happens to have credentials installed.
@@ -124,8 +127,11 @@ squirrelWindows:
   # No .msi: it is a second artifact with a second update path and nothing here
   # needs Group Policy deployment.
   msi: false
-  # `iconUrl` is deliberately unset. It is the Add/Remove Programs icon and must
-  # be a live https URL to a real .ico — this repo ships only a PNG, and pointing
-  # at a URL that 404s puts a broken icon in the user's control panel forever.
-  # electron-builder falls back to its own default, which is honest about being a
-  # default. Set this once a hosted .ico exists.
+  # Keep the package/update-feed identity stable even though productName is the
+  # correctly presented OpenCodex label. This is the name Squirrel uses for the
+  # package and feed, not a second display-name setting.
+  name: opencodex-desktop
+  # Add/Remove Programs reads this URL directly. It must be immutable public
+  # HTTPS content, not a mutable remote default or a path that only exists in a
+  # developer checkout. The docs-site publishes the byte-identical ICO.
+  iconUrl: https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico
