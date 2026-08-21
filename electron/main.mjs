@@ -748,6 +748,14 @@ function buildAppMenu() {
 app.on("second-instance", showWindow);
 
 app.whenReady().then(async () => {
+  // Register the recovery and updater backend before proxy startup. A proxy
+  // startup failure is recoverable from the desktop shell and must not erase
+  // update state or make the manual retry channels disappear.
+  registerWindowIpc();
+  startDesktopUpdater();
+  buildAppMenu();
+  buildTray();
+
   // A login-item start goes to the tray with no window, so there is nobody to
   // answer a modal. It takes the old behaviour — attach and carry on — and
   // *remembers* that it did, so the question is asked the first time a window is
@@ -760,15 +768,12 @@ app.whenReady().then(async () => {
       : {});
     proxyPort = started.port;
   } catch (error) {
-    dialog.showErrorBox("opencodex could not start", String(error?.message ?? error));
-    app.quit();
-    return;
+    dialog.showErrorBox(
+      "opencodex could not start",
+      `${String(error?.message ?? error)}\n\nThe proxy startup failed; keeping the desktop recovery shell alive so you can retry.`,
+    );
   }
 
-  registerWindowIpc();
-  startDesktopUpdater();
-  buildAppMenu();
-  buildTray();
   // `--hidden` is what the login item passes, so an auto-start boots to the tray.
   if (!process.argv.includes("--hidden")) createWindow(proxyPort);
 });

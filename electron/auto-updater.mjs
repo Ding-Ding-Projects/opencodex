@@ -5,11 +5,6 @@ export const DEFAULT_DESKTOP_UPDATE_FEED =
   "https://update.electronjs.org/Ding-Ding-Projects/opencodex/win32-x64/";
 
 const ALLOWED_FEED_HOSTS = new Set(["github.com", "update.electronjs.org"]);
-const ALLOWED_FEED_PREFIXES = [
-  "/Ding-Ding-Projects/opencodex/win32-x64/",
-  "/Ding-Ding-Projects/opencodex/releases/latest/download/",
-  "/Ding-Ding-Projects/opencodex/releases/download/",
-];
 const STATUS = new Set([
   "current",
   "checking",
@@ -29,16 +24,39 @@ const STATUS = new Set([
  * typo cannot turn the updater into an arbitrary HTTPS fetcher.
  */
 export function assertAllowedDesktopFeed(feedUrl) {
+  if (typeof feedUrl !== "string" || feedUrl.length === 0 || feedUrl.trim() !== feedUrl || feedUrl.includes("%")) {
+    throw new Error("Desktop update feed must be HTTPS allowlisted URL");
+  }
   let parsed;
   try {
     parsed = new URL(feedUrl);
   } catch {
     throw new Error("Desktop update feed must be HTTPS allowlisted URL");
   }
+  const authority = /^https:\/\/([^/?#]+)\//.exec(feedUrl)?.[1] ?? "";
+  const rawPath = /^https:\/\/[^/?#]+(\/[^?#]*)$/.exec(feedUrl)?.[1] ?? "";
+  const hostname = parsed.hostname.toLowerCase();
+  const githubDownloadPath = /^\/Ding-Ding-Projects\/opencodex\/releases\/download\/[^/]+\/$/;
+  const electronUpdatePath = /^\/Ding-Ding-Projects\/opencodex\/win32-x64(?:\/[^/]+)?\/?$/;
+  const exactShape =
+    (hostname === "update.electronjs.org" && electronUpdatePath.test(parsed.pathname)) ||
+    (hostname === "github.com" && (
+      parsed.pathname === "/Ding-Ding-Projects/opencodex/releases/latest/download/" ||
+      githubDownloadPath.test(parsed.pathname)
+    ));
   if (
     parsed.protocol !== "https:" ||
-    !ALLOWED_FEED_HOSTS.has(parsed.hostname.toLowerCase()) ||
-    !ALLOWED_FEED_PREFIXES.some(prefix => parsed.pathname.startsWith(prefix))
+    !ALLOWED_FEED_HOSTS.has(hostname) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    !authority ||
+    authority.includes("@") ||
+    authority.includes(":") ||
+    !rawPath ||
+    parsed.pathname !== rawPath ||
+    !exactShape
   ) {
     throw new Error("Desktop update feed must be HTTPS allowlisted URL");
   }
@@ -171,12 +189,30 @@ export function createDesktopAutoUpdater({
     return { ...state };
   };
 
+  const schedule = () => {
+    if (timer !== null) return;
+    timer = setIntervalFn(() => check().catch(error => publish({
+      status: errorStatus(error),
+      error: String(error?.message ?? error),
+    })), intervalMs);
+  };
+
   const start = async () => {
     if (!packaged) return { ...state };
     if (started) return { ...state };
-    started = true;
-    await check();
-    timer = setIntervalFn(() => { void check().catch(error => publish({ status: errorStatus(error), error: String(error?.message ?? error) })); }, intervalMs);
+    let initialError = null;
+    try {
+      await check();
+      started = true;
+    } catch (error) {
+      // Keep the retry loop alive even when feed setup or the first check throws.
+      // A transient startup failure must not permanently disable manual retry.
+      initialError = error;
+      started = false;
+      publish({ status: errorStatus(error), error: String(error?.message ?? error) });
+    }
+    schedule();
+    if (initialError) throw initialError;
     return { ...state };
   };
 
