@@ -1081,11 +1081,12 @@ export async function handleCodexAuthAPI(
     if (!isCodexResetCreditOperationId(body.operationId)) return jsonResponse({ error: "operationId must be a lowercase UUIDv4" }, 400);
     const operationId = body.operationId;
 
+    let identity: { accountId: string; chatgptAccountId: string; operationId: string } | undefined;
     try {
       const auth = await resolveResetCreditAuth(getRuntimeConfig(config), body.accountId);
       if (!auth.ok) return auth.response;
 
-      const identity = {
+      identity = {
         accountId: body.accountId,
         chatgptAccountId: auth.chatgptAccountId,
         operationId,
@@ -1115,12 +1116,22 @@ export async function handleCodexAuthAPI(
         markManualResetCreditOperationAmbiguous(identity);
         return jsonResponse({ error: `Upstream error ${resp.status}; operation outcome is ambiguous`, code: "ambiguous", operationId: idempotencyKey }, 502);
       }
-      const result = safeResetCreditConsumeDto(await resp.json());
+      let result: { code: string };
+      try {
+        result = safeResetCreditConsumeDto(await resp.json());
+      } catch {
+        markManualResetCreditOperationAmbiguous(identity);
+        return jsonResponse({ error: "Unable to read reset-credit outcome; operation outcome is ambiguous", code: "ambiguous", operationId: idempotencyKey }, 502);
+      }
       if (!["reset", "already_redeemed", "nothing_to_reset", "no_credit"].includes(result.code)) {
         markManualResetCreditOperationAmbiguous(identity);
         return jsonResponse({ error: "Upstream returned an invalid reset-credit outcome", code: "ambiguous", operationId: idempotencyKey }, 502);
       }
-      settleManualResetCreditOperation(identity, result.code as "reset" | "already_redeemed" | "nothing_to_reset" | "no_credit");
+      const settled = settleManualResetCreditOperation(identity, result.code as "reset" | "already_redeemed" | "nothing_to_reset" | "no_credit");
+      if (settled.kind !== "updated") {
+        markManualResetCreditOperationAmbiguous(identity);
+        return jsonResponse({ error: "Reset-credit outcome could not be durably settled; operation outcome is ambiguous", code: "ambiguous", operationId: idempotencyKey }, 503);
+      }
       // After a successful redeem (or an idempotent already_redeemed), refresh WHAM usage
       // and return remaining only when that refresh freshly parsed available_count.
       // Do not fall back to a preserved cached resetCredits (failed/omitted refresh).
@@ -1142,6 +1153,10 @@ export async function handleCodexAuthAPI(
       }
       return jsonResponse({ ...result, operationId: idempotencyKey });
     } catch (e) {
+      if (identity) {
+        markManualResetCreditOperationAmbiguous(identity);
+        return jsonResponse({ error: "Reset-credit dispatch outcome is ambiguous", code: "ambiguous", operationId: identity.operationId }, 502);
+      }
       return jsonResponse({ error: e instanceof Error ? e.message : "Reset credit consume failed" }, 500);
     }
   }

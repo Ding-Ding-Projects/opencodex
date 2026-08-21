@@ -93,6 +93,13 @@ function lockIsStale(path: string): boolean {
   } catch { return true; }
 }
 
+function readLockOwner(path: string): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { owner?: unknown };
+    return typeof parsed.owner === "string" && parsed.owner.length > 0 ? parsed.owner : undefined;
+  } catch { return undefined; }
+}
+
 async function withNativeRefreshLock<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
   const dir = resolveCodexHomeDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -120,17 +127,26 @@ async function withNativeRefreshLock<T>(signal: AbortSignal, run: () => Promise<
   try { return await run(); }
   finally {
     closeSync(fd);
-    try { unlinkSync(path); } catch (error) {
-      if (!(typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT")) throw error;
+    // A successor may acquire the path after this owner closes its descriptor. Re-read
+    // the on-disk owner and remove only our own lock; never unlink a successor's lock.
+    if (readLockOwner(path) === owner) {
+      try { unlinkSync(path); } catch (error) {
+        if (!(typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT")) throw error;
+      }
     }
   }
 }
 
-function persistNativeToken(auth: NativeAuthJson, token: NativeToken, refreshed: { access: string; refresh?: string; idToken?: string; accountId?: string; expires: number }): void {
+/** Test seam for the owner-CAS release contract; production callers use forceRefreshMainAccountToken. */
+export async function withNativeRefreshLockForTests(run: () => Promise<void>): Promise<void> {
+  const signal = AbortSignal.timeout(30_000);
+  await withNativeRefreshLock(signal, run);
+}
+
+function persistNativeToken(auth: NativeAuthJson, token: NativeToken, refreshed: { access: string; refresh?: string; accountId?: string; expires: number }): void {
   const tokens = { ...(auth.tokens ?? {}) };
   tokens.access_token = refreshed.access;
   tokens.refresh_token = refreshed.refresh || token.refreshToken;
-  if (refreshed.idToken) tokens.id_token = refreshed.idToken;
   if (refreshed.accountId || token.accountId) tokens.account_id = refreshed.accountId ?? token.accountId;
   atomicWriteFile(nativeAuthPath(), JSON.stringify({ ...auth, tokens }, null, 2) + "\n");
 }
@@ -152,18 +168,20 @@ export async function forceRefreshMainAccountToken(
     if (rejectedAccessToken && locked.accessToken !== rejectedAccessToken && nativeTokenFresh(locked)) {
       return { accessToken: locked.accessToken, chatgptAccountId: locked.accountId };
     }
+    const lockedBytes = readFileSync(nativeAuthPath());
     const refreshed = await (options.dependencies?.refreshToken ?? refreshChatGPTTokenRaw)(locked.refreshToken, { signal });
-    // External-writer CAS: never overwrite a different auth.json generation.
+    // Whole-file external-writer CAS: no field outside the token object may be lost.
     const latestAuth = readNativeAuth();
     const latest = nativeToken(latestAuth);
-    if (!latestAuth || !latest || latest.refreshToken !== locked.refreshToken || latest.accessToken !== locked.accessToken) {
+    let latestBytes: Buffer;
+    try { latestBytes = readFileSync(nativeAuthPath()); } catch { latestBytes = Buffer.alloc(0); }
+    if (!latestAuth || !latest || !latestBytes.equals(lockedBytes)) {
       if (latest && nativeTokenFresh(latest)) return { accessToken: latest.accessToken, chatgptAccountId: latest.accountId };
       throw new Error("Native Codex credential changed during refresh; retry the request");
     }
     persistNativeToken(lockedAuth, locked, {
       access: refreshed.access,
       refresh: refreshed.refresh,
-      idToken: refreshed.accountId ? undefined : undefined,
       accountId: refreshed.accountId,
       expires: refreshed.expires,
     });

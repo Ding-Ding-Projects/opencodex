@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import * as z from "zod/v4";
@@ -1982,6 +1982,35 @@ export function backupInvalidConfig(configPath: string): string | null {
 // Shared SQLite path used by durable reset-credit operations. These helpers are intentionally
 // tiny in this compatibility line; the ledger owns its own transaction and never stores secrets.
 let configMutationDepth = 0;
+function assertNoConfigMutationLinkComponents(target: string): void {
+  const absolute = resolve(target);
+  const root = resolve(parsePathRoot(absolute));
+  const remainder = absolute.slice(root.length).split(/[\\/]+/u).filter(Boolean);
+  let current = root;
+  for (const component of remainder) {
+    current = join(current, component);
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) throw new Error("config-mutation path contains a symbolic link");
+      if (process.platform === "win32") {
+        try { readlinkSync(current); throw new Error("config-mutation path contains a reparse point"); } catch (error) {
+          if (error instanceof Error && /config-mutation path contains/u.test(error.message)) throw error;
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && /config-mutation path contains/u.test(error.message)) throw error;
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+      if (code !== "ENOENT") throw error;
+      // Missing descendants are safe to create after every existing ancestor was checked.
+    }
+  }
+}
+function parsePathRoot(absolute: string): string {
+  const match = absolute.match(/^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]?|[\\/])/u);
+  return match?.[0] ?? "";
+}
 export class NestedConfigMutationError extends Error {
   constructor() {
     super("prepareConfigMutationDatabasePathForWrite must not run inside withConfigMutationLockSync");
@@ -1991,8 +2020,11 @@ export class NestedConfigMutationError extends Error {
 export function prepareConfigMutationDatabasePathForWrite(): string {
   if (configMutationDepth > 0) throw new NestedConfigMutationError();
   const dir = getConfigDir();
+  assertNoConfigMutationLinkComponents(dir);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-  return join(dir, "config-mutation.sqlite");
+  const databasePath = join(dir, "config-mutation.sqlite");
+  assertNoConfigMutationLinkComponents(databasePath);
+  return databasePath;
 }
 export function withConfigMutationLockSync<T>(fn: () => T): T {
   configMutationDepth += 1;

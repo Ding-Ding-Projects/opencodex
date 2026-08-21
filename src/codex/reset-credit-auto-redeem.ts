@@ -32,7 +32,9 @@ export class ResetCreditAutoRedeemScheduler {
   readonly #deps: ResetCreditAutoRedeemDependencies;
   readonly #leadTimeMs: number;
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
-  readonly #inFlight = new Map<string, Promise<void>>();
+  readonly #inFlight = new Map<string, { epoch: number; promise: Promise<void> }>();
+  readonly #epochs = new Map<string, number>();
+  #disposed = false;
 
   constructor(deps: ResetCreditAutoRedeemDependencies, leadTimeMs = DEFAULT_LEAD_TIME_MS) {
     if (!Number.isSafeInteger(leadTimeMs) || leadTimeMs < 0 || leadTimeMs > MAX_LEAD_TIME_MS) {
@@ -43,10 +45,14 @@ export class ResetCreditAutoRedeemScheduler {
   }
 
   schedule(state: ResetCreditAutoRedeemState): void {
-    if (!this.#deps.isEnabled() || !state.accountId || !state.generation || state.available <= 0
-      || !Number.isFinite(state.expiresAt)) return;
+    if (!state.accountId || !state.generation) return;
+    if (!this.#deps.isEnabled() || state.available <= 0 || !Number.isFinite(state.expiresAt)) {
+      this.cancel(state.accountId);
+      return;
+    }
     const key = `${state.accountId}\0${state.generation}`;
-    this.cancel(state.accountId, state.generation);
+    this.cancel(state.accountId);
+    const epoch = this.#epochs.get(state.accountId) ?? 0;
     const prior = this.#deps.loadIntent?.(state.accountId);
     const intent: ResetCreditAutoRedeemIntent = {
       accountId: state.accountId,
@@ -58,17 +64,18 @@ export class ResetCreditAutoRedeemScheduler {
     };
     this.#deps.saveIntent?.(intent);
     const delay = Math.max(0, state.expiresAt - this.now() - this.#leadTimeMs);
-    this.#timers.set(key, setTimeout(() => { void this.#run(intent); }, delay));
+    this.#timers.set(key, setTimeout(() => { void this.#run(intent, epoch); }, delay));
   }
 
   recover(accountId: string): void {
     if (!this.#deps.isEnabled()) return;
     const intent = this.#deps.loadIntent?.(accountId);
     if (!intent) return;
-    void this.#run(intent);
+    void this.#run(intent, this.#epochs.get(accountId) ?? 0);
   }
 
   cancel(accountId: string, generation?: string): void {
+    this.#epochs.set(accountId, (this.#epochs.get(accountId) ?? 0) + 1);
     for (const [key, timer] of this.#timers) {
       if (key.startsWith(`${accountId}\0`) && (generation === undefined || key === `${accountId}\0${generation}`)) {
         clearTimeout(timer);
@@ -78,29 +85,48 @@ export class ResetCreditAutoRedeemScheduler {
   }
 
   dispose(): void {
+    this.#disposed = true;
+    for (const accountId of this.#epochs.keys()) this.#epochs.set(accountId, (this.#epochs.get(accountId) ?? 0) + 1);
+    for (const key of this.#timers.keys()) {
+      const accountId = key.split("\0", 1)[0]!;
+      this.#epochs.set(accountId, (this.#epochs.get(accountId) ?? 0) + 1);
+    }
     for (const timer of this.#timers.values()) clearTimeout(timer);
     this.#timers.clear();
   }
 
   private now(): number { return this.#deps.now?.() ?? Date.now(); }
 
-  async #run(intent: ResetCreditAutoRedeemIntent): Promise<void> {
-    if (!this.#deps.isEnabled()) return;
+  async #run(intent: ResetCreditAutoRedeemIntent, epoch: number): Promise<void> {
+    if (!this.#isCurrent(intent, epoch)) return;
     const key = `${intent.accountId}\0${intent.generation}`;
     const existing = this.#inFlight.get(key);
-    if (existing) return existing;
+    if (existing?.epoch === epoch) return existing.promise;
     const flight = (async () => {
       const fresh = await this.#deps.refreshAuthoritative(intent.accountId);
+      if (!this.#isCurrent(intent, epoch)) return;
       const now = this.now();
       if (!fresh || fresh.accountId !== intent.accountId || fresh.generation !== intent.generation
         || fresh.available <= 0 || !Number.isFinite(fresh.expiresAt)
         || fresh.expiresAt !== intent.expiresAt || now < fresh.expiresAt - this.#leadTimeMs || now >= fresh.expiresAt) return;
       const terminal = await this.#deps.consume(intent);
-      if (terminal === "reset" || terminal === "already_redeemed" || terminal === "nothing_to_reset" || terminal === "no_credit") {
+      if (!this.#isCurrent(intent, epoch)) return;
+      const persisted = this.#deps.loadIntent?.(intent.accountId);
+      const sameIntent = this.#deps.loadIntent === undefined
+        || (!!persisted && persisted.operationId === intent.operationId
+          && persisted.generation === intent.generation
+          && persisted.expiresAt === intent.expiresAt);
+      if (sameIntent && (terminal === "reset" || terminal === "already_redeemed" || terminal === "nothing_to_reset" || terminal === "no_credit")) {
         this.#deps.clearIntent?.(intent);
       }
     })();
-    this.#inFlight.set(key, flight);
-    try { await flight; } finally { this.#inFlight.delete(key); }
+    this.#inFlight.set(key, { epoch, promise: flight });
+    try { await flight; } finally {
+      if (this.#inFlight.get(key)?.promise === flight) this.#inFlight.delete(key);
+    }
+  }
+
+  #isCurrent(intent: ResetCreditAutoRedeemIntent, epoch: number): boolean {
+    return !this.#disposed && this.#deps.isEnabled() && this.#epochs.get(intent.accountId) === epoch;
   }
 }

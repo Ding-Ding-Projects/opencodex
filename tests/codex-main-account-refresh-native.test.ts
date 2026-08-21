@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getValidMainAccountToken } from "../src/codex/main-account";
+import { getValidMainAccountToken, withNativeRefreshLockForTests } from "../src/codex/main-account";
 import type { OAuthCredentials } from "../src/oauth/types";
 import { removeTempDir } from "./helpers/temp-dir";
 
@@ -15,9 +15,9 @@ function jwt(exp: number, accountId = "chatgpt-native"): string {
   return `${enc({ alg: "none", typ: "JWT" })}.${enc({ exp, chatgpt_account_id: accountId })}.sig`;
 }
 
-function writeAuth(accessToken: string, refreshToken?: string, accountId = "chatgpt-native"): void {
+function writeAuth(accessToken: string, refreshToken?: string, accountId = "chatgpt-native", extra: Record<string, unknown> = {}): void {
   mkdirSync(home, { recursive: true });
-  writeFileSync(join(home, "auth.json"), JSON.stringify({ tokens: {
+  writeFileSync(join(home, "auth.json"), JSON.stringify({ ...extra, tokens: {
     access_token: accessToken,
     ...(refreshToken ? { refresh_token: refreshToken } : {}),
     account_id: accountId,
@@ -68,11 +68,14 @@ describe("native main auth.json refresh", () => {
       },
     } });
     while (!started) await Bun.sleep(1);
-    writeAuth(jwt(Math.floor(Date.now() / 1000) + 3600, "external-refresh"), "external-refresh", "external-writer");
+    writeAuth(jwt(Math.floor(Date.now() / 1000) + 3600, "external-refresh"), "external-refresh", "external-writer", { external_writer_field: "preserve-me" });
     release();
     const result = await pending;
     expect(result?.chatgptAccountId).toBe("external-writer");
-    expect(JSON.parse(readFileSync(join(home, "auth.json"), "utf8"))).toMatchObject({ tokens: { refresh_token: "external-refresh" } });
+    expect(JSON.parse(readFileSync(join(home, "auth.json"), "utf8"))).toMatchObject({
+      external_writer_field: "preserve-me",
+      tokens: { refresh_token: "external-refresh" },
+    });
   });
 
   test("reclaims an old owner lock without exposing its contents", async () => {
@@ -82,6 +85,16 @@ describe("native main auth.json refresh", () => {
       refreshToken: async (): Promise<OAuthCredentials> => ({ access: jwt(Math.floor(Date.now() / 1000) + 3600), refresh: "native-refresh-new", expires: Date.now() + 3600000, accountId: "chatgpt-native" }),
     } });
     expect(result?.chatgptAccountId).toBe("chatgpt-native");
+  });
+
+  test("does not unlink a successor lock created before owner release", async () => {
+    const lockPath = join(home, "auth.json.refresh.lock");
+    await withNativeRefreshLockForTests(async () => {
+      unlinkSync(lockPath);
+      writeFileSync(lockPath, JSON.stringify({ owner: "successor-owner", pid: process.pid, acquiredAt: Date.now() }));
+    });
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ owner: "successor-owner" });
+    unlinkSync(lockPath);
   });
 
   test("does not dispatch when auth.json has no refresh token", async () => {

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
@@ -175,6 +175,25 @@ describe("Codex reset-credit operation ledger", () => {
     expect(prepareConfigMutationDatabasePathForWrite()).toBe(databasePath());
     expect(() => withConfigMutationLockSync(() => prepareConfigMutationDatabasePathForWrite()))
       .toThrow(NestedConfigMutationError);
+  });
+
+  test("rejects a symlinked config-mutation root before SQLite open", () => {
+    const outside = mkdtempSync(join(tmpdir(), "ocx-reset-credit-link-target-"));
+    const link = join(isolatedHome!, "linked-config-home");
+    try {
+      symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      rmSync(outside, { recursive: true, force: true });
+      return;
+    }
+    const previous = process.env.OPENCODEX_HOME;
+    process.env.OPENCODEX_HOME = link;
+    try {
+      expect(() => prepareConfigMutationDatabasePathForWrite()).toThrow(/symbolic link|reparse point/u);
+    } finally {
+      process.env.OPENCODEX_HOME = previous;
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   test("migrates the exact prior recovery schema without changing durable state", () => {

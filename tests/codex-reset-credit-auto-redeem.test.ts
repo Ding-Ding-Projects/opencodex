@@ -60,4 +60,70 @@ describe("pre-expiry reset-credit auto redemption", () => {
     expect(consumes).toBe(1);
     expect(intents.size).toBe(0);
   });
+
+  test("generation cancellation prevents a stale g1 flight from consuming after g2", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const began = new Promise<void>(resolve => { started = resolve; });
+    let consumes = 0;
+    const scheduler = new ResetCreditAutoRedeemScheduler({
+      isEnabled: () => true,
+      refreshAuthoritative: async accountId => {
+        started();
+        await gate;
+        return { ...state, accountId, generation: "g1" };
+      },
+      consume: async () => { consumes++; return "reset"; },
+      now: () => 950,
+    }, 100);
+    schedulers.push(scheduler);
+    scheduler.schedule(state);
+    scheduler.recover(state.accountId);
+    await began;
+    scheduler.schedule({ ...state, generation: "g2" });
+    release();
+    await Bun.sleep(20);
+    expect(consumes).toBe(0);
+  });
+
+  test("dispose invalidates an in-flight refresh before consume", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let consumes = 0;
+    const scheduler = new ResetCreditAutoRedeemScheduler({
+      isEnabled: () => true,
+      refreshAuthoritative: async () => { await gate; return state; },
+      consume: async () => { consumes++; return "reset"; },
+      now: () => 950,
+    }, 100);
+    scheduler.schedule(state);
+    scheduler.recover(state.accountId);
+    scheduler.dispose();
+    release();
+    await Bun.sleep(20);
+    expect(consumes).toBe(0);
+  });
+
+  test("does not clear a newer persisted operation identity", async () => {
+    const local = new Map<string, ResetCreditAutoRedeemIntent>();
+    let cleared = 0;
+    const scheduler = new ResetCreditAutoRedeemScheduler({
+      isEnabled: () => true,
+      refreshAuthoritative: async () => state,
+      consume: async intent => {
+        local.set(intent.accountId, { ...intent, operationId: "newer-operation" });
+        return "reset";
+      },
+      saveIntent: intent => local.set(intent.accountId, intent),
+      loadIntent: accountId => local.get(accountId) ?? null,
+      clearIntent: () => { cleared++; },
+      now: () => 950,
+    }, 100);
+    schedulers.push(scheduler);
+    scheduler.schedule(state);
+    scheduler.recover(state.accountId);
+    await Bun.sleep(20);
+    expect(cleared).toBe(0);
+  });
 });
