@@ -214,8 +214,12 @@ function rowToState(row: TransitionRow | null): CodexTransitionState {
 
   const generation = row.native_generation;
   if (generation === 0) {
-    if (row.current_tx_id !== null || row.history_tx_id !== null
-      || row.history_direction !== null || row.history_authority_snapshot_id !== null) {
+    const adoptionPending = row.history_status === "adoption-pending";
+    const hasAdoptionSchedule = row.history_tx_id !== null
+      && (row.history_direction === "apply" || row.history_direction === "remove")
+      && !!row.history_authority_snapshot_id?.trim();
+    if (row.current_tx_id !== null || (adoptionPending ? !hasAdoptionSchedule : row.history_tx_id !== null
+      || row.history_direction !== null || row.history_authority_snapshot_id !== null)) {
       throw new CodexCoordinatorTransactionError("The initial coordinator row contains transition metadata.");
     }
   } else if (!row.current_tx_id?.trim()

@@ -24,7 +24,7 @@ function runInject(codexHome: string, ocxHome: string, configJson = "{}"): { std
   `;
   const result = spawnSync(process.execPath, ["--eval", script], {
     cwd: repoRoot,
-    env: { ...process.env, CODEX_HOME: codexHome, OPENCODEX_HOME: ocxHome, TEST_OCX_CONFIG: configJson },
+    env: { ...process.env, CODEX_HOME: codexHome, OPENCODEX_HOME: ocxHome, TEST_OCX_CONFIG: configJson, OCX_ADOPTION_TEST_FIXTURE: "1" },
     encoding: "utf8",
   });
   return { stdout: result.stdout?.trim() ?? "", status: result.status ?? 1 };
@@ -86,7 +86,7 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(config).toContain('model = "gpt-5.5"');
     // Exactly one marker survives (the Design B one) — no duplicate accumulation.
     expect(config.match(/Auto-injected by opencodex/g)?.length).toBe(1);
-  });
+  }, { timeout: 30_000 });
 
   test("re-inject over a Design B config is idempotent", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");

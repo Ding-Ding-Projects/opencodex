@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
-import { closeSync, fsyncSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 import * as z from "zod/v4";
 import { bumpConfigGenerationAtPath, bumpCurrentConfigGeneration, initializeConfigGeneration, readConfigGenerationAtPath } from "./codex/generation";
 import type { BumpConfigGeneration, ReadConfigGeneration } from "./codex/convergence-types";
+import { fsyncPath } from "./lib/fsync-path";
 import {
   CODEX_ACCOUNT_NAMESPACE_COMBO_ALIAS_COLLISION_ERROR,
   codexAccountNamespaceForModel,
@@ -1330,14 +1330,6 @@ function configMutationDatabasePath(): string {
   return join(dir, CONFIG_MUTATION_DB_FILENAME);
 }
 
-function fsyncConfigPath(path: string): void {
-  const fd = openSync(path, "r");
-  try { fsyncSync(fd); } catch (error) {
-    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
-    if (code !== "EPERM" && code !== "ENOTSUP") throw error;
-  } finally { closeSync(fd); }
-}
-
 function openConfigMutationDatabase(): Database {
   const finalPath = configMutationDatabasePath();
   if (!existsSync(finalPath)) {
@@ -1356,7 +1348,7 @@ function openConfigMutationDatabase(): Database {
     temp.close();
     try { chmodSync(tempPath, 0o600); } catch { /* Windows ACL helper owns the boundary */ }
     hardenSecretPath(tempPath, { required: true, timeoutMemoKey: tempPath });
-    fsyncConfigPath(tempPath);
+    fsyncPath(tempPath);
     if (process.platform === "win32") {
       const quote = (value: string) => value.replaceAll("'", "''");
       const script = [
@@ -1374,7 +1366,7 @@ function openConfigMutationDatabase(): Database {
         if (code !== "EEXIST") throw error;
       }
     }
-    try { fsyncConfigPath(dirname(finalPath)); } catch { /* parent fsync is unsupported on Windows */ }
+    fsyncPath(dirname(finalPath));
     try { unlinkSync(tempPath); } catch { /* final inode is authoritative */ }
   }
   return new Database(finalPath, { readwrite: true, create: false });

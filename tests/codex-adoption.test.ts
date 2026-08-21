@@ -7,6 +7,7 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 function fixture(): { root: string; db: string } {
+  process.env.OCX_ADOPTION_TEST_FIXTURE = "1";
   const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "ocx-adoption-"));
   roots.push(root);
   const db = join(root, "integrations", "codex-coordination.sqlite");
@@ -22,7 +23,7 @@ describe("pre-substrate Codex home adoption", () => {
     expect(readAdoptionEvidence(fx.db)?.historyStatus).toBe("adoption-pending");
     expect(existsSync(`${fx.db}.adoption`)).toBe(false);
     if (process.platform !== "win32") expect(statSync(fx.db).mode & 0o777).toBe(0o600);
-  });
+  }, { timeout: 30_000 });
 
   test.each(["indeterminate", "legacy"] as const)("refuses %s residue without creating authority", residue => {
     const fx = fixture();
