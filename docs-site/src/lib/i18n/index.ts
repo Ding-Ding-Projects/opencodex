@@ -70,6 +70,8 @@ import {
   type VoiceLang,
 } from "../../../../shared/m3/i18n";
 import { stringsFor, type StringsLocale, type TFn } from "../strings";
+import { applyVocabularyToTemplate, getActiveVocabularyEntries } from "../personal-vocabulary";
+import { isSchoolModeActive, subscribeSchoolMode, syncSchoolModeFromStorage } from "../school-mode";
 import { en } from "./deck";
 import type { UiKey } from "./keys";
 import { ja, ko, ru, yue, zhCn } from "./locales";
@@ -168,6 +170,7 @@ export function modeForContentLocale(locale: DocsLocale): ResolvedMode {
  * and it should not need a DOM to assert.
  */
 export function resolveMode(stored: UiMode, locale: DocsLocale): ResolvedMode {
+  if (isSchoolModeActive()) return "en";
   return stored === "auto" ? modeForContentLocale(locale) : stored;
 }
 
@@ -267,6 +270,27 @@ export function syncLocale(): void {
 
 /* -------------------------------------------------------------- rendering -- */
 
+function effectiveUiState(): {
+  mode: ResolvedMode;
+  funny: FunnyLevels;
+  vocabulary: Readonly<Record<string, string>> | null;
+} {
+  const school = isSchoolModeActive();
+  return {
+    mode: school ? "en" : state.resolved,
+    funny: school ? { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT } : state.funny,
+    vocabulary: school ? null : getActiveVocabularyEntries(),
+  };
+}
+
+function resolveTemplate(key: UiKey, vars?: Vars): string {
+  const effective = effectiveUiState();
+  return fill(
+    applyVocabularyToTemplate(resolver.resolveKey(effective.mode, effective.funny, key), effective.vocabulary),
+    vars,
+  );
+}
+
 /**
  * An unknown key renders as its own last dotted segment.
  *
@@ -280,7 +304,7 @@ function fallback(key: string): string {
 
 /** The joined string. Bilingual renders `English · 廣東話`. */
 export function t(key: UiKey, vars?: Vars): string {
-  const value = resolver.translate(state.resolved, state.funny, key, vars);
+  const value = resolveTemplate(key, vars);
   return value === key ? fallback(key) : value;
 }
 
@@ -290,8 +314,12 @@ export function t(key: UiKey, vars?: Vars): string {
  * whenever the tracks agree, so a caller never prints the same sentence twice.
  */
 export function tParts(key: UiKey, vars?: Vars): { primary: string; secondary: string } {
-  const parts = resolver.bilingualParts(state.resolved, state.funny, key);
-  return { primary: fill(parts.primary, vars), secondary: fill(parts.secondary, vars) };
+  const effective = effectiveUiState();
+  const parts = resolver.bilingualParts(effective.mode, effective.funny, key);
+  return {
+    primary: fill(applyVocabularyToTemplate(parts.primary, effective.vocabulary), vars),
+    secondary: fill(applyVocabularyToTemplate(parts.secondary, effective.vocabulary), vars),
+  };
 }
 
 /**
@@ -300,8 +328,10 @@ export function tParts(key: UiKey, vars?: Vars): { primary: string; secondary: s
  * may not currently be in.
  */
 export function tTrack(track: VoiceLang, level: FunnyLevel, key: UiKey, vars?: Vars): string {
-  const mode: ResolvedMode = track === "yue" ? "yue" : "en";
-  return fill(resolver.resolveTrack(mode, track, level, key), vars);
+  const effective = effectiveUiState();
+  const mode: ResolvedMode = isSchoolModeActive() ? "en" : (track === "yue" ? "yue" : "en");
+  const effectiveLevel = isSchoolModeActive() ? FUNNY_DEFAULT : level;
+  return fill(applyVocabularyToTemplate(resolver.resolveTrack(mode, track, effectiveLevel, key), effective.vocabulary), vars);
 }
 
 function fill(text: string, vars?: Vars): string {
@@ -342,7 +372,15 @@ export function uiTranslator(): TFn {
  */
 export function translatorFor(mode: ResolvedMode, funny: FunnyLevels): TFn {
   return (key, vars) => {
-    const value = resolver.translate(mode, funny, key as UiKey, vars);
+    const school = isSchoolModeActive();
+    const effective = effectiveUiState();
+    const value = fill(
+      applyVocabularyToTemplate(
+        resolver.resolveKey(school ? "en" : mode, school ? { en: FUNNY_DEFAULT, yue: FUNNY_DEFAULT } : funny, key as UiKey),
+        effective.vocabulary,
+      ),
+      vars,
+    );
     return value === key ? fallback(key) : value;
   };
 }
@@ -438,6 +476,11 @@ export function installUiRuntime(): void {
   if (installed || typeof document === "undefined") return;
   installed = true;
 
+  subscribeSchoolMode(() => {
+    commit({ ...state, resolved: resolveMode(state.mode, state.locale) });
+    retranslate();
+  });
+
   document.addEventListener("astro:page-load", () => {
     syncLocale();
     retranslate();
@@ -451,6 +494,8 @@ export function installUiRuntime(): void {
     } else if (event.key === FUNNY_KEY) {
       commit({ ...state, funny: readFunny(FUNNY_KEY) });
       retranslate();
+    } else if (event.key === "ocx-docs:school-mode:v1") {
+      syncSchoolModeFromStorage();
     }
   });
 }

@@ -22,6 +22,8 @@
 
 import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
+import { VOCAB_STORAGE_KEY, resetVocabularyForTests } from "../src/lib/personal-vocabulary";
+import { resetSchoolModeForTests, SCHOOL_MODE_STORAGE_KEY } from "../src/lib/school-mode";
 
 /* The changelog's data module is the only thing between the viewer and a `?raw`
    import Bun cannot resolve, which is exactly why it is a module of its own. */
@@ -82,6 +84,8 @@ afterEach(async () => {
     root = null;
   }
   localStorage.clear();
+  resetVocabularyForTests();
+  resetSchoolModeForTests();
   container?.remove();
 });
 
@@ -207,6 +211,64 @@ describe("the settings page", () => {
     expect(body).not.toContain("No setting matches.");
     expect(body).toContain("on another tab");
     expect(body).toContain("Dim sum");
+  });
+
+  test("shows the local JSON vocabulary picker and its no-file, loaded and clear states", async () => {
+    const { default: Settings } = await import("../src/components/Settings");
+    const { setMode } = await import("../src/lib/i18n");
+    setMode("en");
+    const root = await mount(<Settings />);
+    const picker = root.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(picker).not.toBeNull();
+    expect(picker!.accept).toBe("application/json,.json");
+    expect(text(root)).toContain("No local vocabulary file is active.");
+
+    const candidate = new File(['{"version":1,"entries":{"alpha":"beta"}}'], "neutral.json", { type: "application/json" });
+    await act(async () => {
+      Object.defineProperty(picker!, "files", { configurable: true, value: [candidate] });
+      picker!.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(text(root)).toContain("A validated local vocabulary file is active.");
+    expect(root.querySelector('button')?.getAttribute("type")).toBe("button");
+    expect(text(root)).toContain("Clear local vocabulary");
+
+    await act(async () => {
+      const clear = [...root.querySelectorAll("button")].find(button => text(button) === "Clear local vocabulary");
+      clear?.click();
+    });
+    expect(text(root)).toContain("No local vocabulary file is active.");
+    expect(localStorage.getItem(VOCAB_STORAGE_KEY)).toBeNull();
+  });
+
+  test("School mode removes vocabulary and funny/dim-sum rows from the surface and search, then restores stored vocabulary", async () => {
+    const { default: Settings } = await import("../src/components/Settings");
+    const { setMode } = await import("../src/lib/i18n");
+    setMode("en");
+    localStorage.setItem(VOCAB_STORAGE_KEY, '{"version":1,"entries":{"alpha":"beta"}}');
+    const root = await mount(<Settings />);
+    expect(text(root)).toContain("Personal vocabulary");
+    expect(text(root)).toContain("Funny level");
+
+    const schoolSwitch = root.querySelector('[role="switch"]') as HTMLButtonElement;
+    await act(async () => { schoolSwitch.click(); });
+    expect(localStorage.getItem(SCHOOL_MODE_STORAGE_KEY)).toBe("1");
+    expect(text(root)).not.toContain("Personal vocabulary");
+    expect(text(root)).not.toContain("Funny level");
+    expect(text(root)).not.toContain("Dim sum surprise");
+
+    const field = root.querySelector<HTMLInputElement>('input[type="search"]')!;
+    await act(async () => { typeInto(field, "personal vocabulary"); });
+    expect(text(root)).not.toContain("Personal vocabulary");
+    expect(text(root)).not.toContain("on another tab");
+
+    await act(async () => {
+      const activeSchoolSwitch = root.querySelector('[role="switch"]') as HTMLButtonElement;
+      activeSchoolSwitch.click();
+      typeInto(field, "");
+    });
+    expect(text(root)).toContain("Personal vocabulary");
+    expect(text(root)).toContain("A validated local vocabulary file is active.");
   });
 });
 
