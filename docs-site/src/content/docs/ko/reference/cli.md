@@ -25,6 +25,18 @@ opencodex CLI는 `ocx`입니다. 최상위 사용법은 `ocx help`(또는 `--hel
 시작은 PID/TCP만 믿지 않고 안정적인 OpenCodex identity health와 프로세스 간 잠금을 확인하므로
 동시 시작이 중복 daemon을 만들지 않습니다.
 
+`start`와 `ensure`는 오래된 journal을 복구하기 전에 기존의 정상 프록시 소유자 identity를 확인합니다.
+따라서 오래된 launcher PID만으로 실행 중인 프록시의 Codex 상태를 복원하지 않습니다. 이전 세션 경고는
+복구가 일어났다는 보고일 뿐 Bun 충돌 분류 조건이 아닙니다.
+
+외부 Node npm 런처는 직접 실행된 `start`와 `ensure`만 감독합니다. Bun stderr를 바이트 단위로 그대로
+전달하면서 분류용으로 시도마다 마지막 64 KiB만 보관합니다. 자식 프로세스가 비정상 종료되고 그 끝부분에
+정확한 `oh no: Bun has crashed` 마커가 있을 때만 정확히 한 번 재시도합니다. 일반 실패는 재시도하지
+않습니다. `OPENCODEX_BUN_PATH`는 읽을 수 있는 일반 파일이며 1,000,000바이트(약 1 MiB) 이상일 때만
+사용합니다. 거부된 경로는 출력하지 않고 함께 제공되는 Bun으로 대체합니다. 이 검사는 바이너리 identity나
+게시자 서명을 검증하지 않습니다. 자세한 내용은
+[Windows의 Bun 시작 충돌 복구](/troubleshooting/bun-startup-crashes/)를 참조하세요.
+
 ```bash
 ocx start
 ocx start --port 8080
@@ -75,6 +87,8 @@ ocx eject back
 
 백그라운드 프록시가 실행 중인지 멱등적으로 확인하고 실시간 모델 카탈로그를 동기화합니다.
 `codexAutoStart`가 `false`이면 자동 시작이 꺼져 있다는 메시지만 출력하고 아무 작업도 하지 않습니다.
+외부 런처는 `start`에서 설명한 동일한 비정상 종료와 정확한 마커 조건으로 `ensure`를 한 번만 재시도하며,
+일반적인 0이 아닌 종료 결과는 재시도하지 않습니다.
 
 ### `ocx status [--json]`
 

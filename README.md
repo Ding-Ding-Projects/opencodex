@@ -183,10 +183,16 @@ itself, warnings without the marker, spawn failures, and termination signals are
 a bounded recovery measure, not a claim that Bun itself was fixed.
 
 If the second attempt also produces the Bun marker, opencodex preserves that failure and suggests
-`OPENCODEX_BUN_PATH`. Use only an absolute path to a Bun binary you deliberately downloaded and
-trust; reinstall a service or Codex shim after setting it so the durable artifact captures the same
-runtime. Full diagnosis, safety notes, and recovery commands are in [Bun Startup Crashes on
-Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
+the emergency `OPENCODEX_BUN_PATH` override. Use only an absolute path to a Bun binary you deliberately
+downloaded and trust. The launcher rejects a path it cannot inspect, a non-regular file, or a
+placeholder-sized file (less than 1 MiB), but that file-and-size check does not verify Bun identity
+or a publisher signature. Reinstall a service or Codex shim after setting the override so the
+durable artifact captures the same runtime. Full diagnosis, safety notes, and recovery commands are
+in [Bun Startup Crashes on Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
+
+This is a non-visual startup fix. Its regression evidence uses deterministic child-process and CLI
+fixtures for exit, signal, marker, stderr, and journal-owner behavior; it does not generate a real
+native Bun crash, and no UI capture is required or provided.
 
 </details>
 

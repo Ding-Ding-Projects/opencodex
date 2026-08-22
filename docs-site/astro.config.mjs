@@ -256,8 +256,8 @@ export default defineConfig({
           translations: { ko: "문제 해결", "zh-CN": "故障排除", ru: "Устранение неполадок", ja: "トラブルシューティング" },
           collapsed: true,
           items: [
+            { label: "Bun Startup Recovery", translations: { ko: "Bun 시작 복구", "zh-CN": "Bun 启动恢复", ru: "Восстановление запуска Bun", ja: "Bun 起動復旧" }, slug: "troubleshooting/bun-startup-crashes" },
             { label: "Windows Memory Growth", translations: { ko: "Windows 메모리 증가", "zh-CN": "Windows 内存增长", ru: "Рост памяти в Windows", ja: "Windows メモリ増加" }, slug: "troubleshooting/windows-memory" },
-            { label: "Bun Startup Crashes", translations: { ko: "Bun 시작 충돌", "zh-CN": "Bun 启动崩溃", ru: "Сбои Bun при запуске", ja: "Bun 起動時のクラッシュ" }, slug: "troubleshooting/bun-startup-crashes" },
           ],
         },
         { label: "Contributing", translations: { ko: "기여하기", "zh-CN": "贡献", ru: "Как внести вклад", ja: "コントリビュート" }, slug: "contributing" },
