@@ -9,6 +9,7 @@ import {
   OpenAiTierBackupCollisionError,
   OpenAiTierBackupRollbackError,
   OpenAiTierBackupSecretResidualError,
+  OpenAiTierBackupVaultRefusalError,
   type OpenAiTierBackupIO,
 } from "../src/config";
 import { runOpenAiTierStartupMigration } from "../src/providers/openai-tier-startup";
@@ -248,6 +249,16 @@ describe("OpenAI provider option startup coordinator", () => {
     expect(new TextDecoder().decode(backup?.bytes)).toBe("original-secret");
     expect(backup?.hardened).toBe(true);
     expect([...state.files.keys()].filter(path => path.endsWith(".tmp"))).toEqual([]);
+  });
+
+  test("vault-mode backup refuses to capture a plaintext provider key", () => {
+    const current = JSON.stringify({
+      providerApiKeyVault: "windows",
+      providers: { demo: { apiKey: "plaintext-provider-key" } },
+    });
+    const state = virtualBackupIO({ "/virtual/config.json": current });
+    expect(() => backupConfigBeforeOpenAiTierMigration("/virtual/config.json", state.io)).toThrow(OpenAiTierBackupVaultRefusalError);
+    expect(state.files.has("/virtual/config.json.pre-openai-tiers-v2.bak")).toBe(false);
   });
 
   test("v2 backup creation never overwrites the historical v1 snapshot", () => {

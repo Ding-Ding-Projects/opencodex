@@ -28,6 +28,9 @@ namespaced selected id를 bare id로 바꿉니다.
 | `port` | `number` | `10100` | 프록시가 수신할 포트. |
 | `hostname?` | `string` | `"127.0.0.1"` | 바인드 주소. LAN에 공개하려면 `"0.0.0.0"`으로 설정합니다(`OPENCODEX_API_AUTH_TOKEN` 필요, 아래 [원격 접근](#원격-접근) 참조). |
 | `proxy?` | `string` | — | 외부로 나가는 HTTP(S) 프록시 URL 또는 `${ENV_VAR}` 참조. 해당 환경 변수가 비어 있을 때 `HTTP_PROXY` / `HTTPS_PROXY`에 적용하고, loopback은 `NO_PROXY`에 유지합니다. |
+| `noProxy?` | `string \| string[]` | — | 제한된 host/address/host-port 우회 목록입니다. 설정값은 URL·credential·제어문자·wildcard를 거부하고, 상속된 표준 `NO_PROXY`의 `*`와 점 접미사 문법은 보존합니다. `allowPrivateNetwork: true` 없이는 private provider를 허용하지 않습니다. |
+| `systemProxy?` | `"off" \| "static"` | `"off"` | Windows에서만 정적 WinINet proxy를 명시적으로 읽습니다. PAC, WPAD, `AutoDetect`, scheme별로 모호한 `ProxyServer`는 거부하며, 명시적 `proxy`가 우선합니다. 해석되지 않는 `${ENV_VAR}`는 시작을 중단합니다. |
+| `providerApiKeyVault?` | `"off" \| "windows"` | `"off"` | 사용자 DPAPI vault에 provider API key를 선택적으로 저장합니다. config에는 opaque reference만 남고 vault ciphertext가 export에 없으므로 전체 백업은 명시적으로 거부됩니다. |
 | `providers` | `Record<string, OcxProviderConfig>` | — | 프로바이더 이름 → 설정 map. |
 | `openaiProviderTierVersion?` | `2` | migration 설정 | 단일 옵션형 OpenAI projection 완료 마커. |
 | `defaultProvider` | `string` | `"openai"` | 라우팅에서 더 나은 match를 찾지 못했을 때 쓸 프로바이더. |

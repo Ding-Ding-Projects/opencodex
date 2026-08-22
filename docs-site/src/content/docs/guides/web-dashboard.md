@@ -326,7 +326,7 @@ The GUI is a thin client over the proxy's JSON management API. Useful endpoints 
 | `GET` / `PUT /api/subagent-models` | Read or set the five featured `spawn_agent` override models. |
 | `GET` / `PUT /api/oauth/accounts/pool?provider=...` | Read or change one OAuth provider's experimental [account pool](/reference/configuration/#providersnameaccountpool-experimental). `409` when a non-Anthropic provider is not in the config, because there is nowhere to store the setting. |
 | `GET` / `PUT /api/host` | Read the bind status and LAN URLs, or expose/unexpose the proxy. A minted data-plane key is returned in that one response and never again. |
-| `GET /api/host/export` · `GET /api/host/history` · `POST /api/host/restore` | Download the full state bundle (**plaintext secrets**), list account-change snapshots, and restore one. |
+| `GET /api/host/export` · `GET /api/host/history` · `POST /api/host/restore` | Download the full state bundle in ordinary mode (**plaintext secrets**), list account-change snapshots, and restore one. `/api/host/export` returns `409` when `providerApiKeyVault: "windows"` is enabled because vault ciphertext is intentionally omitted. |
 | `GET` / `POST /api/host/quick-restore` | Read per-tool restore readiness (present on this machine, files affected, routing currently injected), or hand one tool (`{"tool":"codex"}` / `{"tool":"claude"}`) its native configuration back. The POST rewrites files only — it never drains, stops the service, or exits. Loopback listener required; refused under `OPENCODEX_DEBUG_SANDBOX`. |
 | `POST /api/stop` | Stop the proxy/service, restore native Codex, and exit. |
 

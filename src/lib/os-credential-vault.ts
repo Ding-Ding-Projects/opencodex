@@ -36,7 +36,7 @@
  * this Windows account.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../config";
@@ -51,6 +51,7 @@ import { resolveTrustedWindowsPowerShellExe } from "./windows-elevation";
 const ENTROPY = "opencodex-schedule-ha-token-v1";
 
 const VAULT_TIMEOUT_MS = 10_000;
+const VAULT_OUTPUT_MAX_BYTES = 64 * 1024;
 const TOKEN_REF_RE = /^[A-Za-z0-9_-]{1,80}$/;
 /** A generous ceiling for a pasted long-lived access token; not a real secret length disclosure. */
 const TOKEN_MAX_LENGTH = 8192;
@@ -104,6 +105,14 @@ export function setCredentialVaultSpawnForTests(next: typeof spawn | null): void
   spawnForTests = next;
 }
 
+export type CredentialVaultSyncRunner = (script: string, stdinPayload: string) => string;
+let syncRunnerForTests: CredentialVaultSyncRunner | null = null;
+let platformForTests: NodeJS.Platform | null = null;
+export function setCredentialVaultSyncSeamForTests(next: { runner?: CredentialVaultSyncRunner; platform?: NodeJS.Platform } | null): void {
+  syncRunnerForTests = next?.runner ?? null;
+  platformForTests = next?.platform ?? null;
+}
+
 /** Reads a JSON payload on stdin, writes a bounded base64 result to stdout. */
 const ENCRYPT_SCRIPT = [
   "Add-Type -AssemblyName System.Security",
@@ -152,6 +161,9 @@ function runVaultScript(script: string, stdinPayload: string): Promise<string> {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      try { child.stdin?.destroy(); } catch { /* already closed */ }
+      try { child.stdout?.destroy(); } catch { /* already closed */ }
+      try { child.stderr?.destroy(); } catch { /* already closed */ }
       try { child.kill(); } catch { /* already gone */ }
       reject(new CredentialVaultError("timeout", "The Windows credential vault did not respond in time."));
     }, VAULT_TIMEOUT_MS);
@@ -163,10 +175,26 @@ function runVaultScript(script: string, stdinPayload: string): Promise<string> {
       fn();
     };
 
+    const rejectOutputOverflow = (which: "stdout" | "stderr"): void => {
+      settle(() => {
+        try { child.stdin?.destroy(); } catch { /* already closed */ }
+        try { child.stdout?.destroy(); } catch { /* already closed */ }
+        try { child.stderr?.destroy(); } catch { /* already closed */ }
+        try { child.kill(); } catch { /* already gone */ }
+        reject(new CredentialVaultError("powershell-failed", `The Windows credential vault returned too much ${which} output.`));
+      });
+    };
+
     child.stdout?.setEncoding?.("utf8");
     child.stderr?.setEncoding?.("utf8");
-    child.stdout?.on("data", (chunk: string | Buffer) => { stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8"); });
-    child.stderr?.on("data", (chunk: string | Buffer) => { stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8"); });
+    child.stdout?.on("data", (chunk: string | Buffer) => {
+      stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      if (Buffer.byteLength(stdout, "utf8") > VAULT_OUTPUT_MAX_BYTES) rejectOutputOverflow("stdout");
+    });
+    child.stderr?.on("data", (chunk: string | Buffer) => {
+      stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      if (Buffer.byteLength(stderr, "utf8") > VAULT_OUTPUT_MAX_BYTES) rejectOutputOverflow("stderr");
+    });
 
     child.once("error", (error: Error) => {
       settle(() => reject(new CredentialVaultError("powershell-failed", error.message)));
@@ -186,6 +214,18 @@ function runVaultScript(script: string, stdinPayload: string): Promise<string> {
   });
 }
 
+function runVaultScriptSync(script: string, stdinPayload: string): string {
+  if ((platformForTests ?? process.platform) !== "win32") throw new CredentialVaultError("unsupported-platform", "The OS credential vault is only available on Windows.");
+  if (syncRunnerForTests) return syncRunnerForTests(script, stdinPayload);
+  try {
+    return execFileSync(resolveTrustedWindowsPowerShellExe(), [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
+    ], { windowsHide: true, input: stdinPayload, encoding: "utf8", timeout: VAULT_TIMEOUT_MS, maxBuffer: TOKEN_MAX_LENGTH * 4 }).trim();
+  } catch (error) {
+    throw new CredentialVaultError("powershell-failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
 /** Encrypts and stores `plaintext` under `tokenRef`, replacing any prior value. */
 export async function storeVaultSecret(tokenRef: string, plaintext: string): Promise<void> {
   assertValidTokenRef(tokenRef);
@@ -194,6 +234,18 @@ export async function storeVaultSecret(tokenRef: string, plaintext: string): Pro
   }
   const plaintextB64 = Buffer.from(plaintext, "utf8").toString("base64");
   const ciphertext = await runVaultScript(ENCRYPT_SCRIPT, JSON.stringify({ plaintextB64, entropy: ENTROPY }));
+  const file = readSecretsFile();
+  file[tokenRef] = { alg: "dpapi-currentuser", ciphertext, createdAt: new Date().toISOString() };
+  writeSecretsFile(file);
+}
+
+/** Synchronous counterpart for request routing, which is intentionally synchronous today. */
+export function storeVaultSecretSync(tokenRef: string, plaintext: string): void {
+  assertValidTokenRef(tokenRef);
+  if (!plaintext || plaintext.length > TOKEN_MAX_LENGTH) throw new CredentialVaultError("invalid-token-ref", `token must be 1-${TOKEN_MAX_LENGTH} characters.`);
+  const ciphertext = runVaultScriptSync(ENCRYPT_SCRIPT, JSON.stringify({
+    plaintextB64: Buffer.from(plaintext, "utf8").toString("base64"), entropy: ENTROPY,
+  }));
   const file = readSecretsFile();
   file[tokenRef] = { alg: "dpapi-currentuser", ciphertext, createdAt: new Date().toISOString() };
   writeSecretsFile(file);
@@ -212,6 +264,19 @@ export async function readVaultSecret(tokenRef: string): Promise<string | null> 
   try {
     const plaintextB64 = await runVaultScript(DECRYPT_SCRIPT, JSON.stringify({ ciphertextB64: entry.ciphertext, entropy: ENTROPY }));
     return Buffer.from(plaintextB64, "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+export function readVaultSecretSync(tokenRef: string): string | null {
+  assertValidTokenRef(tokenRef);
+  const entry = readSecretsFile()[tokenRef];
+  if (!entry) return null;
+  try {
+    const plaintextB64 = runVaultScriptSync(DECRYPT_SCRIPT, JSON.stringify({ ciphertextB64: entry.ciphertext, entropy: ENTROPY }));
+    const plaintext = Buffer.from(plaintextB64, "base64").toString("utf8");
+    return plaintext && plaintext.length <= TOKEN_MAX_LENGTH ? plaintext : null;
   } catch {
     return null;
   }

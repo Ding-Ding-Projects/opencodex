@@ -716,12 +716,14 @@ export interface OcxConfig {
   terminal?: {
     allowRemote?: boolean;
   };
-  /**
-   * Outbound HTTP(S) proxy URL for provider requests (e.g. "http://user:pass@proxy:8080", or
-   * "${HTTPS_PROXY}"-style env reference). Mirrored into HTTP_PROXY/HTTPS_PROXY at startup when
-   * those are unset — Bun's fetch honors them for all outbound calls; localhost is excluded.
-   */
+  /** Outbound HTTP(S) proxy URL or environment reference for provider requests. */
   proxy?: string;
+  /** Explicit, bounded proxy bypass hosts. Loopback entries are always added. */
+  noProxy?: string | string[];
+  /** Opt-in read-only Windows static proxy discovery. PAC/WPAD is never followed. */
+  systemProxy?: "off" | "static";
+  /** Opt-in storage of provider API-key material in the OS vault. */
+  providerApiKeyVault?: "off" | "windows";
   /**
    * Upstream stall timeout (seconds). After this many seconds of no upstream data, emits
    * response.incomplete. Default 300. Min 1.

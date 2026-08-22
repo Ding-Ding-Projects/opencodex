@@ -32,6 +32,8 @@ import { parseDesktopProfile } from "./claude/desktop-profile";
 import { isCodexReasoningEffort, modelRecordValue } from "./reasoning-effort";
 import { parseSubagentRoles, salvageSubagentRoles } from "./codex/agent-roles";
 import { modelAutoCompactTokenLimitsConfigError } from "./providers/auto-compact-budget";
+import { mergeNoProxyEntries, proxyEnvironment } from "./lib/proxy-env";
+import { detectStaticWindowsSystemProxy, StaticSystemProxyUnavailableError } from "./lib/system-proxy";
 
 let _atomicSeq = 0;
 
@@ -246,6 +248,20 @@ export class OpenAiTierBackupSecretResidualError extends Error {
   }
 }
 
+export class OpenAiTierBackupVaultRefusalError extends Error {
+  constructor() {
+    super("OpenAI tier backup refused: providerApiKeyVault is enabled but plaintext provider API keys remain");
+    this.name = "OpenAiTierBackupVaultRefusalError";
+  }
+}
+
+export class ConfiguredProxyReferenceError extends Error {
+  constructor() {
+    super("config.proxy is an explicit environment reference but the referenced proxy is unavailable");
+    this.name = "ConfiguredProxyReferenceError";
+  }
+}
+
 export interface OpenAiTierBackupIO {
   exists(path: string): boolean;
   read(path: string): Uint8Array;
@@ -259,6 +275,18 @@ export interface OpenAiTierBackupIO {
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.byteLength === right.byteLength && left.every((value, index) => value === right[index]);
+}
+
+function hasPlaintextProviderApiKeys(bytes: Uint8Array): boolean {
+  try {
+    const parsed = JSON.parse(Buffer.from(bytes).toString("utf8")) as { providerApiKeyVault?: unknown; providers?: Record<string, { apiKey?: unknown; apiKeyPool?: Array<{ key?: unknown }> }> };
+    if (parsed.providerApiKeyVault !== "windows" || !parsed.providers || typeof parsed.providers !== "object") return false;
+    return Object.values(parsed.providers).some(provider =>
+      (typeof provider.apiKey === "string" && !/^vault:[A-Za-z0-9_-]{1,80}$/.test(provider.apiKey))
+      || (provider.apiKeyPool ?? []).some(entry => typeof entry.key === "string" && !/^vault:[A-Za-z0-9_-]{1,80}$/.test(entry.key)));
+  } catch {
+    return false;
+  }
 }
 
 function isAlreadyExistsError(error: unknown): boolean {
@@ -306,6 +334,7 @@ export function backupConfigBeforeOpenAiTierMigration(
   const source = configPath;
   if (!io.exists(source)) return "absent";
   const original = io.read(source);
+  if (hasPlaintextProviderApiKeys(original)) throw new OpenAiTierBackupVaultRefusalError();
   // v2 snapshot path. The historical `.pre-openai-tiers-v1.bak` is read only by restore
   // docs/fixtures and is never reused or overwritten as the v2 snapshot.
   const backup = `${source}.pre-openai-tiers-v2.bak`;
@@ -701,6 +730,10 @@ const configSchema = z.object({
   // is safe: startServer() already falls back to 127.0.0.1 for a missing hostname. Write-time
   // rejection lives in validateConfigCandidate() so bad values still surface to the caller.
   hostname: z.string().trim().min(1).optional().catch(undefined),
+  proxy: z.string().trim().min(1).optional(),
+  noProxy: z.union([z.string(), z.array(z.string())]).optional(),
+  systemProxy: z.enum(["off", "static"]).optional(),
+  providerApiKeyVault: z.enum(["off", "windows"]).optional(),
   providers: z.record(z.string(), providerConfigSchema),
   defaultProvider: z.string().min(1).default("openai"),
   openaiProviderTierVersion: z.union([z.literal(1), z.literal(2)]).optional(),
@@ -736,6 +769,10 @@ const configSchema = z.object({
     purpose: z.string().trim().min(1).max(64).optional().catch("invalid"),
   }).passthrough()).optional(),
 }).passthrough().superRefine((config, ctx) => {
+  if (config.noProxy !== undefined) {
+    try { mergeNoProxyEntries(config.noProxy, {}); }
+    catch (error) { ctx.addIssue({ code: "custom", path: ["noProxy"], message: error instanceof Error ? error.message : "invalid noProxy" }); }
+  }
   const claudeCode = (config as { claudeCode?: unknown }).claudeCode;
   if (claudeCode !== undefined && (!claudeCode || typeof claudeCode !== "object" || Array.isArray(claudeCode))) {
     ctx.addIssue({ code: "custom", path: ["claudeCode"], message: "claudeCode must be an object" });
@@ -1866,21 +1903,33 @@ export function resolveEnvValue(value: string | undefined): string | undefined {
  * CLI's own health checks and running-proxy API calls stay direct. Call once per process entry
  * that makes outbound provider requests (server start, catalog sync).
  */
-export function applyProxyEnv(config: OcxConfig): void {
-  const proxy = resolveEnvValue(config.proxy);
-  if (!proxy) return;
-  if (!process.env.HTTP_PROXY?.trim() && !process.env.http_proxy?.trim()) process.env.HTTP_PROXY = proxy;
-  if (!process.env.HTTPS_PROXY?.trim() && !process.env.https_proxy?.trim()) process.env.HTTPS_PROXY = proxy;
-  const existing = process.env.NO_PROXY ?? process.env.no_proxy ?? "";
-  const entries = existing.split(",").map(s => s.trim()).filter(Boolean);
-  const seen = new Set(entries.map(e => e.toLowerCase()));
-  for (const host of ["localhost", "127.0.0.1", "::1", "[::1]"]) {
-    if (!seen.has(host)) {
-      entries.push(host);
-      seen.add(host);
-    }
+export type ProxyEnvApplicationDeps = {
+  detectSystemProxy?: (platform: NodeJS.Platform) => ReturnType<typeof detectStaticWindowsSystemProxy>;
+  platform?: NodeJS.Platform;
+};
+
+export function applyProxyEnv(config: OcxConfig, deps: ProxyEnvApplicationDeps = {}): void {
+  let detectedProxy: string | undefined;
+  const configuredProxy = typeof config.proxy === "string" ? config.proxy.trim() : "";
+  const resolvedProxy = resolveEnvValue(config.proxy);
+  const explicitReference = configuredProxy.startsWith("$");
+  if (explicitReference && !resolvedProxy?.trim()) throw new ConfiguredProxyReferenceError();
+  if (config.systemProxy === "static" && !resolvedProxy) {
+    const platform = deps.platform ?? process.platform;
+    const detector = deps.detectSystemProxy ?? ((targetPlatform: NodeJS.Platform) => detectStaticWindowsSystemProxy(undefined, targetPlatform));
+    detectedProxy = detector(platform)?.proxy;
+    if (!detectedProxy) throw new StaticSystemProxyUnavailableError();
   }
-  process.env.NO_PROXY = entries.join(",");
+  const env = proxyEnvironment({
+    proxy: resolvedProxy,
+    noProxy: config.noProxy,
+    systemProxy: config.systemProxy,
+  }, process.env, detectedProxy);
+  // Bun fetch reads this process environment. Child launchers must use
+  // proxyEnvironment() directly instead of inheriting this mutation.
+  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] as const) {
+    if (env[key] !== undefined) process.env[key] = env[key];
+  }
 }
 
 export function writePid(pid: number): void {

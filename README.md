@@ -389,7 +389,7 @@ ocx account <list|current|use> # list/switch accounts & API-key pools (masked; a
 ocx gui                        # open the web dashboard
 ocx host <status|enable|disable>   # configure trusted-LAN remote access
 ocx export data <dataset>      # export a redacted dashboard dataset
-ocx export <new-file> --yes    # protected full-state backup containing plaintext secrets
+ocx export <new-file> --yes    # protected full-state backup; refused when provider vault mode is enabled
 ocx claude [args...]           # launch Claude Code wired to the proxy (model discovery on)
 ocx claude desktop             # save and apply the Claude Desktop four-family profile
 ocx service [install|repair|restart|start|stop|status|uninstall|remove]   # install-if-absent/repair-if-installed background service
@@ -454,9 +454,11 @@ stable OpenCodex identity health; service starts also require service-owned runt
 verifies the service manager and proxy are actually down before it restores native Codex or removes
 owned state, so a failed manual stop cannot silently leave a supervisor able to respawn the proxy.
 
-Full-state CLI backups require `ocx export <new-file> --yes`. They include plaintext API keys and
-OAuth tokens, are created as a new protected file, refuse stdout, and never overwrite an existing
-path. Redacted dataset exports may still use stdout through `ocx export data`. The dashboard can
+Full-state CLI backups require `ocx export <new-file> --yes`. In ordinary mode they include plaintext
+API keys and OAuth tokens, are created as a new protected file, refuse stdout, and never overwrite an
+existing path. When `providerApiKeyVault: "windows"` is enabled, full-state backup is refused because
+the account-scoped vault ciphertext is omitted; there is no plaintext fallback. Redacted dataset
+exports may still use stdout through `ocx export data`. The dashboard can
 create unencrypted 7z archives when 7-Zip is available, but password encryption is disabled because
 7-Zip accepts its password only through process arguments; it will remain unavailable until a
 protected password-input transport exists.
@@ -507,6 +509,24 @@ Here's a typical multi-provider setup:
   }
 }
 ```
+
+### Network and provider-key security
+
+The optional `noProxy` field accepts bounded host, address, and host-port entries. Configured
+entries reject URLs, credentials, controls, and wildcards; inherited `NO_PROXY` values retain
+standard matching such as `*` and leading-dot suffixes. Loopback is always kept direct, and a
+`noProxy` match never authorizes a private provider destination without
+`allowPrivateNetwork: true`.
+
+`systemProxy: "static"` is an opt-in Windows-only read of the static WinINet proxy. PAC, WPAD,
+`AutoDetect`, and keyed per-scheme proxy values are refused. An explicit `proxy` value wins, while
+an unresolved `${ENV_VAR}` reference fails closed instead of falling through to system discovery.
+
+`providerApiKeyVault: "windows"` stores provider API-key pool material as opaque DPAPI-backed
+references. The vault is account-scoped and its ciphertext is not included in exports; full-state
+export is refused in vault mode rather than producing a backup that cannot be restored. Vault
+migration and pool changes roll back on persistence failure, and an unavailable vault never causes
+plaintext fallback.
 
 Provider entries can also annotate routed catalog metadata and output defaults. Use `contextWindow`
 for a provider-wide Codex-visible context cap, `modelContextWindows` for model-specific caps, and

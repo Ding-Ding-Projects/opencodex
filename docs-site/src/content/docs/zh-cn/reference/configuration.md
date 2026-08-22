@@ -26,6 +26,9 @@ no-replace 方式创建 `config.json.pre-openai-tiers-v2.bak`，并把已知旧 
 | `port` | `number` | `10100` | 代理监听端口。 |
 | `hostname?` | `string` | `"127.0.0.1"` | 绑定地址。设为 `"0.0.0.0"` 可暴露到 LAN（需要 `OPENCODEX_API_AUTH_TOKEN`；见下文 [远程访问](#远程访问)）。 |
 | `proxy?` | `string` | — | 出站 HTTP(S) proxy URL 或 `${ENV_VAR}` 引用。对应 env 未设置时应用到 `HTTP_PROXY` / `HTTPS_PROXY`；loopback 会保留在 `NO_PROXY` 中。 |
+| `noProxy?` | `string \| string[]` | — | 有界的 host/address/host-port 绕过列表。配置值拒绝 URL、凭据、控制字符和 wildcard；继承的标准 `NO_PROXY`（包括 `*` 和点前缀后缀）保持原有匹配语义。绕过规则本身不会授予 private provider 访问权，仍需 `allowPrivateNetwork: true`。 |
+| `systemProxy?` | `"off" \| "static"` | `"off"` | 仅在 Windows 上 opt-in 读取静态 WinINet proxy。拒绝 PAC、WPAD、`AutoDetect` 和按 scheme 的歧义 `ProxyServer`；显式 `proxy` 优先，无法解析的 `${ENV_VAR}` 会停止启动。 |
+| `providerApiKeyVault?` | `"off" \| "windows"` | `"off"` | 可选地将 provider API key 存入用户 DPAPI vault。配置只保存 opaque reference；由于 vault ciphertext 不包含在导出中，完整备份会明确拒绝，而不会退回明文。 |
 | `providers` | `Record<string, OcxProviderConfig>` | — | provider 名称 → 配置的映射。 |
 | `openaiProviderTierVersion?` | `2` | migration 设置 | 单一选项式 OpenAI projection 完成标记。 |
 | `defaultProvider` | `string` | `"openai"` | 路由找不到更优匹配时使用的 provider。 |

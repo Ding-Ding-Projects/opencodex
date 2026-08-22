@@ -5,6 +5,7 @@ import { applyProxyEnv, loadConfig } from "../config";
 import type { OcxConfig } from "../types";
 import { collectOrcaCodexHomeDiagnostic } from "./home";
 import { summarizeComboCatalogOmissions, type ComboCatalogOmission } from "./catalog/aggregation";
+import { migrateProviderApiKeysToVault } from "../providers/api-keys";
 
 export interface CodexSyncResult {
   ok: boolean;
@@ -71,6 +72,10 @@ export async function syncModelsToCodex(
   }
 
   applyProxyEnv(config); // `ocx ensure`/`ocx sync` fetch provider models outside the server process
+  const vaultMigration = migrateProviderApiKeysToVault(config);
+  if (vaultMigration.unavailable && config.providerApiKeyVault === "windows") {
+    throw new Error("provider API-key vault is unavailable; refusing model/catalog sync before outbound requests");
+  }
   let added = 0;
   let catalogPath: string | null = null;
   let catalogPathForInjection: string | null | undefined;

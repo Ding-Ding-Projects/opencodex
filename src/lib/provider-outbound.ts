@@ -146,6 +146,15 @@ export async function providerOutboundGet(
     warnProxyDnsDegradationOnce();
     return globalThis.fetch(url, { ...init, method: "GET", redirect: "manual" });
   }
+  // A bypass matcher only decides whether an already-authorized private route
+  // may avoid the proxy. It can never grant the private-network opt-in itself,
+  // even when a resolver seam reports a private result without enforcing it.
+  if (resolved.privateNetwork && !provider.allowPrivateNetwork) {
+    throw new ProviderOutboundPolicyError(providerDestinationConfigError(name, {
+      baseUrl: url,
+      allowPrivateNetwork: false,
+    }) ?? "provider URL resolves to a private-network destination; allowPrivateNetwork is required");
+  }
   if (proxyConfigured && !resolved.privateNetwork) {
     warnProxyBoundaryOnce();
     return globalThis.fetch(url, { ...init, method: "GET", redirect: "manual" });

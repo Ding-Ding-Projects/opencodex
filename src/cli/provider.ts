@@ -14,6 +14,8 @@ import { getProviderRegistryEntry, PROVIDER_REGISTRY } from "../providers/regist
 import { providerConfigSeed } from "../providers/derive";
 import type { OcxProviderConfig } from "../types";
 import { findLiveProxy } from "../server/proxy-liveness";
+import { addProviderApiKey } from "../providers/api-keys";
+import { isProviderVaultReference } from "../lib/provider-credentials";
 import { syncModelsToCodex } from "../codex/sync";
 import { codexAccountNamespaceProviderCollisionError } from "../codex/account-namespace-match";
 
@@ -50,6 +52,7 @@ function rejectUnknownArgs(args: string[], usage: string): void {
 }
 
 function maskSecret(value: string): string {
+  if (isProviderVaultReference(value)) return "vault reference (secret not in config)";
   if (value.length <= 8) return "****";
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
 }
@@ -68,6 +71,11 @@ function validateAndSave(config: ReturnType<typeof loadConfig>): void {
     process.exit(1);
   }
   saveConfig(config);
+}
+
+function restoreConfigSnapshot(target: ReturnType<typeof loadConfig>, snapshot: ReturnType<typeof loadConfig>): void {
+  for (const key of Object.keys(target)) delete (target as unknown as Record<string, unknown>)[key];
+  Object.assign(target, structuredClone(snapshot));
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +161,7 @@ async function handleAdd(args: string[]): Promise<void> {
   rejectUnknownArgs(restArgs, ADD_USAGE);
 
   const config = loadConfig();
+  const configBeforeAdd = structuredClone(config);
 
   const namespaceCollision = codexAccountNamespaceProviderCollisionError(config.codexAccountNamespaces, name);
   if (namespaceCollision) {
@@ -213,7 +222,20 @@ async function handleAdd(args: string[]): Promise<void> {
   if (allowPrivateNetwork) provConfig.allowPrivateNetwork = true;
   if (setDefault) config.defaultProvider = name;
 
-  validateAndSave(config);
+  if (apiKey && config.providerApiKeyVault === "windows") {
+    // Route the secret through the vault-aware pool writer; never write the pasted
+    // value into config.json first.
+    delete provConfig.apiKey;
+    const stored = addProviderApiKey(config, name, apiKey);
+    if ("error" in stored) {
+      restoreConfigSnapshot(config, configBeforeAdd);
+      throw new Error(stored.error);
+    }
+    // addProviderApiKey owns the single vault-aware persistence transaction.
+  } else {
+    try { validateAndSave(config); }
+    catch (error) { restoreConfigSnapshot(config, configBeforeAdd); throw error; }
+  }
 
   if (wantsJson) {
     console.log(JSON.stringify({

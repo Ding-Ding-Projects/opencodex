@@ -17,6 +17,7 @@ import {
   saveConfig,
   websocketsEnabled,
 } from "../config";
+import { migrateProviderApiKeysToVault } from "../providers/api-keys";
 import { reconcileOAuthProviders } from "../oauth";
 import { invalidateCodexModelsCache } from "../codex/catalog";
 import { startMemoryWatchdog } from "./memory-watchdog";
@@ -341,7 +342,15 @@ export function startServer(port?: number) {
   // to race against, well before the listener below can accept a connection.
   void warmDashboardMountModules();
 
-  const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()));
+  const loadedConfig = loadConfig();
+  // Vault migration must precede every config migration that can snapshot the
+  // file. If the vault cannot accept plaintext keys, stop before OpenAI-tier or
+  // region backups can capture them.
+  const vaultMigration = migrateProviderApiKeysToVault(loadedConfig);
+  if (vaultMigration.unavailable && loadedConfig.providerApiKeyVault === "windows") {
+    throw new Error("provider API-key vault is unavailable; refusing startup before plaintext migration backups");
+  }
+  const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadedConfig));
   applyProxyEnv(config);
   assertServerAuthConfig(config);
   // Refresh OAuth provider presets (models/noReasoningModels) from the registry so a proxy update
