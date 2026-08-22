@@ -7,6 +7,7 @@
  */
 
 import type { WorkspaceSections } from "./catalog";
+import { formatEstimatedUsdValue } from "../intl-formatters";
 
 /**
  * Per-provider model count as returned by /api/selected-models.
@@ -78,6 +79,10 @@ export function countAvailableModels(data: unknown): ProviderModelCounts {
 export interface ProviderUsageTotals {
   requests?: number;
   totalTokens?: number;
+  /** Server-computed direct-lane subtotal; absent for subscription/OAuth rows. */
+  estimatedCostUsd?: number;
+  /** Server-computed non-billing API-equivalent total; never summed with the above. */
+  apiEquivalentCostUsd?: number;
 }
 
 export interface MostUsedProvider extends ProviderUsageTotals {
@@ -208,9 +213,8 @@ export function formatTokenCount(n: number | undefined, locale = "en"): string {
 
 /** Format a USD cost estimate for display. Returns "—" when unavailable. */
 export function formatCostUsd(value: number | null | undefined, locale = "en"): string {
-  if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return "\u2014";
-  return `~$${new Intl.NumberFormat(locale, {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  }).format(value)}`;
+  if (value === null || value === undefined) return "\u2014";
+  // Delegates to the one shared estimated-USD formatter so this panel cannot
+  // drift from the app-bar chip or the Usage/Logs pages at the same total.
+  return formatEstimatedUsdValue(value, locale);
 }

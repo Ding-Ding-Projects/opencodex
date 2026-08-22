@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, LOCALES, type TFn } from "../i18n/shared";
 import { formatTokens } from "../format-tokens";
+import { formatEstimatedUsdValue } from "../intl-formatters";
 import { hashLogConversationQuery, matchesLogConversationId } from "../log-conversation-id";
 import { statusCodeInfo } from "../status-codes";
 import { IconReceiptLong, IconSearch, IconX } from "../icons";
@@ -256,14 +257,6 @@ function estimatedUsdCell(result: CostResult | undefined, localeTag?: string): {
     maximumFractionDigits: 4,
   }).format(total)}`;
   return { text, kind: resolved.kind };
-}
-
-function formatEstimatedUsdValue(value: number, localeTag?: string): string {
-  if (!Number.isFinite(value) || value < 0) return "\u2014";
-  return `~$${new Intl.NumberFormat(localeTag, {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  }).format(value)}`;
 }
 
 const METRIC_REASON_KEYS = {
