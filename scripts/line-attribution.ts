@@ -102,8 +102,8 @@ export const KNOWN_AGENT_IDENTITIES: readonly AttributionIdentity[] = Object.fre
 /** Deliberate non-agent matches: exact pairing prevents name-only look-alikes. */
 export const EXCLUDED_AGENT_LOOKALIKES: readonly AttributionIdentity[] = Object.freeze([
   { name: "Claude", email: "state-history@localhost" },
-  { name: "agentHits", email: "zvercombat26rus@icloud.com" },
-  { name: "opencodex state history", email: "matday116@outlook.com" },
+  { name: "agentHits", email: "agentHits@example.invalid" },
+  { name: "opencodex state history", email: "state-history@example.invalid" },
 ]);
 
 const DEFAULT_MAX_FILES = 10_000;

@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { countLines } from "../scripts/count-lines";
 import {
   EXCLUDED_AGENT_LOOKALIKES,
+  KNOWN_AGENT_IDENTITIES,
   countLinesWithAttribution,
   formatLineAttributionTable,
   isAgentAttribution,
@@ -90,13 +91,15 @@ describe("release line attribution", () => {
   });
 
   test("uses exact author and co-author identities without fuzzy look-alikes", () => {
+    const claude = KNOWN_AGENT_IDENTITIES.find(identity => identity.name === "Claude Fable 5")!;
+    const codex = KNOWN_AGENT_IDENTITIES.find(identity => identity.name === "OpenAI Codex")!;
     expect(isAgentAttribution(
-      { name: "  Claude   Fable 5 ", email: "NOREPLY@ANTHROPIC.COM" },
+      { name: `  ${claude.name.replace(" ", "   ")} `, email: claude.email.toUpperCase() },
       [],
     )).toBe(true);
     expect(isAgentAttribution(
       { name: "A Person", email: "person@example.test" },
-      [{ name: "OpenAI Codex", email: "codex@openai.com" }],
+      [codex],
     )).toBe(true);
     for (const lookalike of EXCLUDED_AGENT_LOOKALIKES) {
       expect(isAgentAttribution(lookalike, [])).toBe(false);
