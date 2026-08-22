@@ -44,9 +44,11 @@
  * sizes, then green after the fix — see the commit this file ships with.
  */
 
+import { fileURLToPath } from "node:url";
+
 const PORT = Number(process.env.OCX_LAYOUT_CHECK_PORT || 14219);
 const CDP_PORT = Number(process.env.OCX_LAYOUT_CHECK_CDP_PORT || 14220);
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]):/, "$1:");
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIST = `${ROOT}/gui/dist`;
 
 /** A minimum a genuinely-rendered single line of 11-16px text can never be under. */
