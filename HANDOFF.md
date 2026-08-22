@@ -1,9 +1,9 @@
 # Handoff
 
-## Current integration closeout — 2026-08-21, `dev` at `76566f01f12048042f1ca257df4adb1f7a99b32c`
+## Current integration closeout — 2026-08-21, implementation tip `76566f01f12048042f1ca257df4adb1f7a99b32c`
 
-The primary integration checkout is clean and matches `origin/dev` at the exact SHA above. This
-closeout removed the interactive GitHub-star prompt and its `gh` mutation path, repaired the stale
+The primary integration checkout is clean. The implementation tip above is followed by this
+documentation-only record update on `dev`. This closeout removed the interactive GitHub-star prompt and its `gh` mutation path, repaired the stale
 docs bundle and packaging stdout check, and integrated the ready recovery, vocabulary, design-route,
 dashboard, updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle,
 package-contract, line-attribution, docs-site, and network-safety lanes into `dev`.
