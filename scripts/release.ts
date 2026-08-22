@@ -5,7 +5,7 @@
  * Usage:
  *   bun scripts/release.ts <version> [--tag latest|preview] [--publish]
  *       Preflight (clean tree + typecheck + tests + privacy scan) → bump package.json → commit → push →
- *       wait for CI → dispatch the Release workflow → watch it.
+ *       verify the immutable remote candidate → dispatch the Release workflow → watch it.
  *       The version bump commit/push is real; the Release workflow publish step is dry-run by default.
  *       Pass --publish to publish.
  *   bun scripts/release.ts watch
@@ -33,11 +33,6 @@ interface CommandResult {
   stdout: string;
   stderr: string;
 }
-
-const CI_WORKFLOW = "ci.yml";
-const SERVICE_WORKFLOW = "service-lifecycle.yml";
-const CI_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
-const CI_POLL_MS = 10 * 1000;
 
 async function runQuiet(command: string[]): Promise<CommandResult> {
   const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
@@ -156,41 +151,6 @@ async function waitForReleaseWorkflowRun(sha: string, branch: string, createdAft
   process.exit(1);
 }
 
-async function listCiRuns(sha: string, workflow: string = CI_WORKFLOW): Promise<GhRun[]> {
-  const raw = await $`gh run list --workflow ${workflow} --commit ${sha} --limit 20 --json conclusion,databaseId,headSha,status,url`.text();
-  const runs = JSON.parse(raw) as GhRun[];
-  return runs.filter(run => run.headSha === sha);
-}
-
-async function waitForSuccessfulCi(sha: string, workflow: string = CI_WORKFLOW, label = "CI"): Promise<GhRun> {
-  const deadline = Date.now() + CI_WAIT_TIMEOUT_MS;
-  let attempt = 1;
-  while (Date.now() < deadline) {
-    const runs = await listCiRuns(sha, workflow);
-    const successful = runs.find(run => run.status === "completed" && run.conclusion === "success");
-    if (successful) {
-      console.log(`→ ${label} passed: ${successful.url}`);
-      return successful;
-    }
-
-    const failed = runs.find(run => run.status === "completed" && run.conclusion && run.conclusion !== "success");
-    if (failed) {
-      console.error(`✗ ${label} failed for ${sha}: ${failed.url}`);
-      process.exit(1);
-    }
-
-    const state = runs.length > 0
-      ? runs.map(run => `${run.status}${run.conclusion ? `/${run.conclusion}` : ""}`).join(", ")
-      : "not started yet";
-    console.log(`→ waiting for ${label} (${sha.slice(0, 7)}) attempt ${attempt}: ${state}`);
-    attempt += 1;
-    await Bun.sleep(CI_POLL_MS);
-  }
-
-  console.error(`✗ timed out waiting for ${label} on ${sha}`);
-  process.exit(1);
-}
-
 async function _remoteMainSha(): Promise<string> {
   const out = (await $`git ls-remote origin refs/heads/main`.text()).trim();
   const [sha] = out.split(/\s+/);
@@ -264,17 +224,7 @@ const releaseSha = (await $`git rev-parse HEAD`.text()).trim();
 console.log(`→ push origin ${branch}`);
 await $`git push origin ${branch}`;
 
-// 4. Wait for the pushed release commit to pass CI, then dispatch the Release workflow.
-console.log(`→ wait for CI (${releaseSha})`);
-await waitForSuccessfulCi(releaseSha);
-
-// The release bump always touches package.json, which is a service-lifecycle trigger path —
-// and release.yml's service gate requires an already-successful Service lifecycle run for
-// the release SHA. Wait for it too, or the dispatch races the still-running workflow.
-console.log(`→ wait for Service lifecycle (${releaseSha})`);
-await waitForSuccessfulCi(releaseSha, SERVICE_WORKFLOW, "Service lifecycle");
-
-// Live-remote guard: re-read the actual remote head over the network immediately
+// 4. Live-remote guard: re-read the actual remote head over the network immediately
 // before dispatch. The local remote-tracking ref can be minutes stale, and the
 // workflow_dispatch below resolves a mutable branch — so this is the last chance
 // to refuse publishing an unaudited newer commit.

@@ -273,7 +273,7 @@ describe("release helper", () => {
     )).toBeGreaterThanOrEqual(0);
   });
 
-  test("aborts before dispatch when the remote branch moved during the CI wait", () => {
+  test("aborts before dispatch when the remote branch moved after local preflight", () => {
     const { calls, result } = runRelease("9.9.9", {
       headSha: "abc123def456",
       remoteHeadSha: "9999999999999999999999999999999999999999",

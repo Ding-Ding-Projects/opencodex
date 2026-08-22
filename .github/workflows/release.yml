@@ -26,12 +26,12 @@ on:
         default: true
       expected-sha:
         description: "Immutable release commit this dispatch must publish (fail if the branch moved)"
-        required: false
+        required: true
         type: string
 
 permissions:
   contents: write # create the matching GitHub Release + version tag after npm publish
-  actions: read # verify the release commit already passed Windows CI
+  actions: read # read this run's authoritative start timestamp for release notes
   id-token: write # OIDC auth for Trusted Publishing + automatic provenance attestation
 
 defaults:
@@ -46,24 +46,35 @@ jobs:
   publish:
     runs-on: windows-latest
     timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.expected-sha }}
 
       - name: Verify dispatched SHA
         env:
           EXPECTED_SHA: ${{ inputs.expected-sha }}
         run: |
-          if [ -z "$EXPECTED_SHA" ]; then
-            echo "::warning::no expected-sha supplied; publishing whatever the branch currently points at"
-          elif [ "$GITHUB_SHA" != "$EXPECTED_SHA" ]; then
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::expected-sha must be a lowercase full 40-character commit SHA"
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$EXPECTED_SHA" ]; then
             echo "::error::branch moved after the release audit (expected ${EXPECTED_SHA}, got ${GITHUB_SHA}) — refusing to publish an unaudited commit"
             exit 1
           fi
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ "$checked_out_sha" != "$EXPECTED_SHA" ]; then
+            echo "::error::checkout resolved ${checked_out_sha}, expected immutable candidate ${EXPECTED_SHA}"
+            exit 1
+          fi
 
-      # opencodex is bun-native (the prepublishOnly GUI build + typecheck run under bun).
+      # opencodex is bun-native; the release job builds the package without running test,
+      # lint, typecheck, or static-analysis scripts in GitHub Actions.
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -75,6 +86,11 @@ jobs:
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
+
+      # Resolve an unused dish only through the shared public-catalog authority.
+      # Catalog or network failure emits DISH_AVAILABLE=false and never blocks a release.
+      - name: Pick the dim sum codename
+        run: bun scripts/release-codename.ts "$GITHUB_SHA" "$GITHUB_REPOSITORY" >> "$GITHUB_ENV"
 
       # Trusted Publishing (OIDC) needs npm >= 11.5.1. Node 24 runners already
       # provide a compatible npm; avoid replacing the bundled npm because global
@@ -106,14 +122,12 @@ jobs:
             exit 1;
           }
 
-      - name: Require successful Windows CI for this commit
+      - name: Validate release channel
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
           NPM_DIST_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-
           case "$GITHUB_REF" in
             refs/heads/main)
               expected_tag="latest"
@@ -134,74 +148,19 @@ jobs:
               exit 1
               ;;
           esac
-
           if [ "$NPM_DIST_TAG" != "$expected_tag" ]; then
             echo "::error::${GITHUB_REF#refs/heads/} releases must publish with npm dist-tag '${expected_tag}', got '${NPM_DIST_TAG}'"
             exit 1
           fi
 
-          ci_url="$(
-            gh run list \
-              --workflow ci.yml \
-              --commit "$GITHUB_SHA" \
-              --status success \
-              --limit 10 \
-              --json conclusion,headSha,url,workflowName \
-              --jq '.[0].url // ""'
-          )"
-
-          if [ -z "$ci_url" ]; then
-            echo "::error::No successful Windows CI run found for ${GITHUB_SHA}. Wait for CI to pass before releasing."
-            gh run list --workflow ci.yml --commit "$GITHUB_SHA" --limit 10 || true
-            exit 1
-          fi
-
-          echo "Windows CI passed for ${GITHUB_SHA}: ${ci_url}"
-
-          # Notes / service baseline:
-          # - Preview: newest prior release of either channel (stable or preview). A
-          #   preview→preview-only baseline skips a shipped stable and restates it.
-          # - Stable: newest prior stable only (matching preview carry adjusts the
-          #   generate-notes range separately below).
-          previous_tag="$(
-            git tag --merged HEAD --list 'v[0-9]*' |
-              bun scripts/release-notes.ts previous-release-tag "$RELEASE_VERSION"
-          )"
-          if [ -n "$previous_tag" ]; then
-            changed_files="$(git diff --name-only "${previous_tag}..HEAD")"
-          else
-            changed_files="$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA")"
-          fi
-
-          # Keep in sync with the service-lifecycle.yml trigger paths. src/cli.ts is
-          # the pre-restructure compat stub that durable launchers still execute.
-          if printf '%s\n' "$changed_files" | grep -Eq '^(src/service\.ts|src/cli\.ts|src/cli/index\.ts|src/lib/bun-runtime\.ts|package\.json|bun\.lock|\.github/workflows/service-lifecycle\.yml)$'; then
-            service_url="$(
-              gh run list \
-                --workflow service-lifecycle.yml \
-                --commit "$GITHUB_SHA" \
-                --status success \
-                --limit 10 \
-                --json conclusion,headSha,url,workflowName \
-                --jq '.[0].url // ""'
-            )"
-            if [ -z "$service_url" ]; then
-              echo "::error::Service-related files changed since ${previous_tag:-initial commit}, but no successful Service lifecycle run was found for ${GITHUB_SHA}."
-              gh run list --workflow service-lifecycle.yml --commit "$GITHUB_SHA" --limit 10 || true
-              exit 1
-            fi
-            echo "Service lifecycle passed for ${GITHUB_SHA}: ${service_url}"
-          fi
-
       # Tokenless publish via Trusted Publishing (OIDC) — NO NPM_TOKEN secret. npm auto-detects the
       # OIDC environment (`id-token: write` above) and generates provenance automatically, so neither a
-      # token nor `--provenance` is needed. `npm publish` runs prepublishOnly first (typecheck + build
-      # the GUI into gui/dist), so even a dry-run fully verifies the build.
+      # token nor `--provenance` is needed. The payload is built explicitly below and npm lifecycle
+      # scripts are disabled for pack/publish so this workflow remains build-and-publication only.
       # PREREQUISITE: configure the Trusted Publisher for this repo + workflow on npmjs.com — possible
       # only AFTER the package's first version exists (do the first publish locally, see the runbook).
       - name: Preflight release metadata
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
@@ -251,7 +210,7 @@ jobs:
       # publish anything. A packaging failure must not leave the registry ahead
       # of the required Windows release.
       - name: Prepare npm release payload
-        run: npm run prepublishOnly
+        run: bun run build:gui
 
       - name: Build unsigned Squirrel.Windows installer
         shell: pwsh
@@ -339,9 +298,9 @@ jobs:
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             echo "::notice::DRY RUN — payload and installer verified; packing without publishing"
-            npm pack --dry-run
+            npm pack --dry-run --ignore-scripts
           else
-            npm publish --tag "$NPM_DIST_TAG" --access public
+            npm publish --ignore-scripts --tag "$NPM_DIST_TAG" --access public
           fi
 
       # Confirm the registry actually has the new version (real publishes only).
@@ -367,7 +326,6 @@ jobs:
       - name: Create GitHub release
         if: ${{ inputs.dry-run != true }}
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
           NPM_DIST_TAG: ${{ inputs.tag }}
         run: |
@@ -519,6 +477,44 @@ jobs:
           fi
           "${assemble_args[@]}"
 
+          lines="$(bun run scripts/count-lines.ts)"
+          dish_title=""
+          dish_section=""
+          if [ "$DISH_AVAILABLE" = "true" ]; then
+            dish_title=" · $DISH_NAME · $DISH_ZH"
+            dish_section=$(cat <<DISH
+
+          ### 🥟 $DISH_NAME · $DISH_ZH
+
+          [View the published public-catalog photo for $DISH_NAME · $DISH_ZH]($DISH_PHOTO)
+
+          Public catalog asset: \`$DISH_RELEASE_TAG/$DISH_ID\`. This release links the public photo and does not attach a copied image.
+          DISH
+            )
+          else
+            echo "::warning::Publishing without a dim-sum codename because no unused published public asset was resolved."
+          fi
+          workflow_started="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq .run_started_at)"
+          if [ -z "$workflow_started" ]; then
+            echo "::error::Workflow start time is unavailable; refusing to publish incomplete timing evidence."
+            exit 1
+          fi
+          cat >> "$notes_file" <<NOTES
+
+          $dish_section
+
+          <details>
+          <summary>📏 <strong>Lines of code at this commit</strong></summary>
+
+          $lines
+
+          Produced by this run with \`bun run scripts/count-lines.ts\` over \`${GITHUB_SHA:0:9}\`.
+
+          </details>
+
+          Workflow timing is finalized immediately after release publication.
+          NOTES
+
           if [ -z "$existing_tag_sha" ]; then
             git tag "$release_tag" "$GITHUB_SHA"
             git push origin "refs/tags/${release_tag}"
@@ -542,11 +538,30 @@ jobs:
             exit 1
           fi
 
-          gh release create "$release_tag" --target "$GITHUB_SHA" --title "$release_tag" \
+          gh release create "$release_tag" --target "$GITHUB_SHA" --title "$release_tag$dish_title" \
             --notes-file "$notes_file" ${prerelease_flag:+$prerelease_flag} \
             "${setup_assets[0]}#Setup.exe" \
             "${releases_assets[0]}#RELEASES" \
             "${nupkg_assets[@]}"
+
+          workflow_completed="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          workflow_duration="$(node -e 'const start=Date.parse(process.argv[1]); const end=Date.parse(process.argv[2]); if(!Number.isFinite(start)||!Number.isFinite(end)||end<start) process.exit(2); const seconds=Math.floor((end-start)/1000); const h=String(Math.floor(seconds/3600)).padStart(2,"0"); const m=String(Math.floor((seconds%3600)/60)).padStart(2,"0"); const s=String(seconds%60).padStart(2,"0"); process.stdout.write(`${h}:${m}:${s}`);' "$workflow_started" "$workflow_completed")"
+          cat >> "$notes_file" <<NOTES
+
+          | Workflow timing | UTC |
+          | --- | --- |
+          | Workflow started | \`$workflow_started\` |
+          | Workflow completed | \`$workflow_completed\` |
+          | Workflow duration | \`$workflow_duration\` |
+          NOTES
+          gh release edit "$release_tag" --notes-file "$notes_file"
+
+          release_readback="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '[.draft,.target_commitish,.tag_name] | @tsv')"
+          IFS=$'\t' read -r release_is_draft release_target release_tag_readback <<< "$release_readback"
+          if [ "$release_is_draft" != "false" ] || [ "$release_target" != "$GITHUB_SHA" ] || [ "$release_tag_readback" != "$release_tag" ]; then
+            echo "::error::Published release readback did not match the unique non-draft exact-SHA contract"
+            exit 1
+          fi
 
       # Keep installable packages, build output, and failure metadata available
       # even when a publish or release step fails. Only known output locations

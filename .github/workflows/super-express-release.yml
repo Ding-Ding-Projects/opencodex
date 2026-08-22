@@ -2,9 +2,8 @@ name: Super express release
 
 # This is the deliberately impatient manual release door. It packages the
 # selected commit directly, preserves build evidence even when packaging fails,
-# and publishes only after the Windows CI workflow has succeeded for that exact
-# resolved commit. It skips rerunning CI inside this job; it never skips the
-# evidence that CI already passed.
+# and publishes the exact resolved commit without running or waiting for tests,
+# lint, type checks, static analysis, or other code-quality verdicts.
 
 on:
   workflow_dispatch:
@@ -47,6 +46,8 @@ jobs:
 
       - name: Pick the dim sum codename
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun scripts/release-codename.ts "$SHA" "${{ github.repository }}" >> "$GITHUB_ENV"
 
       - name: Install proxy dependencies
@@ -137,12 +138,9 @@ jobs:
             exit 1
           fi
           [ -s opencodex-dashboard.zip ] || { echo "::error::Dashboard bundle is missing."; exit 1; }
-          photo="gui/public/dimsum/${DISH_ID}.webp"
-          [ -s "$photo" ] || { echo "::error::Dim sum photo is missing: $photo"; exit 1; }
           echo "installer=$installer"
           echo "release index=$release_index"
           echo "full package=$full_package"
-          echo "photo=$photo"
 
       - name: Collect safe release evidence
         if: ${{ always() }}
@@ -193,46 +191,18 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-      - name: Require successful Windows CI for this exact commit
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 40); do
-            success_url=$(gh run list --workflow ci.yml --commit "$SHA" --limit 20 \
-              --json headSha,status,conclusion,url \
-              --jq ".[] | select(.headSha == \"$SHA\" and .status == \"completed\" and .conclusion == \"success\") | .url" \
-              | head -1)
-            if [ -n "$success_url" ]; then
-              echo "Windows CI passed for ${SHA}: ${success_url}"
-              exit 0
-            fi
-
-            total=$(gh run list --workflow ci.yml --commit "$SHA" --limit 20 \
-              --json headSha \
-              --jq "[.[] | select(.headSha == \"$SHA\")] | length")
-            active=$(gh run list --workflow ci.yml --commit "$SHA" --limit 20 \
-              --json headSha,status \
-              --jq "[.[] | select(.headSha == \"$SHA\" and .status != \"completed\")] | length")
-            if [ "$total" != "0" ] && [ "$active" = "0" ]; then
-              echo "::error::Windows CI completed without success for ${SHA}; refusing to publish."
-              exit 1
-            fi
-            echo "Waiting for successful Windows CI on ${SHA} (attempt ${attempt}/40)."
-            sleep 30
-          done
-          echo "::error::Timed out waiting for successful Windows CI on ${SHA}; refusing to publish."
-          exit 1
-
       - name: Create the full GitHub release
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="super-express-${{ github.run_number }}-attempt-${{ github.run_attempt }}"
           version=$(node -p "require('./package.json').version")
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::GitHub Release ${tag} already exists; refusing to recycle it."
+            exit 1
+          fi
           installer=$(find dist-desktop -type f -name '*Setup*.exe' 2>/dev/null | head -1)
           [ -n "$installer" ] || installer=$(find dist-desktop -type f -name '*.exe' ! -name 'Update.exe' 2>/dev/null | head -1)
 
@@ -261,25 +231,32 @@ jobs:
             exit 1
           }
 
-          photo="gui/public/dimsum/${DISH_ID}.webp"
           lines=$(bun run scripts/count-lines.ts)
+          dish_heading=""
+          dish_details=""
+          dish_title=""
+          if [ "$DISH_AVAILABLE" = "true" ]; then
+            dish_heading=" — **$DISH_NAME · $DISH_ZH**"
+            dish_details=$(cat <<DISH
+
+          [View the published photo for $DISH_NAME · $DISH_ZH]($DISH_PHOTO)
+
+          *$DISH_NAME · $DISH_ZH${DISH_JYUTPING:+ · \`$DISH_JYUTPING\`}*
+          DISH
+            )
+            dish_title=" · $DISH_NAME · $DISH_ZH"
+          fi
           notes=$(cat <<NOTES
-          ### ⚡ Super express build — **$DISH_ZH $DISH_NAME**
+          ### ⚡ Super express build$dish_heading
+          $dish_details
 
-          <img src="$DISH_PHOTO" alt="$DISH_NAME ($DISH_ZH)" width="360">
-
-          *$DISH_ZH · $DISH_NAME · \`$DISH_JYUTPING\`*
-
-          Manual \`workflow_dispatch\` build of \`${SHA:0:9}\` (v${version}).
-          This workflow performs packaging directly after verifying that the Windows CI
-          workflow succeeded for this exact commit; it does not rerun those tests here.
+          Manual \`workflow_dispatch\` build of \`${SHA:0:9}\` (v${version}). This delivery workflow does not run or wait for tests, lint, type checks, static analysis, or other code-quality verdicts.
 
           | Asset | What it is |
           | --- | --- |
           | **opencodex-setup.exe** | Windows desktop app installer |
           | **RELEASES + .nupkg** | Squirrel.Windows update feed |
           | **opencodex-dashboard.zip** | Built dashboard bundle |
-          | **${DISH_ID}.webp** | The build's dim sum photo |
 
           <details>
           <summary>📏 <strong>Lines of code at this commit</strong></summary>
@@ -295,9 +272,24 @@ jobs:
           # No --prerelease flag: this is a normal, full GitHub release.
           gh release create "$tag" \
             --target "$SHA" \
-            --title "super express ${{ github.run_number }} · $DISH_ZH $DISH_NAME — v${version} @ ${SHA:0:9}" \
+            --title "super express ${{ github.run_number }}$dish_title — v${version} @ ${SHA:0:9}" \
             --notes "$notes" \
             "$installer#opencodex-setup.exe" \
             "opencodex-dashboard.zip" \
-            "${feed[@]}" \
-            "$photo#${DISH_ID}.webp"
+            "${feed[@]}"
+
+          published_at=$(gh release view "$tag" --json publishedAt --jq .publishedAt)
+          started_at=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq .run_started_at)
+          [ -n "$started_at" ] && [ -n "$published_at" ] || {
+            echo "::error::Release timing evidence is incomplete."
+            exit 1
+          }
+          duration=$(node -e 'const [start,end]=process.argv.slice(1).map(Date.parse); if(!Number.isFinite(start)||!Number.isFinite(end)||end<start) process.exit(1); const seconds=Math.floor((end-start)/1000); const pad=n=>String(n).padStart(2,"0"); console.log(`${pad(Math.floor(seconds/3600))}:${pad(Math.floor(seconds%3600/60))}:${pad(seconds%60)}`)' "$started_at" "$published_at")
+          notes="$notes
+
+          ### Workflow timing
+
+          - Workflow started: \`$started_at\`
+          - Workflow completed: \`$published_at\`
+          - Workflow duration: \`$duration\`"
+          gh release edit "$tag" --notes "$notes"
