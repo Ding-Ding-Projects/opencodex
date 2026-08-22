@@ -55,6 +55,23 @@ afterEach(() => {
 const doc = (entries: Record<string, string>) => JSON.stringify({ version: VOCAB_SCHEMA_VERSION, entries });
 const file = (entries: Record<string, string>) => new File([doc(entries)], "vocabulary.json", { type: "application/json" });
 
+function deferredFile(entries: Record<string, string>): {
+  file: File;
+  resolve: () => void;
+} {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const candidate = file(entries);
+  Object.defineProperty(candidate, "text", {
+    configurable: true,
+    value: async () => {
+      await gate;
+      return doc(entries);
+    },
+  });
+  return { file: candidate, resolve: release };
+}
+
 describe("with no file ever loaded", () => {
   beforeEach(() => resetVocabularyForTests());
 
@@ -189,6 +206,60 @@ describe("clearing", () => {
     const storage = installGlobalStorage();
     expect(() => clearVocabulary(storage)).not.toThrow();
     expect(getActiveVocabularyEntries()).toBeNull();
+  });
+
+  test("a storage refusal keeps the last active vocabulary and reports failure", async () => {
+    const storage = installGlobalStorage();
+    await loadVocabularyFile(file({ p7k2: "q3zx" }), storage);
+    storage.setItem = () => { throw new Error("storage refused"); };
+
+    const result = await loadVocabularyFile(file({ r4m8: "s5n1" }), storage);
+
+    expect(result).toEqual({ ok: false, reason: "persistence-failed" });
+    expect(getActiveVocabularyEntries()).toEqual({ p7k2: "q3zx" });
+    expect(getVocabularySnapshot().lastRejection).toEqual({ reason: "persistence-failed" });
+  });
+
+  test("a remove refusal keeps memory aligned with the durable cache", async () => {
+    const storage = installGlobalStorage();
+    await loadVocabularyFile(file({ p7k2: "q3zx" }), storage);
+    storage.removeItem = () => { throw new Error("storage refused"); };
+
+    const result = clearVocabulary(storage);
+
+    expect(result).toEqual({ ok: false, reason: "clear-failed" });
+    expect(getActiveVocabularyEntries()).toEqual({ p7k2: "q3zx" });
+    expect(storage.raw.has("ocx-vocab:v1")).toBe(true);
+  });
+
+  test("an older upload completion cannot overwrite a newer upload", async () => {
+    const storage = installGlobalStorage();
+    const older = deferredFile({ p7k2: "q3zx" });
+    const olderResult = loadVocabularyFile(older.file, storage);
+    const newerResult = await loadVocabularyFile(file({ r4m8: "s5n1" }), storage);
+    older.resolve();
+
+    expect((await olderResult)).toEqual({ ok: false, reason: "superseded" });
+    expect(newerResult.ok).toBe(true);
+    expect(getActiveVocabularyEntries()).toEqual({ r4m8: "s5n1" });
+    expect(JSON.parse(storage.raw.get("ocx-vocab:v1")!)).toEqual({
+      version: VOCAB_SCHEMA_VERSION,
+      entries: { r4m8: "s5n1" },
+    });
+  });
+
+  test("a pending upload cannot resurrect vocabulary after clear", async () => {
+    const storage = installGlobalStorage();
+    await loadVocabularyFile(file({ p7k2: "q3zx" }), storage);
+    const pending = deferredFile({ r4m8: "s5n1" });
+    const pendingResult = loadVocabularyFile(pending.file, storage);
+    const clearResult = clearVocabulary(storage);
+    pending.resolve();
+
+    expect(clearResult).toEqual({ ok: true });
+    expect(await pendingResult).toEqual({ ok: false, reason: "superseded" });
+    expect(getActiveVocabularyEntries()).toBeNull();
+    expect(storage.raw.has("ocx-vocab:v1")).toBe(false);
   });
 });
 

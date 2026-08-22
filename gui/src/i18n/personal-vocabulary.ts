@@ -131,6 +131,16 @@ export type VocabParseResult =
   | { ok: true; doc: VocabDoc }
   | ({ ok: false } & VocabRejection);
 
+/** Failures from the local state machine rather than from the uploaded file. */
+export type VocabOperationReason = "persistence-failed" | "clear-failed" | "superseded";
+
+export interface VocabOperationFailure {
+  readonly reason: VocabOperationReason;
+}
+
+export type VocabLoadResult = VocabParseResult | ({ ok: false } & VocabOperationFailure);
+export type VocabClearResult = { ok: true } | ({ ok: false } & VocabOperationFailure);
+
 /* --------------------------------------------------------------------------
  * A minimal recursive-descent JSON parser.
  *
@@ -517,7 +527,7 @@ export interface VocabState {
   readonly loadedAt: number | null;
   /** The most recent rejection, if the most recent attempt to load a file
    *  failed. Cleared on the next successful load and on `clearVocabulary()`. */
-  readonly lastRejection: VocabRejection | null;
+  readonly lastRejection: (VocabRejection | VocabOperationFailure) | null;
 }
 
 const EMPTY_STATE: VocabState = { doc: null, loadedAt: null, lastRejection: null };
@@ -551,24 +561,28 @@ function readCache(storage?: VocabStorageLike): VocabDoc | null {
   }
 }
 
-function writeCache(doc: VocabDoc, storage?: VocabStorageLike): void {
+function writeCache(doc: VocabDoc, storage?: VocabStorageLike): boolean {
   const store = resolveStorage(storage);
-  if (!store) return;
+  if (!store) return false;
   try {
     store.setItem(VOCAB_STORAGE_KEY, JSON.stringify(doc));
+    return true;
   } catch {
-    /* Quota or private-mode refusal — the in-memory state still applies for
-     * the rest of this session; it simply will not survive a reload. */
+    /* Quota or private-mode refusal is a hard boundary: applying in memory
+     * would make the active state diverge from what a reload can recover. */
+    return false;
   }
 }
 
-function removeCache(storage?: VocabStorageLike): void {
+function removeCache(storage?: VocabStorageLike): boolean {
   const store = resolveStorage(storage);
-  if (!store) return;
+  if (!store) return false;
   try {
     store.removeItem(VOCAB_STORAGE_KEY);
+    return true;
   } catch {
-    /* ignore — nothing left to clean up if this refuses */
+    /* A refusal leaves the durable cache unknown, so memory must stay put. */
+    return false;
   }
 }
 
@@ -611,13 +625,22 @@ export function subscribeVocabulary(listener: () => void): () => void {
  * what was wrong without the rest of the app losing what was already working.
  * This is the "a rejected file never applies partially" half of the contract.
  */
-export async function loadVocabularyFile(file: File, storage?: VocabStorageLike): Promise<VocabParseResult> {
+let operationGeneration = 0;
+
+export async function loadVocabularyFile(file: File, storage?: VocabStorageLike): Promise<VocabLoadResult> {
+  ensureHydrated(storage);
+  const generation = ++operationGeneration;
   const result = await validateVocabularyFile(file);
+  if (generation !== operationGeneration) return { ok: false, reason: "superseded" };
   if (!result.ok) {
     setState({ ...state, lastRejection: { reason: result.reason, detail: result.detail } });
     return result;
   }
-  writeCache(result.doc, storage);
+  if (!writeCache(result.doc, storage)) {
+    setState({ ...state, lastRejection: { reason: "persistence-failed" } });
+    return { ok: false, reason: "persistence-failed" };
+  }
+  if (generation !== operationGeneration) return { ok: false, reason: "superseded" };
   setState({ doc: result.doc, loadedAt: Date.now(), lastRejection: null });
   return result;
 }
@@ -627,9 +650,16 @@ export async function loadVocabularyFile(file: File, storage?: VocabStorageLike)
  * every subsequent `translate()` call sees `entries === null` from the very
  * next render, because `setState` notifies every subscriber synchronously.
  */
-export function clearVocabulary(storage?: VocabStorageLike): void {
-  removeCache(storage);
+export function clearVocabulary(storage?: VocabStorageLike): VocabClearResult {
+  ensureHydrated(storage);
+  const generation = ++operationGeneration;
+  if (!removeCache(storage)) {
+    setState({ ...state, lastRejection: { reason: "clear-failed" } });
+    return { ok: false, reason: "clear-failed" };
+  }
+  if (generation !== operationGeneration) return { ok: false, reason: "superseded" };
   setState(EMPTY_STATE);
+  return { ok: true };
 }
 
 /** Test-only: reset the module singleton between tests without touching
@@ -642,5 +672,6 @@ export function resetVocabularyForTests(): void {
   compiledForEntries = null;
   compiledPattern = null;
   compiledLookup = null;
+  operationGeneration = 0;
   listeners.clear();
 }
