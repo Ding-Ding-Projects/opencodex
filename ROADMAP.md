@@ -1,15 +1,26 @@
 # Roadmap
 
+## Current integration closeout — 2026-08-21
+
+- [x] Remove the interactive GitHub-star prompt, marker, startup call, and `gh` mutation route; retain no user-facing star prompt.
+- [x] Repair the stale in-app docs bundle, packaged icon stdout contamination, app-name identity assertion, parity evidence hashes, and notification teardown race.
+- [x] Integrate the ready recovery, docs vocabulary/School mode, design-reference, dashboard/updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle, package-contract, line-attribution, docs-site, and network-safety lanes into `dev` at `76566f01f12048042f1ca257df4adb1f7a99b32c`.
+- [x] Push `dev` and independently prove `origin/dev` contains the exact local tip.
+- [ ] Obtain a green CI verdict for the current exact tip; the prior failed run is recorded in `HANDOFF.md`, and the full blob-based line counter remains locally unverified after its bounded timeout.
+- [ ] Complete the 63 partial shared-contract rows, including documentation-site parity, real built-artifact interaction proof, and the required captures; do not promote a row from `partial` on source evidence alone.
+- [ ] Build/install/exercise the real unsigned Squirrel artifact and publish one new release only after exact-SHA CI, artifact hashes, release timing, line attribution, and public dim-sum metadata are verified.
+- [ ] Complete the ancestry-proven cleanup for only task-owned inactive merged branches/worktrees; retain active, unfinished, other-task, Go-port, and ownership-uncertain work.
+
 ## Backend recovery closeout — 2026-08-21
 
 - [x] Integrate source-verified startup recovery, forced native-config restore, owner-safe proxy handling, updater scheduling, installer branding/PATH, protocol/provider, service, observability, catalog, and collaboration backend batches.
 - [x] Preserve the first checked-in `design/` source and add exact manifest/tree/blob/hash/size/package/reparse privacy validation.
 - [x] Preserve every paused UI/design and unfinished backend lane on its owning branch for handoff.
-- [ ] Merge the backend integration into the default branch after the closeout preservation/dew pass.
+- [x] Merge the backend integration into the `dev` integration branch and dew the exact integrated tip; promotion to the release `main` jer remains a separate release action.
 - [ ] Reconcile the replacement UI and integrate the personal-vocabulary, updater UI, dashboard health, and design-parity checkpoints.
 - [ ] Finish native Go issue #17 parity and the remaining Antigravity, network/vault, architecture, and reset-credit review gaps.
 - [ ] Build and exercise the real unsigned Squirrel installer, then publish and verify a new release.
-- [ ] Capture the real built desktop through the required cheap headless route after UI work resumes.
+- [ ] Capture the real built desktop through the required approved headless route after UI work resumes.
 
 ## Service, remote-login, and ACL ports — 2026-08-21
 

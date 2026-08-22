@@ -1,5 +1,30 @@
 # Handoff
 
+## Current integration closeout — 2026-08-21, `dev` at `76566f01f12048042f1ca257df4adb1f7a99b32c`
+
+The primary integration checkout is clean and matches `origin/dev` at the exact SHA above. This
+closeout removed the interactive GitHub-star prompt and its `gh` mutation path, repaired the stale
+docs bundle and packaging stdout check, and integrated the ready recovery, vocabulary, design-route,
+dashboard, updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle,
+package-contract, line-attribution, docs-site, and network-safety lanes into `dev`.
+
+### Verified local evidence
+
+- Star-prompt/link/package focused checks: 20 passed, 0 failed, 64 assertions; GUI app-name/docs checks: 39 passed, 0 failed, 464 assertions.
+- Recovery focused batch: 68 passed, 0 failed, 268 assertions.
+- Docs vocabulary/School mode: 21 passed, 0 failed, 75 assertions; app vocabulary/i18n: 69 passed, 0 failed, 3,750 assertions.
+- Design determinism/routes/parity: 16 passed, 0 failed, 1,055 assertions; parity remains `stale-evidence` until the approved real built-artifact capture route supplies fresh receipts.
+- Dashboard/updater: 23 passed, 0 failed, 132 assertions; bootstrap: 22 passed, 0 failed, 87 assertions; workflow/release: 77 passed, 0 failed, 999 assertions.
+- Auth/account lifecycle: 159 passed, 0 failed, 526 assertions; OAuth/network/export/config: 172 passed, 0 failed, 718 assertions; docs-site: 290 passed, 1 skipped, 0 failed, 2,449 assertions.
+- Typecheck and privacy scan passed before the integration wave; the full blob-based line counter exceeded a 100-second bounded diagnostic window without a verdict and is not claimed green.
+
+### External and retained state
+
+- The previous failed remote verdict at `01a429e8662f73372dba8831f3d83ac668c68ba3` is recorded in Dashboard preview run `32543644369`: an unhandled React `window.event` error after a late notification update. The provider teardown fix is now in `gui/src/shell/notifications.tsx` with a focused regression; new exact-tip CI evidence is still pending.
+- Two host-bound live-process runtime probes remain unverified because `Get-CimInstance` could not inspect the spawned process on this host; source/archive/service checks are green.
+- UI parity, fresh installer execution, exact release publication, and approved headless real-capture evidence remain open. No release is claimed from this closeout.
+- The four non-ancestor local branches `codex/port-antigravity`, `codex/port-architecture-foundations`, `codex/port-network-security`, and the `dev2-go` port lines were inspected; network/security work is integrated, while provider-specific, unfinished architecture, and Go-port work remain preserved in clean worktrees.
+
 ## Backend recovery closeout — 2026-08-21
 
 The task-owned integration branch is `codex/backend-recovery-integration` at `a3b7aba42992cb0183c14da7483b5d79c977cd87`. At the time this handoff was written it was local and had not yet been pushed or merged into the default branch.
@@ -148,7 +173,7 @@ purpose, since a launcher accepting an unvalidated argument is worse than none.
   normalizes on read — but a test that reads the working tree will fail. Write binary, or pass
   `newline=""`.
 
-### Two retained jers, deliberately
+### Two retained branches, deliberately
 
 `feat/w2-schoolmode` and `feat/w3-shortcuts` each hold one commit that is **not** an ancestor of
 `main`. Both are preservation checkpoints, and their own commit messages say so. Their diffs against
