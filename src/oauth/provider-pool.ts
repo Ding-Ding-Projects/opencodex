@@ -643,7 +643,7 @@ export function canRefreshOAuthPoolAccount(provider: string, accountId: string):
  * project id, the generation used for 401 replay). A pooled request that carries
  * account B's bearer alongside account A's metadata authenticates as B and routes as A.
  */
-export async function getOAuthPoolAccessSnapshot(provider: string, accountId: string): Promise<OAuthAccessSnapshot> {
+export async function getOAuthPoolAccessSnapshot(provider: string, accountId: string, destination?: string): Promise<OAuthAccessSnapshot> {
   const stored = getAccountCredential(provider, accountId);
   if (!stored) {
     const { OAuthLoginRequiredError } = await import("./index");
@@ -657,7 +657,8 @@ export async function getOAuthPoolAccessSnapshot(provider: string, accountId: st
   if (!canRefreshOAuthPoolAccount(provider, accountId)) {
     throw new Error("background local-cli token expired; refuse CLI-adopting refresh for pool");
   }
-  return getAccessSnapshotForAccount(provider, accountId);
+  const snapshot = await getAccessSnapshotForAccount(provider, accountId, destination);
+  return destination ? { ...snapshot, destination } : snapshot;
 }
 
 /** Bearer-only convenience wrapper over {@link getOAuthPoolAccessSnapshot}. */
