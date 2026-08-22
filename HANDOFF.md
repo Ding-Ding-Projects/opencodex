@@ -1,9 +1,9 @@
 # Handoff
 
-## Current integration closeout — 2026-08-21, final integrated tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`
+## Current integration closeout — 2026-08-21, final integrated tip `dfbd25e113a71add06106223d843d0c1533bc410`
 
 The primary integration checkout is clean and `origin/dev` independently matches
-`b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`. This closeout removed the interactive GitHub-star
+`dfbd25e113a71add06106223d843d0c1533bc410`. This closeout removed the interactive GitHub-star
 prompt and its `gh` mutation path, regenerated the in-app documentation bundle from all 40
 English Markdown articles, repaired the GUI lint baseline, and integrated the ready recovery,
 vocabulary, design-route, dashboard, updater, build/bootstrap, branding/embed, release-workflow,
@@ -25,7 +25,7 @@ ancestry proofs; active Go-port, unfinished, legacy, and ownership-uncertain wor
 
 ### External and retained state
 
-- Dashboard preview run `32546729592` passed for the preceding `a291d442a95f718abfd207589950d7d8fd725633` tree; it is superseded by the final merged tip. Final exact-tip runs for `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd` are Windows CI `32547215873` and Dashboard preview `32547215765`; their terminal conclusions remain pending at handoff time.
+- Dashboard preview run `32546729592` passed for the preceding `a291d442a95f718abfd207589950d7d8fd725633` tree; it is superseded by the final merged tip. Final exact-tip runs for `dfbd25e113a71add06106223d843d0c1533bc410` are Windows CI `32547361439` and Dashboard preview `32547362526`; their terminal conclusions remain pending at handoff time.
 - Two host-bound live-process runtime probes remain unverified because `Get-CimInstance` could not inspect the spawned process on this host; source/archive/service checks are green.
 - UI parity, fresh installer execution, exact release publication, and approved headless real-capture evidence remain open. No release is claimed from this closeout.
 - The retained non-task branches are `codex/port-antigravity`, `codex/port-architecture-foundations`, `codex/port-go-parity`, `codex/forward-bun-proxy-startup-dev2-go`, and the older recovery/shortcut branches. Network/security work is integrated; provider-specific, unfinished architecture, and Go-port work remain preserved in clean worktrees or clean local branches.
