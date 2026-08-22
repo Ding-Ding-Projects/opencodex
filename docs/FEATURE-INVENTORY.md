@@ -6,13 +6,16 @@ That is 2% done. Zero rows are `absent`; every applicable row is `partial` or `p
 required part of the release evidence chain is absent or unlinked. Source code, a focused test, or
 a PNG on its own is not a complete contract.
 
-Current integration re-derivation **2026-08-21** is bound to `76566f01f12048042f1ca257df4adb1f7a99b32c`.
+Current integration re-derivation **2026-08-21** is carried forward to final documentation tip
+`e1cf37874e4cb148ae37f793e031977c8893f52a`; the completeness count below remains the last
+hand-audited result, not a fresh built-artifact re-audit.
 The hand-written inventory currently reads **1 present, 63 partial, 0 absent, 1 not applicable**.
 This pass added the docs-site vocabulary and School-mode routes, deterministic design-reference and
 parity records, fresh-checkout build scripts, product branding/embed assets, surviving-line release
-attribution, provider credential-vault/network safety, and a notification teardown regression. The
-remaining `partial` rows still lack at least one required per-surface article, localization link,
-built-artifact interaction proof, or real capture; the count is not a completion claim.
+attribution, provider credential-vault/network safety, a notification teardown regression, a
+regenerated 40-article in-app documentation bundle, and GUI lint repairs. The remaining `partial`
+rows still lack at least one required per-surface article, localization link, built-artifact
+interaction proof, or real capture; the count is not a completion claim.
 
 Re-derived **2026-08-20** against exact commit
 `8924132d9021458bdb4dfbc220b6b3a5780204a6` in the sparse audit checkout. Five read-only evidence
