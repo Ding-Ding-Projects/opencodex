@@ -17,6 +17,8 @@ import { rehypeBasePath } from "./src/plugins/rehype-base-path.mjs";
 // somewhere else; the defaults keep the canonical domain behaviour unchanged.
 const SITE_URL = process.env.DOCS_SITE_URL?.trim() || "https://opencodex.me";
 const BASE = process.env.DOCS_BASE?.trim() || undefined;
+const SOCIAL_IMAGE_ALT =
+  "opencodex dashboard showing providers routed through one local proxy";
 
 /**
  * The base as a URL prefix, normalised to "" or "/thing" (never a trailing slash).
@@ -153,11 +155,17 @@ export default defineConfig({
       head: [
         // Google favicon guidelines: PNG at a multiple of 48px, exposed via rel="icon".
         { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "192x192", href: `${BASE_PATH}/favicon.png` } },
-        { tag: "meta", attrs: { property: "og:image", content: `${SITE_URL}${BASE_PATH}/og.png` } },
-        { tag: "meta", attrs: { property: "og:image:width", content: "1200" } },
-        { tag: "meta", attrs: { property: "og:image:height", content: "630" } },
+        // Starlight emits the page-specific Open Graph title, description, URL,
+        // type, locale, and site name. These additions supply the product image
+        // details it does not generate. Social crawlers do not execute
+        // JavaScript, so none of this metadata belongs in a client island.
+        { tag: "meta", attrs: { property: "og:image", content: `${SITE_URL}${BASE_PATH}/social-preview.png` } },
+        { tag: "meta", attrs: { property: "og:image:width", content: "1280" } },
+        { tag: "meta", attrs: { property: "og:image:height", content: "640" } },
+        { tag: "meta", attrs: { property: "og:image:alt", content: SOCIAL_IMAGE_ALT } },
         { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
-        { tag: "meta", attrs: { name: "twitter:image", content: `${SITE_URL}${BASE_PATH}/og.png` } },
+        { tag: "meta", attrs: { name: "twitter:image", content: `${SITE_URL}${BASE_PATH}/social-preview.png` } },
+        { tag: "meta", attrs: { name: "twitter:image:alt", content: SOCIAL_IMAGE_ALT } },
         { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: light)", content: "#ffffff" } },
         { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: dark)", content: "#212121" } },
       ],
@@ -205,6 +213,7 @@ export default defineConfig({
             { label: "Tab Groups & Tab Search", translations: { ko: "탭 그룹 & 탭 검색", "zh-CN": "标签分组与搜索", ru: "Группы вкладок и поиск", ja: "タブグループ & タブ検索" }, slug: "guides/tab-groups-and-search" },
             { label: "Renaming the app", translations: { ko: "앱 이름 바꾸기", "zh-CN": "重命名应用", ru: "Переименование приложения", ja: "アプリ名の変更" }, slug: "guides/rename-the-app" },
             { label: "Personal vocabulary", translations: { ko: "개인 용어", "zh-CN": "个人词汇", ru: "Личные термины", ja: "個人用語" }, slug: "guides/personal-vocabulary" },
+            { label: "Branding and link embeds", slug: "guides/branding-and-link-embeds" },
             { label: "Launcher & Terminal", translations: { ko: "런처 & 터미널", "zh-CN": "启动器与终端", ru: "Лаунчер и терминал", ja: "ランチャー & ターミナル" }, slug: "guides/launcher-and-terminal" },
             { label: "Log Files", translations: { ko: "로그 파일", "zh-CN": "日志文件", ru: "Файлы логов", ja: "ログファイル" }, slug: "guides/log-files" },
             { label: "Debug Sandbox", translations: { ko: "디버그 샌드박스", "zh-CN": "调试沙盒", ru: "Отладочная песочница", ja: "デバッグサンドボックス" }, slug: "guides/debug-sandbox" },

@@ -85,7 +85,7 @@ win:
   target:
     - target: squirrel
       arch: [x64]
-  icon: assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico
+  icon: gui/public/opencodex.ico
   # Code signing is permanently disabled. Keep all three controls explicit so
   # neither electron-builder nor the Squirrel target can discover or invoke a
   # signer when a developer machine happens to have credentials installed.
@@ -131,10 +131,9 @@ squirrelWindows:
   # correctly presented OpenCodex label. This is the name Squirrel uses for the
   # package and feed, not a second display-name setting.
   name: opencodex-desktop
-  # Add/Remove Programs reads this URL directly. It must be immutable public
-  # HTTPS content, not a mutable remote default or a path that only exists in a
-  # developer checkout. The docs-site publishes the byte-identical ICO.
-  iconUrl: https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico
+  # Add/Remove Programs and Squirrel update metadata need a public HTTPS icon;
+  # embedding an icon in the executable does not populate those surfaces.
+  iconUrl: https://opencodex.me/opencodex.ico
 
 # The installed shell consumes these GitHub release assets through Electron's
 # built-in Squirrel updater. Publication remains owned by the release workflow;
