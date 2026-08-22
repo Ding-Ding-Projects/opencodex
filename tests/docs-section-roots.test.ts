@@ -93,8 +93,8 @@ describe("the README's documentation links", () => {
     // never ran, and the single `expect()` inside it never executed: a guard
     // written for a real 404 that could not have caught that 404 again.
     const paths = [
-      ...readme.matchAll(/https:\/\/opencodex\.me\/([a-z0-9/-]*)/g),
-      ...readme.matchAll(/https:\/\/[a-z.-]*github\.io\/opencodex\/([a-z0-9/-]*)/g),
+      ...readme.matchAll(/https:\/\/opencodex\.me\/([a-z0-9./-]*)/g),
+      ...readme.matchAll(/https:\/\/[a-z.-]*github\.io\/opencodex\/([a-z0-9./-]*)/g),
     ]
       .map(m => m[1].replace(/\/$/, ""))
       .filter(Boolean);
@@ -107,7 +107,14 @@ describe("the README's documentation links", () => {
     for (const path of paths) {
       const isPage = [".md", ".mdx"].some(ext => existsSync(join(DOCS, `${path}${ext}`)));
       const isCoveredSection = hasIndexPage(path) || config.includes(`"/${path}"`);
-      expect(`${path} resolves: ${isPage || isCoveredSection}`).toBe(`${path} resolves: true`);
+      // The README also links shipped static assets -- the content-addressed
+      // brand icon under /assets/ that Squirrel's Add/Remove Programs entry
+      // reuses. Starlight serves public/ verbatim, so a file that exists there
+      // resolves exactly as a page does; an asset link whose file is NOT
+      // shipped still fails this check like any other dead URL.
+      const isShippedAsset = existsSync(join("docs-site", "public", path));
+      expect(`${path} resolves: ${isPage || isCoveredSection || isShippedAsset}`)
+        .toBe(`${path} resolves: true`);
     }
   });
 

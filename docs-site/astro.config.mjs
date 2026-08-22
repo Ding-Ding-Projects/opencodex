@@ -79,7 +79,7 @@ export default defineConfig({
     "/getting-started": `${BASE_PATH}/getting-started/installation`,
     "/guides": `${BASE_PATH}/guides/providers`,
     "/reference": `${BASE_PATH}/reference/cli`,
-    "/troubleshooting": `${BASE_PATH}/troubleshooting/windows-memory`,
+    "/troubleshooting": `${BASE_PATH}/troubleshooting/bun-startup-crashes`,
   },
   // lightningcss merges animation-timeline into the `animation` shorthand,
   // which Chrome cannot parse — the scroll-driven animations die silently.
