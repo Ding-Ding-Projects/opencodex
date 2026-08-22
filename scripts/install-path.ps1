@@ -117,6 +117,286 @@ function Add-NpmGlobalBinToUserPath {
     }
 }
 
+function Add-DesktopCliPath {
+    <#
+    Desktop-only transactional wrapper. The npm installer intentionally keeps
+    its historical process-refresh behaviour; the Squirrel lifecycle cannot
+    leave a half-repaired user PATH behind when its short-lived helper fails.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BinDir,
+        [scriptblock]$ReadMachinePath = { [Environment]::GetEnvironmentVariable("Path", "Machine") },
+        [scriptblock]$ReadUserPath = { [Environment]::GetEnvironmentVariable("Path", "User") },
+        [scriptblock]$WriteUserPath = { param([string]$Path) [Environment]::SetEnvironmentVariable("Path", $Path, "User") },
+        [scriptblock]$ReadProcessPath = { $env:Path },
+        [scriptblock]$WriteProcessPath = { param([string]$Path) $env:Path = $Path },
+        [string[]]$ResolvedOcxPaths = @(),
+        [switch]$ForceFailure
+    )
+
+    $beforeUser = [string](& $ReadUserPath)
+    $beforeProcess = [string](& $ReadProcessPath)
+    $pathState = @{
+        User = $beforeUser; Process = $beforeProcess
+        UserMutated = $false; ProcessMutated = $false
+    }
+    $casUserPath = {
+        param([string]$Path)
+        $expected = $pathState.User
+        $pathState.User = $Path
+        $pathState.UserMutated = $pathState.User -cne $beforeUser
+        Set-PathCompareAndSwap -ReadPath $ReadUserPath -WritePath $WriteUserPath -Expected $expected -Before $expected -After $Path
+    }.GetNewClosure()
+    $casProcessPath = {
+        param([string]$Path)
+        $expected = $pathState.Process
+        $pathState.Process = $Path
+        $pathState.ProcessMutated = $pathState.Process -cne $beforeProcess
+        Set-PathCompareAndSwap -ReadPath $ReadProcessPath -WritePath $WriteProcessPath -Expected $expected -Before $expected -After $Path
+    }.GetNewClosure()
+    $recovered = $false
+    try {
+        $repair = Add-NpmGlobalBinToUserPath -NpmGlobalBin $BinDir -TestDirectory { $true } -ReadUserPath $ReadUserPath -WriteUserPath $casUserPath -ReadProcessPath $ReadProcessPath -WriteProcessPath $casProcessPath
+        if ($repair.ProcessPathRefreshFailed) {
+            throw "the process PATH could not be refreshed"
+        }
+        if ($ForceFailure) {
+            throw "forced desktop PATH transaction failure"
+        }
+        $machineValue = & $ReadMachinePath
+        $userValue = & $ReadUserPath
+        $freshShellPath = @($machineValue, $userValue) -join ";"
+        $resolved = if ($ResolvedOcxPaths -and $ResolvedOcxPaths.Count -gt 0) { $ResolvedOcxPaths } else { Get-OcxCommandPaths -PathValue $freshShellPath }
+        $collision = Resolve-OcxPathCollision -NpmGlobalBin $BinDir -ResolvedOcxPaths $resolved -ReadMachinePath $ReadMachinePath -ReadUserPath $ReadUserPath -WriteUserPath $casUserPath -ReadProcessPath $ReadProcessPath -WriteProcessPath $casProcessPath
+        return [pscustomobject]@{
+            Ok = $true
+            UserPathChanged = $repair.UserPathChanged
+            ProcessPathChanged = $repair.ProcessPathChanged
+            Collision = $collision.Collision
+            Winner = $collision.Winner
+            Reordered = $collision.Reordered
+            MachineBlocked = $collision.MachineBlocked
+            TransactionRecovered = $true
+            RollbackFailed = $false
+        }
+    } catch {
+        try {
+            $userRollback = Restore-PathCompareAndSwap -ReadPath $ReadUserPath -WritePath $WriteUserPath -Before $beforeUser -Written $pathState.User -Mutated $pathState.UserMutated
+            $processRollback = Restore-PathCompareAndSwap -ReadPath $ReadProcessPath -WritePath $WriteProcessPath -Before $beforeProcess -Written $pathState.Process -Mutated $pathState.ProcessMutated
+            $recovered = $userRollback.Recovered -and $processRollback.Recovered
+            $rollbackFailed = $userRollback.Failed -or $processRollback.Failed
+        } catch {
+            $recovered = $false
+            $rollbackFailed = $true
+        }
+        return [pscustomobject]@{
+            Ok = $false
+            Reason = $_.Exception.Message
+            TransactionRecovered = $recovered
+            RollbackFailed = $rollbackFailed
+            PathConflict = -not $recovered
+        }
+    }
+}
+
+function Set-PathCompareAndSwap {
+    param(
+        [scriptblock]$ReadPath,
+        [scriptblock]$WritePath,
+        [string]$Expected,
+        [string]$Before,
+        [string]$After
+    )
+    $current = [string](& $ReadPath)
+    if ($current -cne $Expected) { throw "PATH changed concurrently before write" }
+    if ($After -cne $Before) { & $WritePath $After }
+    $verified = [string](& $ReadPath)
+    if ($verified -cne $After) { throw "PATH changed concurrently during write" }
+    return $After
+}
+
+function Restore-PathCompareAndSwap {
+    param(
+        [scriptblock]$ReadPath,
+        [scriptblock]$WritePath,
+        [string]$Before,
+        [string]$Written,
+        [bool]$Mutated
+    )
+    if (-not $Mutated) { return [pscustomobject]@{ Recovered = $true; Failed = $false } }
+    $current = [string](& $ReadPath)
+    if ($current -cne $Written) {
+        return [pscustomobject]@{ Recovered = $false; Failed = $true }
+    }
+    & $WritePath $Before
+    if ([string](& $ReadPath) -cne $Before) {
+        return [pscustomobject]@{ Recovered = $false; Failed = $true }
+    }
+    return [pscustomobject]@{ Recovered = $true; Failed = $false }
+}
+
+function Remove-OcxPathRegistration {
+    <#
+    Remove only a registration proven to belong to this build. The exact shim
+    bytes are the ownership marker; a missing or edited shim is never a target.
+    PATH changes and empty-directory removal are one transaction. The shim is
+    first atomically claimed into a unique quarantine path, then its claimed
+    bytes are inspected. An unowned claim is atomically restored when possible;
+    a concurrent replacement is preserved and the quarantine is reported.
+    No recursive deletion is used.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BinDir,
+        [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$ShimPath,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$ExpectedShimContent,
+        [scriptblock]$ReadUserPath = { [Environment]::GetEnvironmentVariable("Path", "User") },
+        [scriptblock]$WriteUserPath = { param([string]$Path) [Environment]::SetEnvironmentVariable("Path", $Path, "User") },
+        [scriptblock]$ReadProcessPath = { $env:Path },
+        [scriptblock]$WriteProcessPath = { param([string]$Path) $env:Path = $Path },
+        [scriptblock]$ReadShim = { if (Test-Path -LiteralPath $ShimPath -PathType Leaf) { [pscustomobject]@{ Exists = $true; Content = [IO.File]::ReadAllText($ShimPath) } } else { [pscustomobject]@{ Exists = $false; Content = $null } } },
+        [scriptblock]$NewClaimPath = { param([string]$Path) "$Path.ocx-claim-$([guid]::NewGuid().ToString('N')).tmp" },
+        [scriptblock]$ClaimShim = { param([string]$ClaimPath) Move-Item -LiteralPath $ShimPath -Destination $ClaimPath },
+        [scriptblock]$ReadClaim = { param([string]$ClaimPath) [IO.File]::ReadAllText($ClaimPath) },
+        [scriptblock]$RestoreClaim = { param([string]$ClaimPath) Move-Item -LiteralPath $ClaimPath -Destination $ShimPath },
+        [scriptblock]$RemoveClaim = { param([string]$ClaimPath) Remove-Item -LiteralPath $ClaimPath -Force },
+        [scriptblock]$TestShim = { Test-Path -LiteralPath $ShimPath -PathType Leaf },
+        [scriptblock]$TestDirectory = { Test-Path -LiteralPath $BinDir -PathType Container },
+        [scriptblock]$GetDirectoryEntries = { Get-ChildItem -LiteralPath $BinDir -Force },
+        [scriptblock]$RemoveDirectory = { Remove-Item -LiteralPath $BinDir -Force },
+        [scriptblock]$CreateDirectory = { [IO.Directory]::CreateDirectory($BinDir) | Out-Null }
+    )
+
+    $shim = & $ReadShim
+    if (-not $shim.Exists) {
+        return [pscustomobject]@{ Ok = $true; Owned = $false; Removed = $false; Reason = "the stable ocx shim does not exist" }
+    }
+
+    $beforeUser = [string](& $ReadUserPath)
+    $beforeProcess = [string](& $ReadProcessPath)
+    $pathState = @{
+        User = $beforeUser; Process = $beforeProcess
+        UserMutated = $false; ProcessMutated = $false
+    }
+    $casUserPath = {
+        param([string]$Path)
+        $expected = $pathState.User
+        $pathState.User = $Path
+        $pathState.UserMutated = $pathState.User -cne $beforeUser
+        Set-PathCompareAndSwap -ReadPath $ReadUserPath -WritePath $WriteUserPath -Expected $expected -Before $expected -After $Path
+    }.GetNewClosure()
+    $casProcessPath = {
+        param([string]$Path)
+        $expected = $pathState.Process
+        $pathState.Process = $Path
+        $pathState.ProcessMutated = $pathState.Process -cne $beforeProcess
+        Set-PathCompareAndSwap -ReadPath $ReadProcessPath -WritePath $WriteProcessPath -Expected $expected -Before $expected -After $Path
+    }.GetNewClosure()
+    $userChanged = $false
+    $processChanged = $false
+    $dirRemoved = $false
+    $claimPath = $null
+    $claimAcquired = $false
+    $claimOwned = $false
+    $claimRemoved = $false
+    $replacementConflict = $false
+    try {
+        # Move-Item is a same-volume rename here: it claims the exact inode
+        # before any byte inspection or PATH mutation, so a concurrent writer
+        # cannot be mistaken for the file we just inspected.
+        $claimPath = & $NewClaimPath $ShimPath
+        & $ClaimShim $claimPath
+        $claimAcquired = $true
+        $claimedContent = [string](& $ReadClaim $claimPath)
+        $claimOwned = $claimedContent -ceq $ExpectedShimContent
+        if (-not $claimOwned) {
+            if (-not (& $TestShim)) {
+                try {
+                    & $RestoreClaim $claimPath
+                } catch {
+                    $replacementConflict = $true
+                    throw "an unowned replacement ocx shim appeared during claim restore; quarantine preserved"
+                }
+                $claimRemoved = $true
+                return [pscustomobject]@{ Ok = $true; Owned = $false; Removed = $false; Reason = "the stable ocx shim is not owned by this install"; TransactionRecovered = $true; RollbackFailed = $false }
+            }
+            # A replacement appeared after the claim. Preserve the quarantine
+            # and the replacement rather than overwriting either one.
+            $replacementConflict = $true
+            return [pscustomobject]@{ Ok = $false; Owned = $false; Removed = $false; Reason = "an unowned replacement ocx shim appeared during uninstall; quarantine preserved"; TransactionRecovered = $true; RollbackFailed = $false; ReplacementConflict = $true; ClaimPath = $claimPath }
+        }
+
+        $normalizedBin = Normalize-WindowsPathEntry $BinDir
+        $userEntries = if ([string]::IsNullOrWhiteSpace($beforeUser)) { @() } else { @($beforeUser -split ";") }
+        $newUserEntries = @($userEntries | Where-Object { (Normalize-WindowsPathEntry $_) -ine $normalizedBin })
+        $newUser = $newUserEntries -join ";"
+        if ($newUser -cne $beforeUser) {
+            & $casUserPath $newUser
+            $userChanged = $true
+        }
+
+        $processEntries = if ([string]::IsNullOrWhiteSpace($beforeProcess)) { @() } else { @($beforeProcess -split ";") }
+        $newProcessEntries = @($processEntries | Where-Object { (Normalize-WindowsPathEntry $_) -ine $normalizedBin })
+        $newProcess = $newProcessEntries -join ";"
+        if ($newProcess -cne $beforeProcess) {
+            & $casProcessPath $newProcess
+            $processChanged = $true
+        }
+
+        # Never delete a replacement that appeared after the atomic claim.
+        if (& $TestShim) {
+            $replacementConflict = $true
+            throw "a replacement ocx shim appeared during uninstall; quarantine preserved"
+        }
+        if (& $TestDirectory) {
+            $children = @(& $GetDirectoryEntries)
+            if ($children.Count -eq 0) {
+                & $RemoveDirectory
+                $dirRemoved = $true
+            }
+        }
+        # A replacement can appear after the first destination check. Refuse
+        # final claim deletion when the destination is occupied, preserving
+        # both files and returning the quarantine path to the caller.
+        if (& $TestShim) {
+            $replacementConflict = $true
+            throw "a replacement ocx shim appeared before claim deletion; quarantine preserved"
+        }
+        # Delete the claimed bytes only after every reversible directory step
+        # has succeeded. If this final delete fails, the claim can still be
+        # atomically restored to the stable path.
+        & $RemoveClaim $claimPath
+        $claimRemoved = $true
+        return [pscustomobject]@{
+            Ok = $true; Owned = $true; Removed = $true
+            UserPathChanged = $userChanged; ProcessPathChanged = $processChanged; StableDirRemoved = $dirRemoved
+            TransactionRecovered = $true; RollbackFailed = $false
+        }
+    } catch {
+        $recovered = $true
+        try {
+            $userRollback = Restore-PathCompareAndSwap -ReadPath $ReadUserPath -WritePath $WriteUserPath -Before $beforeUser -Written $pathState.User -Mutated $pathState.UserMutated
+            $processRollback = Restore-PathCompareAndSwap -ReadPath $ReadProcessPath -WritePath $WriteProcessPath -Before $beforeProcess -Written $pathState.Process -Mutated $pathState.ProcessMutated
+            $recovered = $userRollback.Recovered -and $processRollback.Recovered
+            $rollbackFailed = $userRollback.Failed -or $processRollback.Failed
+            if ($claimAcquired -and -not $claimRemoved -and $null -ne $claimPath) {
+                if ($dirRemoved -and -not (& $TestShim)) { & $CreateDirectory }
+                if (-not (& $TestShim)) { & $RestoreClaim $claimPath; $claimRemoved = $true }
+            }
+        } catch {
+            $recovered = $false
+            $rollbackFailed = $true
+        }
+        return [pscustomobject]@{
+            Ok = $false; Owned = $claimOwned; Removed = $false; Reason = $_.Exception.Message
+            TransactionRecovered = $recovered; RollbackFailed = $rollbackFailed
+            ReplacementConflict = $replacementConflict; PathConflict = -not $recovered
+            ClaimPath = if ($claimAcquired -and -not $claimRemoved) { $claimPath } else { $null }
+        }
+    }
+}
+
 function Get-OcxCommandPaths {
     <#
     .SYNOPSIS
@@ -128,14 +408,15 @@ function Get-OcxCommandPaths {
     shell, an npm script, or a CI runner would never invoke — which would
     report a "collision" that does not actually exist for anything other than
     this one interactive session. Walking PATH by hand and testing each
-    directory for `ocx.cmd` / `ocx.exe` / `ocx` (PATHEXT order) answers the
+    directory for `ocx` plus the actual PATHEXT suffixes answers the
     question this script actually needs: which file does this fork's shim
     have to beat to be the one that runs.
     #>
     param(
         [AllowNull()]
         [string]$PathValue,
-        [string[]]$Extensions = @(".cmd", ".exe", ""),
+        [string]$PathextValue = $env:PATHEXT,
+        [string[]]$Extensions,
         [scriptblock]$TestFile = {
             param([string]$Path)
             Test-Path -LiteralPath $Path -PathType Leaf
@@ -151,6 +432,10 @@ function Get-OcxCommandPaths {
     # in Resolve-OcxPathCollision below misfire. `,$found` forces the array to
     # survive the return intact at every length.
     if ([string]::IsNullOrWhiteSpace($PathValue)) { return ,$found }
+    if (-not $Extensions -or $Extensions.Count -eq 0) {
+        $Extensions = @($PathextValue -split ";" | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+        if (-not $Extensions -or $Extensions.Count -eq 0) { $Extensions = @(".com", ".exe", ".bat", ".cmd") }
+    }
 
     foreach ($dir in ($PathValue -split ";")) {
         $trimmed = $dir.Trim()

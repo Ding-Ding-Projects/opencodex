@@ -21,6 +21,9 @@ import { providerConfigSeed } from "../providers/derive";
 import type { DataPlaneApiKeyPurpose, OcxConfig, OcxProviderConfig } from "../types";
 import { providerConfigurationState, providerHasConfiguredApiKey } from "../providers/setup-status";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
+import { vercelGatewayRoutingConfigError } from "../providers/vercel-gateway-routing";
+import { responsesTerminalRepairConfigError } from "../providers/terminal-repair";
+import { modelAutoCompactTokenLimitsConfigError } from "../providers/auto-compact-budget";
 
 let _corsOrigin = "http://localhost:10100";
 export function setCorsOrigin(port: number): void { _corsOrigin = `http://localhost:${port}`; }
@@ -432,7 +435,11 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
       return "provider openai codexAccountMode must be pool or direct";
     }
     if (seed) seed.codexAccountMode = raw.codexAccountMode;
-    const canonical = seed && sameCanonicalProviderSeed(raw, seed);
+    // The per-model soft budget is a user-owned lowering overlay, not part of the
+    // canonical transport seed for the built-in OpenAI provider.
+    const canonicalRaw = { ...raw };
+    delete canonicalRaw.modelAutoCompactTokenLimits;
+    const canonical = seed && sameCanonicalProviderSeed(canonicalRaw, seed);
     if (!canonical) {
       return `provider ${name} must equal the canonical built-in provider seed`;
     }
@@ -440,6 +447,22 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
     return `provider ${name} must not include codexAccountMode`;
   }
   const typed = provider as unknown as OcxProviderConfig;
+  if (raw.retainModels !== undefined) {
+    if (!Array.isArray(raw.retainModels) || raw.retainModels.some(value => typeof value !== "string" || value.trim().length === 0)) {
+      return `provider ${name} retainModels must contain only nonblank strings`;
+    }
+  }
+  if (raw.modelDisplayNames !== undefined) {
+    if (!raw.modelDisplayNames || typeof raw.modelDisplayNames !== "object" || Array.isArray(raw.modelDisplayNames)) {
+      return `provider ${name} modelDisplayNames must be an object`;
+    }
+    for (const [modelId, label] of Object.entries(raw.modelDisplayNames as Record<string, unknown>)) {
+      if (!modelId.trim() || modelId.length > 256 || typeof label !== "string"
+        || !label.trim() || label.trim().length > 128 || /[\u0000-\u001f\u007f]/u.test(label) || label.includes("/")) {
+        return `provider ${name} modelDisplayNames must contain bounded printable labels without slash characters`;
+      }
+    }
+  }
   const baseUrlError = providerBaseUrlConfigError(typed.baseUrl);
   if (baseUrlError) return `provider ${name} ${baseUrlError}`;
   const destinationError = providerDestinationConfigError(name, typed);
@@ -450,6 +473,8 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
   if (apiKeyTransportError) return `provider ${name} ${apiKeyTransportError}`;
   const maxInputError = positiveIntegerRecordConfigError(raw.modelMaxInputTokens, "modelMaxInputTokens");
   if (maxInputError) return `provider ${name} ${maxInputError}`;
+  const autoCompactError = modelAutoCompactTokenLimitsConfigError(raw.modelAutoCompactTokenLimits, { requireNativeIds: name === "openai" });
+  if (autoCompactError) return `provider ${name} ${autoCompactError}`;
   const reasoningSummariesError = booleanRecordConfigError(raw.modelSupportsReasoningSummaries, "modelSupportsReasoningSummaries");
   if (reasoningSummariesError) return `provider ${name} ${reasoningSummariesError}`;
   const reasoningSummaryDeliveryError = reasoningSummaryDeliveryRecordConfigError(
@@ -459,12 +484,18 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
   if (reasoningSummaryDeliveryError) return `provider ${name} ${reasoningSummaryDeliveryError}`;
   const modelAdaptersError = modelAdapterRecordConfigError(raw.modelAdapters, "modelAdapters", name, typed);
   if (modelAdaptersError) return `provider ${name} ${modelAdaptersError}`;
+  const suppressSyntheticMaxError = booleanRecordConfigError(raw.modelSuppressSyntheticMax, "modelSuppressSyntheticMax");
+  if (suppressSyntheticMaxError) return `provider ${name} ${suppressSyntheticMaxError}`;
   const defaultMaxOutputError = positiveIntegerConfigError(raw.defaultMaxOutputTokens, "defaultMaxOutputTokens");
   if (defaultMaxOutputError) return `provider ${name} ${defaultMaxOutputError}`;
   const maxOutputError = positiveIntegerRecordConfigError(raw.modelMaxOutputTokens, "modelMaxOutputTokens");
   if (maxOutputError) return `provider ${name} ${maxOutputError}`;
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
+  const vercelGatewayError = vercelGatewayRoutingConfigError(typed);
+  if (vercelGatewayError) return `provider ${name} ${vercelGatewayError}`;
+  const terminalRepairError = responsesTerminalRepairConfigError(typed);
+  if (terminalRepairError) return `provider ${name} ${terminalRepairError}`;
   if (typed.authMode === "local") {
     // "local" bypasses key-requirement enforcement (api-keys/key-failover treat non-oauth/
     // forward as key auth; openai-chat skips credential checks for local). Only providers
@@ -531,12 +562,19 @@ export function safeConfigDTO(config: OcxConfig): unknown {
       "freeTier",
       "liveModels",
       "models",
+      "retainModels",
+      "modelDisplayNames",
+      "modelSuppressSyntheticMax",
       "contextWindow",
       "modelContextWindows",
+      "modelAutoCompactTokenLimits",
       "defaultMaxOutputTokens",
       "modelMaxOutputTokens",
       "openRouterRouting",
       "modelOpenRouterRouting",
+      "vercelGatewayRouting",
+      "modelVercelGatewayRouting",
+      "modelResponsesTerminalRepair",
       "reasoningEfforts",
       "modelReasoningEfforts",
       "noVisionModels",

@@ -211,6 +211,21 @@ export function isAllowedToolChoice(value: OcxToolChoice | undefined): value is 
   return typeof value === "object" && value !== null && "allowedTools" in value;
 }
 
+/** Predicate shared by provider-specific tool catalog rewrites. */
+export function toolChoiceToolPredicate(
+  choice: OcxToolChoice | undefined,
+  tools: readonly Pick<OcxTool, "namespace" | "name">[],
+): (tool: Pick<OcxTool, "namespace" | "name">) => boolean {
+  if (choice === undefined || choice === "auto" || choice === "required") return () => true;
+  if (choice === "none") return () => false;
+  if (isAllowedToolChoice(choice)) {
+    const allowed = new Set(choice.allowedTools);
+    return tool => toolAllowedByChoice(tool, allowed);
+  }
+  const selected = resolveToolChoiceWireName(tools, choice.name);
+  return tool => namespacedToolName(tool.namespace, tool.name) === selected;
+}
+
 export interface OcxRequestOptions {
   maxOutputTokens?: number;
   temperature?: number;
@@ -534,6 +549,16 @@ export interface OcxNestedSubagentsConfig {
   depths?: OcxNestedSubagentDepthConfig[];
 }
 
+/** User-authored specialist the Codex parent may spawn by name. */
+export interface OcxSubagentRole {
+  id: string;
+  description: string;
+  model: string;
+  effort?: string;
+  developerInstructions: string;
+  enabled?: boolean;
+}
+
 export const DATA_PLANE_API_KEY_PURPOSES = ["github-copilot-desktop"] as const;
 export type DataPlaneApiKeyPurpose = typeof DATA_PLANE_API_KEY_PURPOSES[number];
 
@@ -559,6 +584,10 @@ export interface OcxConfig {
    * Codex's spawn_agent only advertises the first 5 routed models, so this picks which 5 appear.
    */
   subagentModels?: string[];
+  /** Bounded named specialist roles used by v2 guidance and the picker roster. */
+  subagentRoles?: OcxSubagentRole[];
+  /** Monotonic management revision used for compare-and-swap role removal. */
+  subagentRolesRevision?: number;
   /**
    * Priority-ordered fallback models for spawned sub-agents. When the requested
    * model is quota-exhausted or recently failed, opencodex rewrites the child
@@ -612,7 +641,8 @@ export interface OcxConfig {
    * collab surface would have fired; firing gates are unchanged. Placeholders:
    * `{{model}}` -> injectionModel, `{{effort}}` -> injectionEffort, `{{roster}}` ->
    * the resolved sub-agent roster block ("" when nothing resolves), `{{fallback}}` ->
-   * the configured subagent model fallback guidance block ("" when unset).
+   * the configured subagent model fallback guidance block, and `{{roles}}` -> the
+   * bounded enabled named-role catalog ("" when none resolves).
    */
   injectionPrompt?: string;
   /**
@@ -666,6 +696,16 @@ export interface OcxConfig {
    * - "v2": force ALL models to v2 surface (override upstream pins)
    */
   multiAgentMode?: "v1" | "default" | "v2";
+  /** Experimental, default-off ChatGPT recovery for encrypted V2 routed tasks. */
+  agentTaskRecovery?: {
+    enabled?: boolean;
+    /** ChatGPT model used by the recovery request. Default: gpt-5.6-sol. */
+    model?: string;
+    /** Recovery request timeout in milliseconds. Default: 45000. */
+    timeoutMs?: number;
+    /** Maximum in-memory ciphertext-to-assignment entries. Default: 200. */
+    cacheEntries?: number;
+  };
   /** Provider-level Codex-visible context caps. Values only lower known model context windows. */
   providerContextCaps?: Record<string, number>;
   /** Global Codex-visible context cap value (tokens). Falls back to DEFAULT_PROVIDER_CONTEXT_CAP. */
@@ -904,6 +944,15 @@ export interface OpenRouterProviderRouting {
   allowFallbacks?: boolean;
 }
 
+export interface VercelGatewayRouting {
+  /** Vercel AI Gateway provider slugs to try first, in priority order. */
+  order?: string[];
+  /** Restrict routing to these Vercel AI Gateway provider slugs. */
+  only?: string[];
+  /** Sort eligible providers by Vercel's documented cost/latency/throughput metric. */
+  sort?: "cost" | "ttft" | "tps";
+}
+
 export interface ResponsesItemIdRepairConfig {
   /** Exact `message` item ids that the proxy should rewrite to request-local canonical ids. */
   message?: string[];
@@ -911,6 +960,11 @@ export interface ResponsesItemIdRepairConfig {
   reasoning?: string[];
   /** Backfill missing `output_item.done` / terminal snapshot ids from the matching output_index. */
   repairMissingTerminalIds?: boolean;
+}
+
+export interface ResponsesTerminalRepairPolicy {
+  /** Grace period after a structurally complete output graph before synthetic completion. */
+  graceMs?: number;
 }
 
 export interface OcxProviderConfig {
@@ -933,6 +987,10 @@ export interface OcxProviderConfig {
    * as before.
    */
   modelAdapters?: Record<string, string>;
+  /** Display-only labels for live-discovered models, keyed by native model id. */
+  modelDisplayNames?: Record<string, string>;
+  /** Per-model opt-out for the catalog's synthetic max reasoning rung. */
+  modelSuppressSyntheticMax?: Record<string, boolean>;
   baseUrl: string;
   /**
    * Optional relative resource path for key-auth openai-responses requests. Must start with `/`
@@ -940,6 +998,8 @@ export interface OcxProviderConfig {
    * the legacy `/v1/responses` construction.
    */
   responsesPath?: string;
+  /** Whether the Responses destination accepts native custom tools/custom_tool_call items. */
+  supportsResponsesCustomTools?: boolean;
   /**
    * Explicit opt-in for non-registry private-network destinations such as localhost, RFC1918,
    * link-local, or unique-local upstreams. Metadata endpoints remain blocked.
@@ -982,6 +1042,8 @@ export interface OcxProviderConfig {
    * full set so the user can pick). See devlog issue_052_provider-model-allowlist.
    */
   selectedModels?: string[];
+  /** Models retained in the catalog when authoritative live discovery omits them. */
+  retainModels?: string[];
   /** Provider-wide Codex-visible context-window cap for routed catalog entries. */
   contextWindow?: number;
   /** Model-specific Codex-visible context-window caps. Values cap live metadata, never raise it. */
@@ -990,6 +1052,8 @@ export interface OcxProviderConfig {
   modelInputModalities?: Record<string, string[]>;
   /** Model-specific max input token limits. Values cap auto_compact_token_limit. */
   modelMaxInputTokens?: Record<string, number>;
+  /** Model-specific soft auto-compaction thresholds; values only lower the effective envelope. */
+  modelAutoCompactTokenLimits?: Record<string, number>;
   /**
    * Provider-wide fallback for chat-completions `max_tokens` when the caller omits
    * Responses `max_output_tokens`. Adapters still let an explicit request win.
@@ -1002,6 +1066,10 @@ export interface OcxProviderConfig {
   openRouterRouting?: OpenRouterProviderRouting;
   /** Exact model-id overrides for `openRouterRouting`. Each matching entry replaces the default. */
   modelOpenRouterRouting?: Record<string, OpenRouterProviderRouting>;
+  /** Default provider-routing preferences for the canonical Vercel AI Gateway API. */
+  vercelGatewayRouting?: VercelGatewayRouting;
+  /** Exact model-id overrides for `vercelGatewayRouting`. Each matching entry replaces the default. */
+  modelVercelGatewayRouting?: Record<string, VercelGatewayRouting>;
   /**
    * "key" (default): authenticate upstream with `apiKey`.
    * "forward": relay the caller's incoming auth headers verbatim (OAuth passthrough; gpt only).
@@ -1083,6 +1151,8 @@ export interface OcxProviderConfig {
    * Disabled by default; function_call ids and call_id pairing are never rewritten.
    */
   responsesItemIdRepair?: ResponsesItemIdRepairConfig;
+  /** Explicit per-model compatibility escape hatch for custom Responses gateways. */
+  modelResponsesTerminalRepair?: Record<string, ResponsesTerminalRepairPolicy>;
   /** Model ids whose tool_choice only accepts `auto` or `none`; forced/named choices are downgraded. */
   autoToolChoiceOnlyModels?: string[];
   /** Model ids that expect prior assistant `reasoning_content` to be preserved in chat history. */

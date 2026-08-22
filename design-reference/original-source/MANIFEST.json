@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "2879f5644046ee134cad8f2f73f6739846c4cbfe",
+  "sourceDirectory": "design/",
+  "copyDirectory": "design-reference/original-source/",
+  "ordering": "git-tree-order",
+  "fileCount": 19,
+  "files": [
+    {
+      "path": ".thumbnail",
+      "historicalPath": "design/.thumbnail",
+      "blob": "98a9392b40e758ff93cf06b479c68ef518035794",
+      "bytes": 19858,
+      "sha256": "73a1886e5e7dea3949a7db13eb0f02052ef1eac546cfda4a77b6048c65e6533f"
+    },
+    {
+      "path": "OpenCodex M3.dc.html",
+      "historicalPath": "design/OpenCodex M3.dc.html",
+      "blob": "cb672da76a79cc4e6160b5a5378be16a13639947",
+      "bytes": 304611,
+      "sha256": "7ba75d08fd0407889fe1f097df1009a42cbea00057cf42957d271def400ea30d"
+    },
+    {
+      "path": "PORT-TO-GUI.md",
+      "historicalPath": "design/PORT-TO-GUI.md",
+      "blob": "b063328cfac82a4639c46a6ce977c81ef77464ce",
+      "bytes": 11533,
+      "sha256": "eca650b2c4d1b8bfb7578e15bac788885373c45cec4153c0e34bf4daf29346f8"
+    },
+    {
+      "path": "assets/logo-ink-light.png",
+      "historicalPath": "design/assets/logo-ink-light.png",
+      "blob": "2439d2d60633d93e9756ce38988db9d17058c667",
+      "bytes": 211748,
+      "sha256": "8861305242fd78f814638977de4bdbf98ba22c20452d0ba99b0f8777452656ab"
+    },
+    {
+      "path": "assets/logo.png",
+      "historicalPath": "design/assets/logo.png",
+      "blob": "894ad8ca71eb375e188a6bd8ec430dddcecbe1b4",
+      "bytes": 117483,
+      "sha256": "33d8e0753ca43f1d598e49800a2a9386346469ec32edf3e93f254160e2942132"
+    },
+    {
+      "path": "assets/provider-icons/alibaba-color.svg",
+      "historicalPath": "design/assets/provider-icons/alibaba-color.svg",
+      "blob": "cd167b95640f6d56060b447ccfba46c0f41d0a2f",
+      "bytes": 553,
+      "sha256": "b3a9c4b49939b33c72d5dea859122e2a05147dab4ff350735cb45fd3c658ed99"
+    },
+    {
+      "path": "assets/provider-icons/claude-color.svg",
+      "historicalPath": "design/assets/provider-icons/claude-color.svg",
+      "blob": "62dc0db12dafd49c6232d9275c671237dea6a10a",
+      "bytes": 1696,
+      "sha256": "a3101f3047a119aa11825ad9369510f0c472428c8c52d420e31bc62db44a8364"
+    },
+    {
+      "path": "assets/provider-icons/cursor-color.svg",
+      "historicalPath": "design/assets/provider-icons/cursor-color.svg",
+      "blob": "bdc5a8fbf53be988f78d387e0f986608dfabbe11",
+      "bytes": 2741,
+      "sha256": "51a5543863bfd9f49ee8b496bbb2423279c09579945f97fb5a293f45ef623ae1"
+    },
+    {
+      "path": "assets/provider-icons/deepseek-color.svg",
+      "historicalPath": "design/assets/provider-icons/deepseek-color.svg",
+      "blob": "a95508690bd23fed05f239348e8e0f03f888a242",
+      "bytes": 2092,
+      "sha256": "e74ee745f87ea188bf716bd9ead8d42a6fc181a3c38d77be15f28d74912aec48"
+    },
+    {
+      "path": "assets/provider-icons/gemini-color.svg",
+      "historicalPath": "design/assets/provider-icons/gemini-color.svg",
+      "blob": "62681dfa7cf3db2940b527ed3cbcee7bacbb1b9b",
+      "bytes": 2836,
+      "sha256": "8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602"
+    },
+    {
+      "path": "assets/provider-icons/grok-color.svg",
+      "historicalPath": "design/assets/provider-icons/grok-color.svg",
+      "blob": "81d29c5030e652645e02fa49dbfaa9be959321de",
+      "bytes": 699,
+      "sha256": "9d5f4eef3cefedbb6e08c254d1d49487a35edf80eaa75c495f11e0d006d15212"
+    },
+    {
+      "path": "assets/provider-icons/groq-color.svg",
+      "historicalPath": "design/assets/provider-icons/groq-color.svg",
+      "blob": "7294646b9fc7ab9d4d80d18529a687bd629dc6a6",
+      "bytes": 568,
+      "sha256": "078d5cf6e7a54905040c15ddacf5ea33c13042fe7739e820cedc2096e4406651"
+    },
+    {
+      "path": "assets/provider-icons/moonshot-color.svg",
+      "historicalPath": "design/assets/provider-icons/moonshot-color.svg",
+      "blob": "dbe68d432c41c8a9ed6d4718e003f29c9077555c",
+      "bytes": 658,
+      "sha256": "bbb7cbb760c029c95daf1fc14f887028e2c2eb5cd68039742de3f747966de1fb"
+    },
+    {
+      "path": "assets/provider-icons/ollama-color.svg",
+      "historicalPath": "design/assets/provider-icons/ollama-color.svg",
+      "blob": "9491a293b22678837c3447743e937544a81ec501",
+      "bytes": 4775,
+      "sha256": "e7344ca80cbc4d0eaa920857fa041f8425c8c831ceb23e2cbfe9657fab25fbb3"
+    },
+    {
+      "path": "assets/provider-icons/openai.svg",
+      "historicalPath": "design/assets/provider-icons/openai.svg",
+      "blob": "78caf4fa20ffb0ae8ebefd74408871c11c1c7fd2",
+      "bytes": 1687,
+      "sha256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186"
+    },
+    {
+      "path": "assets/provider-icons/openrouter-color.svg",
+      "historicalPath": "design/assets/provider-icons/openrouter-color.svg",
+      "blob": "6ab644d109a26e39c57a7521ec5599d6cd2d0351",
+      "bytes": 690,
+      "sha256": "ead82253958d1216647572b2bf0dcf05a82ea480a3b8cea8ce72737730772af0"
+    },
+    {
+      "path": "ocx-data.js",
+      "historicalPath": "design/ocx-data.js",
+      "blob": "6cbe6fc5794f0f79ce5eea2172d7338531d477bc",
+      "bytes": 29064,
+      "sha256": "01ce122c5a58114fe61c9a21cf82d981dae8779eb1e065887e694521abac27bb"
+    },
+    {
+      "path": "ocx-i18n.js",
+      "historicalPath": "design/ocx-i18n.js",
+      "blob": "7a845d697366651bf4b49bafcc10902c4ee6aacc",
+      "bytes": 55733,
+      "sha256": "7120741d5a113f0744f7d8de616c1863463b486801ed5372ac0027e796d38aad"
+    },
+    {
+      "path": "support.js",
+      "historicalPath": "design/support.js",
+      "blob": "cb009b69ec6b5e00f48c6287a587fe7e0c6c421b",
+      "bytes": 69150,
+      "sha256": "8fe7df74405f3c55f49b7249c74ea1397e65d07dea2b1bd3b4a489bec2e28cbe"
+    }
+  ]
+}

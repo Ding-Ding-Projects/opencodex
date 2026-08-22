@@ -27,6 +27,7 @@ import {
 import { checkUpdatePackageIntegrity, updateCommand, updateCommandStr, updateSpawnTarget } from "../src/update/index";
 import { OPENCODEX_RELEASE_NOTES_URL, OPENCODEX_RELEASE_NOTES_URL as RELEASE_NOTES_URL } from "../src/update/links";
 import { isRealBunBinary, resolveBunCommand } from "../src/lib/bun-runtime";
+import { killProxy } from "../src/lib/process-control";
 import { removeTempDir } from "./helpers/temp-dir";
 
 type SpawnResult = { status: number | null; stdout: string };
@@ -932,6 +933,40 @@ describe("GUI update execution decisions", () => {
     expect(readUpdateJob(job.id)?.log.some(line => line.includes("refusing an automatic restart"))).toBe(true);
   });
 
+  test("failed health probes expose health-unverified recovery and never kill the identity-valid old PID", async () => {
+    const killed: number[] = [];
+    const job: UpdateJobState = {
+      id: "failed-install-health-unverified",
+      status: "running",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(), JSON.stringify(job));
+
+    await recoverFailedGuiUpdateForTests(
+      job,
+      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
+      true,
+      {
+        probeProxyIdentity: async () => null,
+        verifyPidIdentityFn: pid => pid,
+        sleepMs: async () => {},
+        killProxyFn: pid => { killed.push(pid); },
+      },
+    );
+
+    expect(readUpdateJob(job.id)).toMatchObject({ recoveryState: "health-unverified" });
+    expect(killed).toEqual([]);
+  });
+
   test("failed install leaves a concurrently restored replacement proxy untouched", async () => {
     let probes = 0;
     let restartCalls = 0;
@@ -1071,6 +1106,63 @@ describe("GUI update execution decisions", () => {
     expect(runningPids.has(222)).toBe(false);
     expect(runningPids.has(333)).toBe(true);
     expect(readUpdateJob(job.id)?.log.some(line => line.includes("trying candidate 2 of 2"))).toBe(true);
+  });
+
+  test("failed install passes the originally spawned identity into real kill cleanup", async () => {
+    let now = 0;
+    let taskkillCalls = 0;
+    let forwardedIdentity: unknown;
+    const spawnedIdentity = { pid: 222, startIdentity: "generation-a", executablePath: "c:/ocx.exe" };
+    const replacementIdentity = { pid: 222, startIdentity: "generation-b", executablePath: "c:/other.exe" };
+    const job: UpdateJobState = {
+      id: "failed-install-identity-forwarding",
+      status: "running",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(), JSON.stringify(job));
+
+    const recovery = await recoverFailedGuiUpdateForTests(
+      job,
+      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
+      true,
+      {
+        probeProxyIdentity: async () => null,
+        verifyPidIdentityFn: pid => pid === 222 ? pid : null,
+        recoveryLaunchersFn: () => ["/current/bin/ocx.mjs"],
+        probeProxy: async () => false,
+        restartAfterUpdateFn: async () => ({
+          pid: 222,
+          identity: spawnedIdentity,
+          sameGeneration: () => true,
+        }),
+        killProxyFn: (pid, identity) => {
+          forwardedIdentity = identity;
+          killProxy(pid, {
+            expectedIdentity: identity ?? null,
+            readIdentity: () => replacementIdentity,
+            isAlive: () => true,
+            platform: "win32",
+            taskkill: () => { taskkillCalls += 1; },
+          });
+        },
+        now: () => now,
+        sleepMs: async ms => { now += ms; },
+      },
+    );
+
+    expect(recovery).toBe("failed");
+    expect(forwardedIdentity).toEqual(spawnedIdentity);
+    expect(taskkillCalls).toBe(0);
+    expect(readUpdateJob(job.id)?.log.some(line => line.includes("Could not stop unhealthy recovery candidate"))).toBe(true);
   });
 
   test("failed install stops trying candidates when a started PID has no OpenCodex identity", async () => {

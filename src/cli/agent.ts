@@ -12,6 +12,8 @@ import {
   takeOption,
   type RuntimeApiDeps,
 } from "./runtime-api";
+import { readFileSync, statSync } from "node:fs";
+import { SUBAGENT_ROLE_PAYLOAD_MAX_BYTES } from "../codex/agent-roles";
 
 const USAGE = `Usage:
   ocx agent [status] [--json]
@@ -19,6 +21,7 @@ const USAGE = `Usage:
       [--prompt <text|->] [--guidance <on|off>] [--json]
   ocx agent effort <status|set> [--main <level|->] [--subagent <level|->] [--json]
   ocx agent subagents <status|set|clear> [model,model...] [--json]
+  ocx agent roles <status|set|remove> [--file <path>] [role-id] [--json]
   ocx agent fallback <status|set|clear> [model,model...] [--poll-ms <5000-600000>] [--json]
   ocx agent sidecar <status|web|vision> [--model <id|->] [--backend <openai|anthropic|->]
       [--reasoning <level>] [--max-descriptions <n>] [--json]`;
@@ -141,6 +144,62 @@ async function fallback(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   printData(result, wantsJson, ["Subagent fallback settings updated."]);
 }
 
+async function roles(argv: string[], deps: RuntimeApiDeps): Promise<void> {
+  const args = [...argv];
+  const action = (args.shift() ?? "status").toLowerCase();
+  const wantsJson = takeFlag(args, "--json");
+  if (action === "status") {
+    rejectArgs(args, USAGE);
+    const result = await runtimeRequest("/api/subagent-roles", {}, deps);
+    printData(result, wantsJson, summaryLines(result));
+    return;
+  }
+  if (action === "remove") {
+    const id = args.shift();
+    if (!id) throw new CliUsageError("role id is required", USAGE);
+    rejectArgs(args, USAGE);
+    const state = await runtimeRequest("/api/subagent-roles", {}, deps) as { revision?: unknown };
+    if (typeof state?.revision !== "number" || !Number.isSafeInteger(state.revision) || state.revision < 0) {
+      throw new CliUsageError("role catalog revision is missing or invalid; refresh the role catalog", USAGE);
+    }
+    const result = await runtimeRequest("/api/subagent-roles", { method: "PUT", body: JSON.stringify({ remove: id, revision: state.revision }) }, deps);
+    printData(result, wantsJson, [`Subagent role removed: ${id}`]);
+    return;
+  }
+  if (action !== "set") throw new CliUsageError(`unknown roles action ${action}`, USAGE);
+  const file = takeOption(args, "--file");
+  rejectArgs(args, USAGE);
+  let payload: string;
+  if (file) {
+    const size = statSync(file).size;
+    if (size > SUBAGENT_ROLE_PAYLOAD_MAX_BYTES) throw new CliUsageError(`roles JSON exceeds ${SUBAGENT_ROLE_PAYLOAD_MAX_BYTES} bytes`, USAGE);
+    payload = readFileSync(file, "utf8");
+  }
+  else {
+    const input = deps.stdinImpl ?? process.stdin;
+    if ((input as NodeJS.ReadStream).isTTY) throw new CliUsageError("--file or piped JSON is required", USAGE);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+      for await (const chunk of input as AsyncIterable<Uint8Array | string>) {
+        const bytes = Buffer.from(chunk);
+        total += bytes.byteLength;
+        if (total > SUBAGENT_ROLE_PAYLOAD_MAX_BYTES) {
+          (input as { destroy?: (error?: Error) => void }).destroy?.(new Error("role payload exceeds byte limit"));
+          throw new CliUsageError(`roles JSON exceeds ${SUBAGENT_ROLE_PAYLOAD_MAX_BYTES} bytes`, USAGE);
+        }
+        chunks.push(bytes);
+      }
+    } finally {
+      if (total > SUBAGENT_ROLE_PAYLOAD_MAX_BYTES) (input as { destroy?: () => void }).destroy?.();
+    }
+    payload = Buffer.concat(chunks).toString("utf8");
+  }
+  try { JSON.parse(payload); } catch { throw new CliUsageError("roles JSON must be valid", USAGE); }
+  const result = await runtimeRequest("/api/subagent-roles", { method: "PUT", body: payload }, deps);
+  printData(result, wantsJson, ["Subagent role catalog updated."]);
+}
+
 async function sidecar(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const args = [...argv];
   const section = (args.shift() ?? "status").toLowerCase();
@@ -175,6 +234,7 @@ export async function handleAgentCommand(argv: string[], deps: RuntimeApiDeps = 
     else if (sub === "injection" || sub === "guidance") await injection(rest, deps);
     else if (sub === "effort") await effort(rest, deps);
     else if (sub === "subagents" || sub === "roster") await subagents(rest, deps);
+    else if (sub === "roles") await roles(rest, deps);
     else if (sub === "fallback") await fallback(rest, deps);
     else if (sub === "sidecar") await sidecar(rest, deps);
     else throw new CliUsageError(`unknown agent command ${sub}`, USAGE);

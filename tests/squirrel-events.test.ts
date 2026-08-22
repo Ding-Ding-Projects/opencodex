@@ -143,6 +143,13 @@ describe("planning", () => {
 });
 
 describe("handling", () => {
+  test("main wires cleanup only to final uninstall, never obsolete update", async () => {
+    const source = await Bun.file(new URL("../electron/main.mjs", import.meta.url)).text();
+    expect(source).toContain("uninstallCliOnPath");
+    expect(source).toContain('squirrelPlan?.event === "--squirrel-uninstall"');
+    expect(source).toContain("--squirrel-obsolete deliberately");
+  });
+
   test("install and update create the shortcut, then exit", () => {
     for (const event of ["--squirrel-install", "--squirrel-updated"]) {
       const r = run(event);

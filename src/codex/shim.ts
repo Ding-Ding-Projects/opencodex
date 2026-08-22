@@ -18,7 +18,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { getConfigDir } from "../config";
+import { atomicWriteFile, getConfigDir, type AtomicWriteIO } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
 import { isProcessAlive } from "../lib/process-control";
 import { serviceApiTokenFilePath } from "../lib/service-secrets";
@@ -509,6 +509,13 @@ interface ShimStateReadResult {
   warning?: string;
 }
 
+let codexShimStateAtomicWriteIOForTests: AtomicWriteIO | null = null;
+
+/** @internal Narrow deterministic seam for interrupted state-publication tests. */
+export function setCodexShimStateAtomicWriteIOForTests(io: AtomicWriteIO | null): void {
+  codexShimStateAtomicWriteIOForTests = io;
+}
+
 function fileErrorCode(error: unknown): string | undefined {
   return error && typeof error === "object" && "code" in error
     ? String((error as { code?: unknown }).code)
@@ -592,7 +599,11 @@ function writeState(state: ShimState): void {
   const path = statePath();
   recordOwnedConfigPath(getConfigDir(), path);
   if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true });
-  writeFileSync(path, JSON.stringify(state, null, 2) + "\n", "utf8");
+  writeStateBytes(path, JSON.stringify(state, null, 2) + "\n");
+}
+
+function writeStateBytes(path: string, content: string): void {
+  atomicWriteFile(path, content, codexShimStateAtomicWriteIOForTests ?? undefined);
 }
 
 /** Git-Bash accepts `C:/...` but not backslashed paths inside sh scripts. */
@@ -979,7 +990,7 @@ function installCodexShimInternal(options: InstallCodexShimInternalOptions): { i
           writeState(primaryState(files));
         } catch (writeError) {
           try {
-            writeFileSync(statePath(), originalStateBytes);
+            writeStateBytes(statePath(), originalStateBytes.toString("utf8"));
           } catch (restoreError) {
             throw new AggregateError(
               [writeError, restoreError],

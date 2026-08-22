@@ -356,10 +356,15 @@ function isEstimated(usage: OcxUsage | undefined, usageStatus: UsageStatus): boo
 }
 
 export function effectiveServiceTier(entry: {
+  provider?: string;
   responseServiceTier?: string;
   requestedServiceTier?: string;
   configuredServiceTier?: string;
 }): string | undefined {
+  if (entry.provider?.trim().toLowerCase() === "xai") {
+    const confirmed = entry.responseServiceTier?.trim().toLowerCase();
+    return confirmed === "priority" || confirmed === "fast" ? "priority" : "standard";
+  }
   const value = entry.responseServiceTier ?? entry.requestedServiceTier ?? entry.configuredServiceTier;
   const normalized = value?.trim().toLowerCase();
   return normalized === "fast" ? "priority" : normalized || undefined;

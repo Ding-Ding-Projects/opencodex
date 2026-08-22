@@ -13,6 +13,7 @@ import { getJawcodeModelMetadata, getJawcodeModelMetadataCaseInsensitive, listJa
 import { enrichProviderFromRegistry, shouldCaseFoldMetadataModelId } from "../../providers/derive";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { applyProviderContextCap, providerContextCap } from "../../providers/context-cap";
+import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { routedSlug, slugEquals, slugsEquivalent } from "../../providers/slug-codec";
 import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
@@ -125,10 +126,14 @@ export function applyCatalogModelMetadata(entry: RawEntry, model?: CatalogModel)
   if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
     entry.context_window = model.contextWindow;
     entry.max_context_window = model.contextWindow;
-    entry.auto_compact_token_limit = Math.min(
-      Math.floor(model.contextWindow * 0.9),
-      model.maxInputTokens ?? Number.POSITIVE_INFINITY,
+    entry.auto_compact_token_limit = clampAutoCompactTokenLimit(
+      model.contextWindow,
+      model.maxInputTokens,
+      model.autoCompactTokenLimit,
     );
+  } else if (typeof entry.context_window === "number" && entry.context_window > 0
+    && typeof model.maxInputTokens === "number" && model.maxInputTokens > 0) {
+    entry.auto_compact_token_limit = clampAutoCompactTokenLimit(entry.context_window, model.maxInputTokens);
   }
   if (Array.isArray(model.inputModalities) && model.inputModalities.length > 0) {
     entry.input_modalities = model.inputModalities;
@@ -139,6 +144,17 @@ export function applyCatalogModelMetadata(entry: RawEntry, model?: CatalogModel)
   if (typeof model.supportsReasoningSummaries === "boolean") {
     entry.supports_reasoning_summaries = model.supportsReasoningSummaries;
   }
+  if (model.supportsServiceTier === true) {
+    entry.service_tiers = [{
+      id: "priority",
+      name: "Fast",
+      description: model.fastTierDescription ?? "1.5x speed, increased usage",
+    }];
+    entry.additional_speed_tiers = ["fast"];
+  } else {
+    delete entry.service_tiers;
+    delete entry.additional_speed_tiers;
+  }
 }
 
 export function applyReasoningLevels(
@@ -146,6 +162,7 @@ export function applyReasoningLevels(
   effortsOverride?: string[],
   defaultOverride?: string,
   preserveExact = false,
+  suppressSyntheticMax = false,
 ): void {
   let efforts = sanitizeCodexReasoningEfforts(effortsOverride) ?? ROUTED_REASONING_LEVELS.map(l => l.effort);
   // Mock top tiers (user decision 260709): every reasoning-capable model advertises `max`
@@ -156,7 +173,7 @@ export function applyReasoningLevels(
   // nativeEffortClamp (max -> the model's real top rung).
   if (!preserveExact && efforts.length > 0) {
     const additions: string[] = [];
-    if (!efforts.includes("max")) additions.push("max");
+    if (!suppressSyntheticMax && !efforts.includes("max")) additions.push("max");
     if (!efforts.includes("ultra")) additions.push("ultra");
     if (additions.length > 0) efforts = sanitizeCodexReasoningEfforts([...efforts, ...additions]) ?? efforts;
   }

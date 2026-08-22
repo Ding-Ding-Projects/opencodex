@@ -77,6 +77,34 @@ Only a curated set of headers is forwarded (`FORWARD_HEADERS`: authorization, Ch
 OpenAI beta/originator/session — see [Adapters](/reference/adapters/)). This path is also
 what powers the [web-search and vision sidecars](/guides/sidecars/).
 
+### Vercel AI Gateway provider routing
+
+The `vercel-ai-gateway` provider accepts optional `vercelGatewayRouting` and exact-model
+`modelVercelGatewayRouting` settings. Each preference can set `only` and `order` provider slug
+arrays, or `sort` to `cost`, `ttft`, or `tps`. Model-specific settings replace the provider-wide
+preference. These fields are accepted only for the canonical
+`https://ai-gateway.vercel.sh/v1` endpoint and the `openai-chat` adapter; an unconfigured request
+keeps the upstream request body unchanged.
+
+### BigModel Coding Plan quota
+
+The GLM Coding Plan quota probe is pinned to the verified `open.bigmodel.cn` host and quota
+endpoint. It maps response-declared `TOKENS_LIMIT`/`CREDIT_LIMIT` unit `3` to the rolling
+five-hour window, unit `6` to weekly usage, and `TIME_LIMIT` unit `5` to the monthly MCP/tool
+allowance. BigModel's quota endpoint receives the API key directly in `Authorization`, while the
+Z.AI endpoint keeps its separate bearer contract. Unknown future units are ignored until their
+meaning is verified; quota failures never affect inference routing.
+
+### Custom Responses terminal repair
+
+`modelResponsesTerminalRepair` is an explicit per-model compatibility policy for custom
+`openai-responses` routes. It is bounded by a grace period and is rejected for forward-auth
+providers. A real upstream terminal remains authoritative. A synthetic completion is allowed only
+for a structurally complete graph of message, reasoning, and function-call items; malformed,
+partial, open-tool, duplicate, unknown-index, or oversized graphs fail closed to an incomplete
+result. Cancellation aborts the upstream and clears the repair timer. The policy is never inferred
+from a provider name and never applies to unrelated models.
+
 The ChatGPT passthrough catalog also layers in the bare GPT-5.6 Sol/Terra/Luna slugs
 (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) for accounts that can use them.
 
@@ -117,6 +145,26 @@ field, opencodex does not strip it and retry or mutate saved configuration. Othe
 deny-by-default.
 
 You can also start OAuth from the [web dashboard](/guides/web-dashboard/).
+
+### xAI Priority Processing
+
+The xAI preset exposes Priority Processing only when the provider is explicitly configured with
+`authMode: "key"` and a public xAI API key. Enabling the shared `fastMode` setting then forwards
+`service_tier: "priority"` for xAI Chat Completions requests and advertises the `Fast` tier in the
+catalog. The OAuth route created by `ocx login xai` uses the Grok subscription gateway and remains
+unclassified: it does not advertise or inject Priority Processing.
+
+xAI's Priority Processing price is model- and provider-scoped. A routed reseller that happens to
+use a Grok model id does not inherit xAI's premium schedule, and an echoed `default` response is
+priced as standard traffic. The official pricing table currently lists Grok 4.5 at `$2.00 / $0.30
+cached / $6.00` per 1M tokens below 200,000 prompt tokens and `$4.00 / $0.60 / $12.00` at or above
+that threshold. Grok 4.6 uses `$2.00 / $0.50 / $6.00` below the threshold and `$4.00 / $1.00 /
+$12.00` at or above it. These values were verified against
+[`docs.x.ai/developers/pricing`](https://docs.x.ai/developers/pricing) on 2026-08-21; Priority
+Processing behavior is documented at
+[`docs.x.ai/developers/advanced-api-usage/priority-processing`](https://docs.x.ai/developers/advanced-api-usage/priority-processing).
+See [configuration](/reference/configuration/#providersname) for the provider fields that control
+discovery retention, display labels, and reasoning-rung policy.
 
 ### Multiple OAuth accounts
 

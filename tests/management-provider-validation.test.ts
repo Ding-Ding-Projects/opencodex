@@ -1669,6 +1669,16 @@ describe("provider management validation", () => {
     expect(liveConfig.providers.extra.defaultModel).toBeUndefined();
     expect(liveConfig.providers.extra.note).toBeUndefined();
 
+    const retained = await patch("extra", { retainModels: [" model-a ", "model-a", "model-b"] });
+    expect(retained?.status).toBe(200);
+    expect(liveConfig.providers.extra.retainModels).toEqual(["model-a", "model-b"]);
+    const safeDto = safeConfigDTO(liveConfig) as { providers: Record<string, { retainModels?: string[] }> };
+    expect(safeDto.providers.extra?.retainModels).toEqual(["model-a", "model-b"]);
+    const clearRetained = await patch("extra", { retainModels: null });
+    expect(clearRetained?.status).toBe(200);
+    expect(liveConfig.providers.extra.retainModels).toBeUndefined();
+    expect((await patch("extra", { retainModels: ["   "] }))?.status).toBe(400);
+
     // apiKey is hard-rejected toward the key endpoints.
     const keyWrite = await patch("extra", { apiKey: "sk-new" });
     expect(keyWrite?.status).toBe(400);
