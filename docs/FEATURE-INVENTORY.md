@@ -6,9 +6,10 @@ That is 2% done. Zero rows are `absent`; every applicable row is `partial` or `p
 required part of the release evidence chain is absent or unlinked. Source code, a focused test, or
 a PNG on its own is not a complete contract.
 
-Current integration re-derivation **2026-08-21** is carried forward to final documentation tip
-`e1cf37874e4cb148ae37f793e031977c8893f52a`; the completeness count below remains the last
-hand-audited result, not a fresh built-artifact re-audit.
+Current integration re-derivation **2026-08-21** is carried forward to stable source integration
+tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`; later descendants only refresh public records.
+The completeness count below remains the last hand-audited result, not a fresh built-artifact
+re-audit.
 The hand-written inventory currently reads **1 present, 63 partial, 0 absent, 1 not applicable**.
 This pass added the docs-site vocabulary and School-mode routes, deterministic design-reference and
 parity records, fresh-checkout build scripts, product branding/embed assets, surviving-line release
