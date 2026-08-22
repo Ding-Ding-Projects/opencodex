@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "grok",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/grok.png",
+      "sha256": "4577d449e7fbd07b940de8e8bb9c05e096553dea81668e7eb9bf6c5c1b1b06bd",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/grok.png",
+      "sha256": "4f630265175715f8db401077e3b31070ef040e26001ecc23ba40c3a050716207",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 2172749,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.41912596450617284,
+    "meanAbsoluteChannelDifference": 10.480693029835392,
+    "rmsChannelDifference": 35.33582908261251,
+    "maxChannelDifference": 247
+  },
+  "tuple": {
+    "screen": "grok",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "notifications",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/notifications.png",
+      "sha256": "b4ebcdd38a9e3ae30dcc73623158f6624def26839579de517f94443313e3e531",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/notifications.png",
+      "sha256": "ba5174d19cb3cc15f61b4c4ebaf1794f2f9bf94f077645df7bf70b05e71f8afd",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 2280114,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.43983680555555554,
+    "meanAbsoluteChannelDifference": 8.428143261316873,
+    "rmsChannelDifference": 30.262513413275837,
+    "maxChannelDifference": 254
+  },
+  "tuple": {
+    "screen": "notifications",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}

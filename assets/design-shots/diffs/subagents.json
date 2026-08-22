@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "subagents",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/subagents.png",
+      "sha256": "234ab5a91d6c8d13f0fbffd6d64f2db21cc23068984f822c149d1c2cd7c51974",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/subagents.png",
+      "sha256": "499d994a13cd1cebc3b4fffb9f8ee13105d383401b6f069eb9a1ad4ca1066c85",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 1982379,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.3824033564814815,
+    "meanAbsoluteChannelDifference": 11.078608860596708,
+    "rmsChannelDifference": 33.75971884413147,
+    "maxChannelDifference": 247
+  },
+  "tuple": {
+    "screen": "subagents",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}
