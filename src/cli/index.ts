@@ -1153,11 +1153,6 @@ switch (command) {
     process.exitCode = await handleScheduleCommand(args.slice(1));
     break;
   }
-  case "school-mode": {
-    const { handleSchoolModeCommand } = await import("./school-mode");
-    process.exitCode = await handleSchoolModeCommand(args.slice(1));
-    break;
-  }
   case "pdf": {
     const { handlePdfCommand } = await import("./pdf");
     process.exitCode = await handlePdfCommand(args.slice(1));
@@ -1186,6 +1181,11 @@ switch (command) {
   case "grok": {
     const { handleGrokCommand } = await import("./integrations");
     process.exitCode = await handleGrokCommand(args.slice(1));
+    break;
+  }
+  case "school-mode": {
+    const { handleSchoolModeCommand } = await import("./school-mode");
+    process.exitCode = await handleSchoolModeCommand(args.slice(1));
     break;
   }
   case "changelog": {
