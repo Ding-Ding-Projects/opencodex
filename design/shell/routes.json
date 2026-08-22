@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "screens": {
+    "dashboard": { "states": ["overview"] },
+    "codex-auth": { "states": ["overview"] },
+    "providers": { "states": ["overview"] },
+    "models": { "states": ["overview"] },
+    "combos": { "states": ["overview"] },
+    "subagents": { "states": ["overview"] },
+    "logs": { "states": ["overview"] },
+    "usage": { "states": ["overview"] },
+    "storage": { "states": ["overview"] },
+    "api": { "states": ["overview"] },
+    "claude": { "states": ["overview"] },
+    "grok": { "states": ["overview"] },
+    "startup": { "states": ["overview"] },
+    "appearance": { "states": ["overview"] },
+    "language": { "states": ["overview"] },
+    "regex": { "states": ["overview"] },
+    "changelog": { "states": ["overview"] },
+    "history": { "states": ["overview"] },
+    "notifications": { "states": ["overview"] }
+  },
+  "themes": ["light", "dark"],
+  "locales": ["en", "yue", "bilingual"]
+}

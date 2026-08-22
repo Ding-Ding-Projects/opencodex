@@ -1,0 +1,1015 @@
+{
+  "version": 1,
+  "source": "design-reference",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+  "assets": [
+    {
+      "kind": "runtime",
+      "sourceUrl": "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+      "localPath": "runtime/react.production.min.js",
+      "sha256": "d949f1c3687aedadcedac85261865f29b17cd273997e7f6b2bfc53b2f9d4c4dd",
+      "bytes": 10751,
+      "contentType": "text/javascript; charset=utf-8"
+    },
+    {
+      "kind": "runtime",
+      "sourceUrl": "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+      "localPath": "runtime/react-dom.production.min.js",
+      "sha256": "35f4f974f4b2bcd44da73963347f8952e341f83909e4498227d4e26b98f66f0d",
+      "bytes": 131835,
+      "contentType": "text/javascript; charset=utf-8"
+    },
+    {
+      "kind": "runtime",
+      "sourceUrl": "https://unpkg.com/@babel/standalone@7.29.0/babel.min.js",
+      "localPath": "runtime/babel.min.js",
+      "sha256": "2623a9e22809915ce789b4461154e277ddce520d5a4320c14d44332a5d0dcea0",
+      "bytes": 3137752,
+      "contentType": "text/javascript; charset=utf-8"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/materialsymbolsrounded/v368/sykg-zNym6YjUruM-QrEh7-nyTnjDwKNJ_190Fjzag.woff2",
+      "localPath": "fonts/font-8e142611d8030b57380f3bf0.woff2",
+      "sha256": "8e142611d8030b57380f3bf00c720e6be00ae1ac2297f6ba18e6e25915c13241",
+      "bytes": 5347060,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.0.woff2",
+      "localPath": "fonts/font-d2d88989754e0c859d10c802.woff2",
+      "sha256": "d2d88989754e0c859d10c8025089c07142274d134b074ac05a12907b975a59f0",
+      "bytes": 65020,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.1.woff2",
+      "localPath": "fonts/font-f2eb1934a7d984f52e987189.woff2",
+      "sha256": "f2eb1934a7d984f52e987189b4a23088ac2f5fca82c9c5d929a85ce605852839",
+      "bytes": 70728,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.2.woff2",
+      "localPath": "fonts/font-8f6d1ee5fa8011ef84cfc6e1.woff2",
+      "sha256": "8f6d1ee5fa8011ef84cfc6e1208a8c810dbb24405a3b9aa774e38a0e31af0891",
+      "bytes": 70268,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.3.woff2",
+      "localPath": "fonts/font-d08f15df62afd7643903a1ea.woff2",
+      "sha256": "d08f15df62afd7643903a1eaf0b251b80f1461a0e10d0296cb08454089a0dff0",
+      "bytes": 63756,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.4.woff2",
+      "localPath": "fonts/font-2ea71d303d4f532aba332a23.woff2",
+      "sha256": "2ea71d303d4f532aba332a2373d64dac4ecb76a752e046c6f31ab0df2fdc5d29",
+      "bytes": 65032,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.5.woff2",
+      "localPath": "fonts/font-17323d50aefdd2db28f25004.woff2",
+      "sha256": "17323d50aefdd2db28f2500411395a48fd15405d8cbfe91f7226b7dbc31489a2",
+      "bytes": 64232,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.6.woff2",
+      "localPath": "fonts/font-19a47b870bc54f639d556943.woff2",
+      "sha256": "19a47b870bc54f639d5569436127633b1cbfd228639d32e2a83b6058770b9604",
+      "bytes": 64008,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.7.woff2",
+      "localPath": "fonts/font-e45a2e38cd00c170ffae7afc.woff2",
+      "sha256": "e45a2e38cd00c170ffae7afc6342f4387992c55f6559e11a9b81f57036316335",
+      "bytes": 62948,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.8.woff2",
+      "localPath": "fonts/font-49886b3ff18939a0b0516aae.woff2",
+      "sha256": "49886b3ff18939a0b0516aae17cfffb59544cf9c673faff1efe59f8888912f21",
+      "bytes": 68568,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.9.woff2",
+      "localPath": "fonts/font-1b412900c7fccd38018a4a59.woff2",
+      "sha256": "1b412900c7fccd38018a4a596e2f88ebcfcc6d1ec5515f0c7abad8c588846ecb",
+      "bytes": 54100,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.10.woff2",
+      "localPath": "fonts/font-362324308727c808d64274ae.woff2",
+      "sha256": "362324308727c808d64274ae5c5c9b66348315e261430a9b40032922da70069c",
+      "bytes": 20016,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.15.woff2",
+      "localPath": "fonts/font-c317f9c9d4e757e736b4c778.woff2",
+      "sha256": "c317f9c9d4e757e736b4c77835395fec03dfa5b3df5b3dfa4ed086f6cc504466",
+      "bytes": 22532,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.16.woff2",
+      "localPath": "fonts/font-ade39a49a3057565b4b73af7.woff2",
+      "sha256": "ade39a49a3057565b4b73af7d59a8a85678fa3b43663879e7f97a436f15a3f16",
+      "bytes": 14896,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.17.woff2",
+      "localPath": "fonts/font-5d3bf25375c8372de26ba03c.woff2",
+      "sha256": "5d3bf25375c8372de26ba03c927b3bea20a99c8c1d0f0648f1e1f689448db6a7",
+      "bytes": 3916,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.25.woff2",
+      "localPath": "fonts/font-68f78c6ce4f5a1fdb6295acc.woff2",
+      "sha256": "68f78c6ce4f5a1fdb6295accb0683da44ed457820cedcf2aa94751818c94840d",
+      "bytes": 23764,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.26.woff2",
+      "localPath": "fonts/font-aab808f10445d27ce598895e.woff2",
+      "sha256": "aab808f10445d27ce598895ebd48fad7f7c3e4254a0fcde0e3425b51fdf75271",
+      "bytes": 67912,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.27.woff2",
+      "localPath": "fonts/font-b49f17c51b67181e34c21000.woff2",
+      "sha256": "b49f17c51b67181e34c21000061d581e2c0c45df56e0c133b9cc64ae3a546962",
+      "bytes": 58560,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.28.woff2",
+      "localPath": "fonts/font-1530f07487dba2719655aa21.woff2",
+      "sha256": "1530f07487dba2719655aa21ba71b6d69c2d9a09cbe824590e8a04b39973d43c",
+      "bytes": 54580,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.29.woff2",
+      "localPath": "fonts/font-8adbf5477f03f3408184fb1d.woff2",
+      "sha256": "8adbf5477f03f3408184fb1d23b1d23efea99db137ea3cd11e52dab356573e6d",
+      "bytes": 55748,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.30.woff2",
+      "localPath": "fonts/font-e1740c20b70555f34e606aa5.woff2",
+      "sha256": "e1740c20b70555f34e606aa559b10b870d742c46b09fc8565078f2ebadd6e165",
+      "bytes": 47852,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.31.woff2",
+      "localPath": "fonts/font-1997eb7cd50e34dd3bc68df6.woff2",
+      "sha256": "1997eb7cd50e34dd3bc68df6ca033af2adc279dacc3ca11685c0da3a9747d12e",
+      "bytes": 51880,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.32.woff2",
+      "localPath": "fonts/font-f75db78f42c6938e08e5a3d7.woff2",
+      "sha256": "f75db78f42c6938e08e5a3d75939a9a99263f031981acbfe97e47d3659b2ab3e",
+      "bytes": 18552,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.33.woff2",
+      "localPath": "fonts/font-32f9a335e2fe6c086f389b42.woff2",
+      "sha256": "32f9a335e2fe6c086f389b426d10799269cf7a126811f2f943637dd04b87705f",
+      "bytes": 62716,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.34.woff2",
+      "localPath": "fonts/font-754eda287d7bff5e55221a94.woff2",
+      "sha256": "754eda287d7bff5e55221a94a4d2e200bb8e2ec28f5b408063067207c907e329",
+      "bytes": 59372,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.35.woff2",
+      "localPath": "fonts/font-d2ecf058fd9dde4d6457df59.woff2",
+      "sha256": "d2ecf058fd9dde4d6457df59686fd834505bc468b18c1761e370430f72ca69d3",
+      "bytes": 50924,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.36.woff2",
+      "localPath": "fonts/font-13905994a7f764a5ad21053c.woff2",
+      "sha256": "13905994a7f764a5ad21053cc56c14e8b002f2ae049d266ed058a6c0bc4ce7ce",
+      "bytes": 50900,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.37.woff2",
+      "localPath": "fonts/font-8d0eeb8aadc5745f3f28627d.woff2",
+      "sha256": "8d0eeb8aadc5745f3f28627d21b458f8b7b8860d81eea4315e68575330ca8a7e",
+      "bytes": 49424,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.38.woff2",
+      "localPath": "fonts/font-871b891f4edf72c8f5589f29.woff2",
+      "sha256": "871b891f4edf72c8f5589f2940c74e0e2dfc72ddbc96fa094919484e632f4896",
+      "bytes": 41584,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.39.woff2",
+      "localPath": "fonts/font-cd18c18208a970b5ce24889a.woff2",
+      "sha256": "cd18c18208a970b5ce24889a4eea76db5d655e1f5d0d752fdbe87f2bccd70d9a",
+      "bytes": 34116,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.40.woff2",
+      "localPath": "fonts/font-117b4f61f202d08105e44975.woff2",
+      "sha256": "117b4f61f202d08105e44975dcc19e67b2e87e19cdc677712bf53e22119fca65",
+      "bytes": 49664,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.41.woff2",
+      "localPath": "fonts/font-99d85e8284d07b88814b0cac.woff2",
+      "sha256": "99d85e8284d07b88814b0cac1a7797926f72947ead90b5fe23448a9d16f82a83",
+      "bytes": 61868,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.42.woff2",
+      "localPath": "fonts/font-be75334d9b23c1b04246fa89.woff2",
+      "sha256": "be75334d9b23c1b04246fa8940454c7ea15e3c41c27d5bee2423fab75cdae1ad",
+      "bytes": 59268,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.43.woff2",
+      "localPath": "fonts/font-06181b5cdba62c3271716544.woff2",
+      "sha256": "06181b5cdba62c32717165441494ddc64ce849e3cd0ad5b65e69b3789d3651d7",
+      "bytes": 62644,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.44.woff2",
+      "localPath": "fonts/font-e4d7ca2d4ca9ad76bba4b825.woff2",
+      "sha256": "e4d7ca2d4ca9ad76bba4b8252d6cbc7fae2a6ea93fe94dcc78db25b784457c44",
+      "bytes": 52884,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.45.woff2",
+      "localPath": "fonts/font-d3a691dc3cc0059b836e6fbb.woff2",
+      "sha256": "d3a691dc3cc0059b836e6fbbcc0aebc1c35a85b4888503052144a246bf719e39",
+      "bytes": 37448,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.46.woff2",
+      "localPath": "fonts/font-2a95ac955d861af18df45413.woff2",
+      "sha256": "2a95ac955d861af18df45413c73080c07c0f07f8d1bb97843593e30c7dd01e12",
+      "bytes": 51860,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.47.woff2",
+      "localPath": "fonts/font-8b7500f4bf14f06b89d26d8e.woff2",
+      "sha256": "8b7500f4bf14f06b89d26d8edc41b672f94e22dbb5b2ea3a9568ee4a4e657b20",
+      "bytes": 51140,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.48.woff2",
+      "localPath": "fonts/font-7a3e5b1b571496cce1da8e44.woff2",
+      "sha256": "7a3e5b1b571496cce1da8e440660c19c9fb8c06903ab727a5075856e232f472e",
+      "bytes": 33464,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.49.woff2",
+      "localPath": "fonts/font-b9921c946380fbbfe4be8dcd.woff2",
+      "sha256": "b9921c946380fbbfe4be8dcdb48647c87586391d91abcdad632d1188d7544410",
+      "bytes": 67844,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.50.woff2",
+      "localPath": "fonts/font-5ec2506092a10ebca1b406d0.woff2",
+      "sha256": "5ec2506092a10ebca1b406d0ed718e2f7e3429f7e99d2f2f7e3e1c9779511eb7",
+      "bytes": 67844,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.51.woff2",
+      "localPath": "fonts/font-20574a0ae98d021888d5b9ef.woff2",
+      "sha256": "20574a0ae98d021888d5b9ef1fad149650b3baca29f69debe0fd98014fcb9ea5",
+      "bytes": 53424,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.52.woff2",
+      "localPath": "fonts/font-aaf525efaae46a210d89dd00.woff2",
+      "sha256": "aaf525efaae46a210d89dd00a8f156cd7dbcfb8a463052d20a525f132e4536ac",
+      "bytes": 51396,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.53.woff2",
+      "localPath": "fonts/font-b7db00a033f88c024c823c9a.woff2",
+      "sha256": "b7db00a033f88c024c823c9a2a63da215307159e67f37dfcdcfa2a8c2391c427",
+      "bytes": 46864,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.54.woff2",
+      "localPath": "fonts/font-aff3c7ed7f8936fd44d08ad3.woff2",
+      "sha256": "aff3c7ed7f8936fd44d08ad38626b604a8b3f0c4fe9ef2d89f017f67ab84389d",
+      "bytes": 51756,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.55.woff2",
+      "localPath": "fonts/font-02e81d94f83afed599af6bd5.woff2",
+      "sha256": "02e81d94f83afed599af6bd5098d67d3a28c90a4eaf13c62d59c27d3bc4f27c9",
+      "bytes": 51192,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.56.woff2",
+      "localPath": "fonts/font-24e6315820c2c11bada7fec0.woff2",
+      "sha256": "24e6315820c2c11bada7fec09a7f23489d18c6fe9091c5d732bd605cf65f46b8",
+      "bytes": 52460,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.57.woff2",
+      "localPath": "fonts/font-d891d1c87bb2676de8cf2499.woff2",
+      "sha256": "d891d1c87bb2676de8cf24993918cb032eb12f07e61ccb732e0f8b75a67f5e81",
+      "bytes": 50976,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.58.woff2",
+      "localPath": "fonts/font-5f8743d87fe14135bfa8535e.woff2",
+      "sha256": "5f8743d87fe14135bfa8535e9e5f3959d4dbd2ea786a0afe3625c9e0bfcfddaa",
+      "bytes": 60320,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.59.woff2",
+      "localPath": "fonts/font-19b7e0d2904580a9c834434f.woff2",
+      "sha256": "19b7e0d2904580a9c834434fdd272a9d133ec04655c7ba1abfa3d1a3ea61be0f",
+      "bytes": 60960,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.60.woff2",
+      "localPath": "fonts/font-e9fbc726e076f2e2f9934af0.woff2",
+      "sha256": "e9fbc726e076f2e2f9934af050a6df0ccc5d2c2fd47f3e91cd9ff70118c58a9d",
+      "bytes": 63744,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.61.woff2",
+      "localPath": "fonts/font-598db68e1b0c05afc3a63621.woff2",
+      "sha256": "598db68e1b0c05afc3a6362101417675944a2e0d320fa0ea4482099f04f14d2b",
+      "bytes": 46936,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.62.woff2",
+      "localPath": "fonts/font-a56d8e9c5891edf41846bc7f.woff2",
+      "sha256": "a56d8e9c5891edf41846bc7fd271f01dba2df9b8d1bf29614f4a3a2843f1a374",
+      "bytes": 39360,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.63.woff2",
+      "localPath": "fonts/font-2d4b9151553744cef36ccc56.woff2",
+      "sha256": "2d4b9151553744cef36ccc5604c9d330791e3538447cf39bfa61cf2d000f2e64",
+      "bytes": 61884,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.64.woff2",
+      "localPath": "fonts/font-02b763fc08a17e9ac01a41bb.woff2",
+      "sha256": "02b763fc08a17e9ac01a41bb6895be31772fbf87682a0dafcafbbdf32d568b8a",
+      "bytes": 59972,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.65.woff2",
+      "localPath": "fonts/font-2459353f195b34c91635bc58.woff2",
+      "sha256": "2459353f195b34c91635bc5894346e724a83b4e149de6c5b8de24dcdd668e76c",
+      "bytes": 50356,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.66.woff2",
+      "localPath": "fonts/font-4656b7ea5fc80d601b14a6e4.woff2",
+      "sha256": "4656b7ea5fc80d601b14a6e43a4b261900ef52d20a1ea950ed3a1cca92dbe95f",
+      "bytes": 40336,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.67.woff2",
+      "localPath": "fonts/font-7f6223cfa3feff4f910280c0.woff2",
+      "sha256": "7f6223cfa3feff4f910280c0a0439d3383ea5d8154146cf3a75c219a969351d2",
+      "bytes": 44096,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.68.woff2",
+      "localPath": "fonts/font-b2c8f85dc7ec6e3561fea5b6.woff2",
+      "sha256": "b2c8f85dc7ec6e3561fea5b69b8b93572c15509aaec75c6cbdb1fde9a7a29585",
+      "bytes": 59832,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.69.woff2",
+      "localPath": "fonts/font-50651aebb8490306619cbd26.woff2",
+      "sha256": "50651aebb8490306619cbd26dcdcf169d1d99a0f4bff8e414c8d1022e0a4fd2c",
+      "bytes": 39472,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.70.woff2",
+      "localPath": "fonts/font-f183ae5ded616825b2c7bb8c.woff2",
+      "sha256": "f183ae5ded616825b2c7bb8cfb30812fe9217c163a9c46f2a61ad2bbe7238080",
+      "bytes": 53164,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.71.woff2",
+      "localPath": "fonts/font-da34ea1bb5307f8e57ccae4c.woff2",
+      "sha256": "da34ea1bb5307f8e57ccae4c5ae8480d49b5182e4521696700129612b875be9c",
+      "bytes": 45344,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.72.woff2",
+      "localPath": "fonts/font-989ed884508d9955ccb3abd3.woff2",
+      "sha256": "989ed884508d9955ccb3abd3388a377a19224adb26d985e11cfb20b6e52f4eb7",
+      "bytes": 44136,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.73.woff2",
+      "localPath": "fonts/font-42b171ede43e343d133a77c7.woff2",
+      "sha256": "42b171ede43e343d133a77c7e6c80969d809cf516df691e82092c6ae81eeae30",
+      "bytes": 46920,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.74.woff2",
+      "localPath": "fonts/font-2a4184d4ef38d8b67fab4330.woff2",
+      "sha256": "2a4184d4ef38d8b67fab433043c14390972df6b9d184afbcde87d6c805b16017",
+      "bytes": 39020,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.75.woff2",
+      "localPath": "fonts/font-9f301e5da1a390bfbf0f4380.woff2",
+      "sha256": "9f301e5da1a390bfbf0f4380acaba07ec0c0652592a11f3f85976e793c5f2242",
+      "bytes": 62500,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.76.woff2",
+      "localPath": "fonts/font-e62fbbaa11e4485af485d7b9.woff2",
+      "sha256": "e62fbbaa11e4485af485d7b93568e2fe942a60c2f81f83f66b45521fe5d5014e",
+      "bytes": 44968,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.77.woff2",
+      "localPath": "fonts/font-245ac52b872ed3fcc120dc3f.woff2",
+      "sha256": "245ac52b872ed3fcc120dc3fac727ad49e3033c8c98797d08126a65f17d8f6b2",
+      "bytes": 46164,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.78.woff2",
+      "localPath": "fonts/font-75643c2db1f388f8c4c2dcc8.woff2",
+      "sha256": "75643c2db1f388f8c4c2dcc8d1bd932dc228469d2563b374fc8f42e67f95aaec",
+      "bytes": 49848,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.79.woff2",
+      "localPath": "fonts/font-30c69e3ee6e30f320580de81.woff2",
+      "sha256": "30c69e3ee6e30f320580de81db75cb94dca8dec6a34860fc50f17f5ee3c5177f",
+      "bytes": 44192,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.80.woff2",
+      "localPath": "fonts/font-16cc03a23772d4604b060868.woff2",
+      "sha256": "16cc03a23772d4604b06086857b3693ca78f15dcf87f546fd08844b1d41e6f01",
+      "bytes": 33148,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.81.woff2",
+      "localPath": "fonts/font-0e75a49a3609d835c4a450fd.woff2",
+      "sha256": "0e75a49a3609d835c4a450fdb49b8154b7cee48ab72cad01322ead9095471777",
+      "bytes": 40884,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.82.woff2",
+      "localPath": "fonts/font-32e40bd18737a95974ceaa2d.woff2",
+      "sha256": "32e40bd18737a95974ceaa2da88bf647683f5af1c3dc32834c38aab7f6724383",
+      "bytes": 48852,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.83.woff2",
+      "localPath": "fonts/font-58627d5a360a1f9e1fa687f3.woff2",
+      "sha256": "58627d5a360a1f9e1fa687f3e29c9ef24de00666fa90841651d696f73b557f3f",
+      "bytes": 36672,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.84.woff2",
+      "localPath": "fonts/font-6776216ceb21434c209978d7.woff2",
+      "sha256": "6776216ceb21434c209978d7f302afe1b871d6cdace3ceec96a8f66543ecabec",
+      "bytes": 40852,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.85.woff2",
+      "localPath": "fonts/font-3e9036d93a373e98e59402d6.woff2",
+      "sha256": "3e9036d93a373e98e59402d6959e21e4d557ed0e3ea492816b0ef02c76363b73",
+      "bytes": 67064,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.86.woff2",
+      "localPath": "fonts/font-651444fa2db7889bf4ffdd9a.woff2",
+      "sha256": "651444fa2db7889bf4ffdd9a88db8e3f06c78bb80aa05619b2fea9b7506f8b55",
+      "bytes": 64204,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.87.woff2",
+      "localPath": "fonts/font-429154f139d5e6c53bd8ab29.woff2",
+      "sha256": "429154f139d5e6c53bd8ab29f9b8545ddeee831a56a3a1cc6fe83c0f224c2357",
+      "bytes": 60444,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.88.woff2",
+      "localPath": "fonts/font-e8fdbda3989beea351d0ca2b.woff2",
+      "sha256": "e8fdbda3989beea351d0ca2b94ffdeed6f76ca5713210ec0c00ae05b476b7d3b",
+      "bytes": 44652,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.89.woff2",
+      "localPath": "fonts/font-376e1b7e25dad19c065eccf1.woff2",
+      "sha256": "376e1b7e25dad19c065eccf1090e300964a503bbed4afb94c995ddcea5b414b0",
+      "bytes": 6200,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.90.woff2",
+      "localPath": "fonts/font-dad7d089d411a457f39a7da1.woff2",
+      "sha256": "dad7d089d411a457f39a7da12d7cf74a827ffefca433ed9d611342d044888c43",
+      "bytes": 9908,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.91.woff2",
+      "localPath": "fonts/font-cba6c32c0cfd62af8c63cc18.woff2",
+      "sha256": "cba6c32c0cfd62af8c63cc1852eb467c8d2a87b35479df57536ac176354e5974",
+      "bytes": 11036,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.92.woff2",
+      "localPath": "fonts/font-ebeb219969551e2454aff527.woff2",
+      "sha256": "ebeb219969551e2454aff527c815a9cb71aafda3c824be057d58390c496beabe",
+      "bytes": 11404,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.93.woff2",
+      "localPath": "fonts/font-a3b4be4491560335eb5966fd.woff2",
+      "sha256": "a3b4be4491560335eb5966fde8dbb780fff1bff6142183eb48f7aeadf4bc6a04",
+      "bytes": 8572,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.98.woff2",
+      "localPath": "fonts/font-6035b9cc7a0740f9210449ab.woff2",
+      "sha256": "6035b9cc7a0740f9210449abc34b59057b47bfbdf5676ffda97c2339ea71e749",
+      "bytes": 2320,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.99.woff2",
+      "localPath": "fonts/font-0cc36ebe5abd4e77b0ed4ced.woff2",
+      "sha256": "0cc36ebe5abd4e77b0ed4ced72fea40be3124b67ea461d6b378d37b3f6062d60",
+      "bytes": 9324,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.100.woff2",
+      "localPath": "fonts/font-6d24e814e9fa8ad23b8ea9e6.woff2",
+      "sha256": "6d24e814e9fa8ad23b8ea9e65c5e1bd553da16dc32508b23dcedfd31bffbb13d",
+      "bytes": 62856,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.101.woff2",
+      "localPath": "fonts/font-3d4a393470c0160fbe5b5233.woff2",
+      "sha256": "3d4a393470c0160fbe5b5233cbfa5589c38589337b28c982a08c89af57a49727",
+      "bytes": 62368,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.102.woff2",
+      "localPath": "fonts/font-665f302bd027015ba2834b2e.woff2",
+      "sha256": "665f302bd027015ba2834b2ee8702e844c500eddb37e733f0f37b3f5d1c9015c",
+      "bytes": 62976,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.103.woff2",
+      "localPath": "fonts/font-df93338a11357d8682dcaf4b.woff2",
+      "sha256": "df93338a11357d8682dcaf4b32f897eddbf377ff05893ed6e5f6c7b6375868da",
+      "bytes": 69912,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.104.woff2",
+      "localPath": "fonts/font-fdccef9d0fa2754365926b40.woff2",
+      "sha256": "fdccef9d0fa2754365926b40399069dba481c934851e1926cefde3c0411ca856",
+      "bytes": 68648,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.105.woff2",
+      "localPath": "fonts/font-333f31fc848fde44b8d9d34c.woff2",
+      "sha256": "333f31fc848fde44b8d9d34c17f576e6071821026b3a4a370e23008a1244bb40",
+      "bytes": 68228,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.106.woff2",
+      "localPath": "fonts/font-8e8a32f22f65353c3a78e85e.woff2",
+      "sha256": "8e8a32f22f65353c3a78e85ebbca1d87167b5d716e3367894e27dc29682a158c",
+      "bytes": 72200,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.107.woff2",
+      "localPath": "fonts/font-d99e2ae390664158afe71b28.woff2",
+      "sha256": "d99e2ae390664158afe71b283e9d8340bc2e79446da20c0d6dd3122884525f71",
+      "bytes": 72992,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.108.woff2",
+      "localPath": "fonts/font-ebd97439a32b3bd76fcae0d4.woff2",
+      "sha256": "ebd97439a32b3bd76fcae0d4b7476f90b2e5b9aacf59bc24c402309616ad89a6",
+      "bytes": 72380,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.109.woff2",
+      "localPath": "fonts/font-56428608ad84b9cef0aefcfe.woff2",
+      "sha256": "56428608ad84b9cef0aefcfe6d7d08dda138447655deb3b20d4a8c74180fdc53",
+      "bytes": 72124,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.110.woff2",
+      "localPath": "fonts/font-fe2a653a2edfd150057162e7.woff2",
+      "sha256": "fe2a653a2edfd150057162e79afb20df267699c24acff599695554a5513cce99",
+      "bytes": 79984,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.111.woff2",
+      "localPath": "fonts/font-c81dde538ea069e0162d58d4.woff2",
+      "sha256": "c81dde538ea069e0162d58d4657b1d0326fa05fb2691c4a232b1a5998b4b17d4",
+      "bytes": 74756,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.112.woff2",
+      "localPath": "fonts/font-4eb1cdd40680cf64cb4790b6.woff2",
+      "sha256": "4eb1cdd40680cf64cb4790b6089890e27edbf23d2dbbce875c2f1583c7050684",
+      "bytes": 73112,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.113.woff2",
+      "localPath": "fonts/font-b4ba01920a6a1cefc7a147d1.woff2",
+      "sha256": "b4ba01920a6a1cefc7a147d10de2abe3208d6f0d62d54a1403c38702eac671c7",
+      "bytes": 71376,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.114.woff2",
+      "localPath": "fonts/font-74c744a2959c0fe0316316c5.woff2",
+      "sha256": "74c744a2959c0fe0316316c5a4b80a07d6da2f4d7755ca96c73c6d15876626a7",
+      "bytes": 84228,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.115.woff2",
+      "localPath": "fonts/font-bd7dee6c2c1c31a1bbde407a.woff2",
+      "sha256": "bd7dee6c2c1c31a1bbde407a5d7f4591f7079b20db69c773832097f936253062",
+      "bytes": 74104,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.116.woff2",
+      "localPath": "fonts/font-fbd687923aa95b1865d234ff.woff2",
+      "sha256": "fbd687923aa95b1865d234ff69d4d404952829cdd0fc5af3aee48de974c1e4c5",
+      "bytes": 71380,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.117.woff2",
+      "localPath": "fonts/font-8f1fdde78518c858d63c9ca4.woff2",
+      "sha256": "8f1fdde78518c858d63c9ca4b753fca05fa4bb7340f30677f0d9d4d0fb9907d1",
+      "bytes": 65452,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.118.woff2",
+      "localPath": "fonts/font-71f926401981a714d17fea47.woff2",
+      "sha256": "71f926401981a714d17fea476b5286f9af04209efbc949b83ac715d10e6573dd",
+      "bytes": 60028,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9hMRhvEPeWV8Ydw9dTvaja5emiwCL1Dv89rTx5gtGuOA.119.woff2",
+      "localPath": "fonts/font-4bc71b7310d24dbb15a9bf72.woff2",
+      "sha256": "4bc71b7310d24dbb15a9bf7283d123f5ab7e7f4bdcc313810cdcf76e808b13b2",
+      "bytes": 34392,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9RN3p2Iu4.woff2",
+      "localPath": "fonts/font-2eea255e6ea4d8e5ac7a6117.woff2",
+      "sha256": "2eea255e6ea4d8e5ac7a6117b4c96e9332146825360dab9b0af2b2afbab44ed8",
+      "bytes": 9984,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9RPHp2Iu4.woff2",
+      "localPath": "fonts/font-ba038f4cd0b6c9ac8bad0b68.woff2",
+      "sha256": "ba038f4cd0b6c9ac8bad0b6831f4cc0d5fa31ad0134b4b332c52af85ed4a10a0",
+      "bytes": 9072,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9RPXp2Iu4.woff2",
+      "localPath": "fonts/font-de4574522e16031a445ad465.woff2",
+      "sha256": "de4574522e16031a445ad465f8c08caf043999b7e3baecc42c1ff5f18849cbdc",
+      "bytes": 8256,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/notosanshk/v35/nKKQ-GM_FYFRJvXzVXaAPe9RM3p2.woff2",
+      "localPath": "fonts/font-64f98b93958b4a81226686a1.woff2",
+      "sha256": "64f98b93958b4a81226686a11600ec53be482a53075ba1d15a585149069567ae",
+      "bytes": 24968,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotoflex/v30/NaNNepOXO_NexZs0b5QrzlOHb8wCikXpYqmZsWI-__OGbt8jZktqc2V3Zs0KvDLdBP8SBZtOs2IifRuUZQMsPJtUsR4DEK6cULNeUx9XgTnH37Ha_FIAp4Fm0PP1hw45DntW2x0wZGzhPmr1YNMYKYn9_1IQXGwJAiUJVUMdN5YUW4O8HtSoXjC79QRyaLshNDUf3e0O-gn5rrZCu20YNau1OPF80A.woff2",
+      "localPath": "fonts/font-5e8f6b58a9b8edb0fddabfa3.woff2",
+      "sha256": "5e8f6b58a9b8edb0fddabfa338498827c7b959d3ecd959208256c4737e189db0",
+      "bytes": 26636,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotoflex/v30/NaNNepOXO_NexZs0b5QrzlOHb8wCikXpYqmZsWI-__OGbt8jZktqc2V3Zs0KvDLdBP8SBZtOs2IifRuUZQMsPJtUsR4DEK6cULNeUx9XgTnH37Ha_FIAp4Fm0PP1hw45DntW2x0wZGzhPmr1YNMYKYn9_1IQXGwJAiUJVUMdN5YUW4O8HtSoXjC79QRyaLshNDUf3e0O-gn5rrZCu20YNau8OPF80A.woff2",
+      "localPath": "fonts/font-359b1c22ebe30a2e9a3269d5.woff2",
+      "sha256": "359b1c22ebe30a2e9a3269d564afaa722f168cde3bb0ce7f778e000c86b2ba8e",
+      "bytes": 41732,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotoflex/v30/NaNNepOXO_NexZs0b5QrzlOHb8wCikXpYqmZsWI-__OGbt8jZktqc2V3Zs0KvDLdBP8SBZtOs2IifRuUZQMsPJtUsR4DEK6cULNeUx9XgTnH37Ha_FIAp4Fm0PP1hw45DntW2x0wZGzhPmr1YNMYKYn9_1IQXGwJAiUJVUMdN5YUW4O8HtSoXjC79QRyaLshNDUf3e0O-gn5rrZCu20YNau7OPF80A.woff2",
+      "localPath": "fonts/font-39dafe236feb6e1265c11301.woff2",
+      "sha256": "39dafe236feb6e1265c1130138fbceef736e98b1f34bf0cf9f4325e9a1339d97",
+      "bytes": 27412,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotoflex/v30/NaNNepOXO_NexZs0b5QrzlOHb8wCikXpYqmZsWI-__OGbt8jZktqc2V3Zs0KvDLdBP8SBZtOs2IifRuUZQMsPJtUsR4DEK6cULNeUx9XgTnH37Ha_FIAp4Fm0PP1hw45DntW2x0wZGzhPmr1YNMYKYn9_1IQXGwJAiUJVUMdN5YUW4O8HtSoXjC79QRyaLshNDUf3e0O-gn5rrZCu20YNau3OPF80A.woff2",
+      "localPath": "fonts/font-203e87ea863a747cc56bc7fe.woff2",
+      "sha256": "203e87ea863a747cc56bc7fe21066737368963af0c9ac25fba0075e78ecd23f0",
+      "bytes": 22784,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotoflex/v30/NaNNepOXO_NexZs0b5QrzlOHb8wCikXpYqmZsWI-__OGbt8jZktqc2V3Zs0KvDLdBP8SBZtOs2IifRuUZQMsPJtUsR4DEK6cULNeUx9XgTnH37Ha_FIAp4Fm0PP1hw45DntW2x0wZGzhPmr1YNMYKYn9_1IQXGwJAiUJVUMdN5YUW4O8HtSoXjC79QRyaLshNDUf3e0O-gn5rrZCu20YNau2OPF80A.woff2",
+      "localPath": "fonts/font-014d773ca7925baa663a7d7f.woff2",
+      "sha256": "014d773ca7925baa663a7d7f8b2475a81623d6ae7d35e66fdf100f261abd79ed",
+      "bytes": 59020,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotoflex/v30/NaNNepOXO_NexZs0b5QrzlOHb8wCikXpYqmZsWI-__OGbt8jZktqc2V3Zs0KvDLdBP8SBZtOs2IifRuUZQMsPJtUsR4DEK6cULNeUx9XgTnH37Ha_FIAp4Fm0PP1hw45DntW2x0wZGzhPmr1YNMYKYn9_1IQXGwJAiUJVUMdN5YUW4O8HtSoXjC79QRyaLshNDUf3e0O-gn5rrZCu20YNau4OPE.woff2",
+      "localPath": "fonts/font-e97ca92cebcf4df3539f6514.woff2",
+      "sha256": "e97ca92cebcf4df3539f6514cd652a84a827939e6d5eaf5edece6d83c8229138",
+      "bytes": 84304,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhGq3-OXg.woff2",
+      "localPath": "fonts/font-6d72c2150c28b5305e7bfd02.woff2",
+      "sha256": "6d72c2150c28b5305e7bfd0290edcf6038e556a9dd11a6ef15a1652548a35693",
+      "bytes": 35912,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhPq3-OXg.woff2",
+      "localPath": "fonts/font-4052cc0b0f8b1b39da6cfaf9.woff2",
+      "sha256": "4052cc0b0f8b1b39da6cfaf90460f8b3c84dfc4b7562e9308ffa0998c3b9a005",
+      "bytes": 18592,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhIq3-OXg.woff2",
+      "localPath": "fonts/font-308f763acd5f648b0556c1f7.woff2",
+      "sha256": "308f763acd5f648b0556c1f79b848102f494d0450072cfd2fd8064ddf287f4f8",
+      "bytes": 14044,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhEq3-OXg.woff2",
+      "localPath": "fonts/font-a4f562a288609dcb8f13e2b5.woff2",
+      "sha256": "a4f562a288609dcb8f13e2b52296f1f3360957f09060735d4f00b5886e5bc7e0",
+      "bytes": 10308,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhFq3-OXg.woff2",
+      "localPath": "fonts/font-4cc0d52e0fa37c28084e0cbc.woff2",
+      "sha256": "4cc0d52e0fa37c28084e0cbce3589a8ab32dd21e6ea619489c5f7c6e8c43b922",
+      "bytes": 22916,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font",
+      "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhLq38.woff2",
+      "localPath": "fonts/font-b81cd55177300649be8f95b3.woff2",
+      "sha256": "b81cd55177300649be8f95b3b747d721ce607e8ed2856e25bd0c630cfd631faf",
+      "bytes": 32796,
+      "contentType": "font/woff2"
+    },
+    {
+      "kind": "font-css",
+      "sourceUrl": "https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&family=Roboto+Flex:opsz,wght@8..144,100..1000&family=Roboto+Mono:wght@400;500&family=Noto+Sans+HK:wght@400;500;700&display=swap",
+      "localPath": "fonts.css",
+      "sha256": "7c6bb7c439f666bb1fda0f00a612faa4aef4f73e64b8e0a6f88e527cb32bad3b",
+      "bytes": 405278,
+      "contentType": "text/css; charset=utf-8"
+    }
+  ]
+}
