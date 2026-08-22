@@ -1,31 +1,34 @@
 # Handoff
 
-## Current integration closeout — 2026-08-21, implementation tip `76566f01f12048042f1ca257df4adb1f7a99b32c`
+## Current integration closeout — 2026-08-21, final integrated tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`
 
-The primary integration checkout is clean. The implementation tip above is followed by this
-documentation-only record update on `dev`. This closeout removed the interactive GitHub-star prompt and its `gh` mutation path, repaired the stale
-docs bundle and packaging stdout check, and integrated the ready recovery, vocabulary, design-route,
-dashboard, updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle,
-package-contract, line-attribution, docs-site, and network-safety lanes into `dev`.
-Follow-up commits `625708d07` and `50edc1a69` removed an unpaired OAuth checkpoint and repaired the
-privacy scanner's public authorship boundary; the current `dev` tip is `50edc1a6984bd89ecbabf1f61fae419d916e6cc1`.
+The primary integration checkout is clean and `origin/dev` independently matches
+`b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`. This closeout removed the interactive GitHub-star
+prompt and its `gh` mutation path, regenerated the in-app documentation bundle from all 40
+English Markdown articles, repaired the GUI lint baseline, and integrated the ready recovery,
+vocabulary, design-route, dashboard, updater, build/bootstrap, branding/embed, release-workflow,
+account-lifecycle, package-contract, line-attribution, docs-site, and network-safety lanes into
+`dev`. The task-owned merged branches and linked worktrees were removed only after clean-tree and
+ancestry proofs; active Go-port, unfinished, legacy, and ownership-uncertain work was retained.
 
 ### Verified local evidence
 
 - Star-prompt/link/package focused checks: 20 passed, 0 failed, 64 assertions; GUI app-name/docs checks: 39 passed, 0 failed, 464 assertions.
+- Generated documentation bundle check: 6 passed, 0 failed, 410 assertions; the bundle now contains 40 articles, including `guides/branding-and-link-embeds`, with current frontmatter titles.
+- Final merged GUI checks: `bun run lint` completed with 0 errors and 0 warnings; `bun test tests` completed with 1,642 passed, 0 failed, 14,427 assertions across 197 files; `bun run build` completed successfully with only the existing large-chunk advisory.
 - Recovery focused batch: 68 passed, 0 failed, 268 assertions.
 - Docs vocabulary/School mode: 21 passed, 0 failed, 75 assertions; app vocabulary/i18n: 69 passed, 0 failed, 3,750 assertions.
 - Design determinism/routes/parity: 16 passed, 0 failed, 1,055 assertions; parity remains `stale-evidence` until the approved real built-artifact capture route supplies fresh receipts.
 - Dashboard/updater: 23 passed, 0 failed, 132 assertions; bootstrap: 22 passed, 0 failed, 87 assertions; workflow/release: 77 passed, 0 failed, 999 assertions.
 - Auth/account lifecycle: 159 passed, 0 failed, 526 assertions; OAuth/network/export/config: 172 passed, 0 failed, 718 assertions; docs-site: 290 passed, 1 skipped, 0 failed, 2,449 assertions.
-- Root typecheck and privacy scan passed at the current repair tip; the GUI typecheck also passed. The full blob-based line counter exceeded a 60-second bounded diagnostic window without a verdict and is not claimed green.
+- Root typecheck and privacy scan passed at the final integrated tip. The root whole-suite run was stopped after the known `tests/count-lines-attribution.test.ts` stall and has no aggregate verdict; two host-bound ACL fixtures also require per-user NTFS ACL support unavailable in the local environment, so no root-suite green claim is made.
 
 ### External and retained state
 
-- The previous failed remote verdict at `01a429e8662f73372dba8831f3d83ac668c68ba3` is recorded in Dashboard preview run `32543644369`: an unhandled React `window.event` error after a late notification update. The provider teardown fix is now in `gui/src/shell/notifications.tsx` with a focused regression; new exact-tip CI evidence is still pending.
+- Dashboard preview run `32546729592` passed for the preceding `a291d442a95f718abfd207589950d7d8fd725633` tree; it is superseded by the final merged tip. Final exact-tip runs for `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd` are Windows CI `32547215873` and Dashboard preview `32547215765`; their terminal conclusions remain pending at handoff time.
 - Two host-bound live-process runtime probes remain unverified because `Get-CimInstance` could not inspect the spawned process on this host; source/archive/service checks are green.
 - UI parity, fresh installer execution, exact release publication, and approved headless real-capture evidence remain open. No release is claimed from this closeout.
-- The four non-ancestor local branches `codex/port-antigravity`, `codex/port-architecture-foundations`, `codex/port-network-security`, and the `dev2-go` port lines were inspected; network/security work is integrated, while provider-specific, unfinished architecture, and Go-port work remain preserved in clean worktrees.
+- The retained non-task branches are `codex/port-antigravity`, `codex/port-architecture-foundations`, `codex/port-go-parity`, `codex/forward-bun-proxy-startup-dev2-go`, and the older recovery/shortcut branches. Network/security work is integrated; provider-specific, unfinished architecture, and Go-port work remain preserved in clean worktrees or clean local branches.
 
 ## Backend recovery closeout — 2026-08-21
 
@@ -676,8 +679,8 @@ is the result, not a failure to do the work.
 > [!NOTE]
 > One command drops that last branch if you want it gone, now that the analysis
 > is written down: `git branch -D claude/keen-dijkstra-a12563 && git push origin --delete claude/keen-dijkstra-a12563`.
-> I did not run it, because deleting unmerged work is the one thing `mat day`
-> does not make safe.
+> I did not run it, because deleting unmerged work is unsafe even when a cleanup
+> pass has been explicitly authorized.
 
 ---
 
