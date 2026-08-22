@@ -179,7 +179,7 @@ const helpEntries: Record<string, HelpEntry> = {
       "remove <provider> <id> --yes  Remove a stored account or key after an existence check.",
       "add-key <provider> [--label <label>]  Add a key read only from piped stdin.",
       "login/reauth/code/cancel  Run browser or manual-code auth from a headless shell.",
-      "reset-credits <id|main> [--consume --yes]  Inspect or consume Codex reset credits.",
+      "reset-credits <id|main> [--consume --yes] [--operation-id <uuid>]  Inspect or consume Codex reset credits.",
       "Codex pool switches apply to new sessions; running threads keep their account.",
     ],
   },
