@@ -27,6 +27,15 @@ export type TypeFilter = { cloud: boolean; local: boolean; selfHosted: boolean; 
 export interface ProviderUsageTotals {
   requests?: number;
   totalTokens?: number;
+  /**
+   * Server-computed per-provider lane subtotals (`src/usage/summary.ts`
+   * buildProviders), carried so a panel's headline cost reads the server's own
+   * subtotal instead of re-summing whatever model rows happen to be visible.
+   * Absent on a pre-split remote proxy.
+   */
+  estimatedCostUsd?: number;
+  /** Non-billing API-equivalent total; never summed with the direct figure. */
+  apiEquivalentCostUsd?: number;
 }
 
 /** Per-model usage row from /api/usage, filtered by provider. */

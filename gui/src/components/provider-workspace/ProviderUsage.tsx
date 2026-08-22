@@ -39,25 +39,40 @@ export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsa
    * reported no cost whatsoever despite every request having a priced equivalent.
    */
   const providerCost = useMemo(() => {
+    // The server computes each provider's per-lane subtotals itself
+    // (src/usage/summary.ts buildProviders). Reading them keeps this headline
+    // equal to the server's own number even when the table below is sliced,
+    // filtered, or gains a new server-side cost component — a re-sum over the
+    // visible rows would silently diverge in all three cases.
+    const direct = usageTotals?.estimatedCostUsd;
+    const equivalent = usageTotals?.apiEquivalentCostUsd;
+    if (typeof direct === "number" && Number.isFinite(direct)) {
+      return { total: direct, equivalent: false as const };
+    }
+    if (typeof equivalent === "number" && Number.isFinite(equivalent)) {
+      return { total: equivalent, equivalent: true as const };
+    }
+    // Pre-split remote proxy: no provider-level subtotals at all, so the
+    // visible model rows are the only source available.
     if (!sortedModels.length) return undefined;
-    let direct = 0;
-    let hasDirect = false;
-    let equivalent = 0;
-    let hasEquivalent = false;
+    let modelDirect = 0;
+    let hasModelDirect = false;
+    let modelEquivalent = 0;
+    let hasModelEquivalent = false;
     for (const m of sortedModels) {
       if (m.estimatedCostUsd !== undefined) {
-        direct += m.estimatedCostUsd;
-        hasDirect = true;
+        modelDirect += m.estimatedCostUsd;
+        hasModelDirect = true;
       }
       if (m.apiEquivalentCostUsd !== undefined) {
-        equivalent += m.apiEquivalentCostUsd;
-        hasEquivalent = true;
+        modelEquivalent += m.apiEquivalentCostUsd;
+        hasModelEquivalent = true;
       }
     }
-    if (hasDirect) return { total: direct, equivalent: false as const };
-    if (hasEquivalent) return { total: equivalent, equivalent: true as const };
+    if (hasModelDirect) return { total: modelDirect, equivalent: false as const };
+    if (hasModelEquivalent) return { total: modelEquivalent, equivalent: true as const };
     return undefined;
-  }, [sortedModels]);
+  }, [sortedModels, usageTotals]);
 
   return (
     <div className="pws-section">

@@ -164,3 +164,29 @@ test("retired usage workspace i18n keys stay removed from every locale", async (
     expect(dict).not.toContain('"usage.workspace.mainAria":');
   }
 });
+
+// The cost surfaces must never answer "no published price" with "$0.00" — zero
+// is a claim about price, absence is not. These pin the all-unpriced paths so a
+// regression back to a rendered zero fails loudly.
+test("Usage renders an unpriced cost tile as words plus an em dash, never $0", async () => {
+  const src = (await Bun.file(new URL("../src/pages/Usage.tsx", import.meta.url)).text()).replaceAll("\r\n", "\n");
+
+  // The tile's hint names the absence through the localized key…
+  expect(src).toContain(': t("cost.lane.none")}');
+  // …and its value falls to the em dash exactly when no lane priced anything.
+  expect(src).toContain("laneCost.primary\n            ? formatUsdEstimate(laneCost.primary.total, locale)\n            : \"—\"}");
+  // The coverage panel repeats both halves of the contract: the reason in
+  // words when lanes exist but priced nothing, and the disclaimer beside them.
+  expect(src).toContain('{hasCostFields && !laneCost.primary && (\n        <p style={NOTE_TEXT}>{t("cost.lane.noneMeaning")}</p>\n      )}');
+});
+
+test("Logs tags an API-equivalent conversation total in words, never as a bill", async () => {
+  const src = await Bun.file(new URL("../src/pages/Logs.tsx", import.meta.url)).text();
+
+  // The banner prefers the billable lane for its headline figure…
+  expect(src).toContain('t("logs.conversation.totals"');
+  // …and every equivalent figure it shows carries the visible lane tag, both
+  // when it IS the headline and when it sits on its own line beneath one.
+  expect(src).toContain('<span className="cost-lane-tag">{t("cost.lane.equivalentTag")}</span>');
+  expect(src).toContain('{t("cost.lane.equivalent")}{" "}');
+});

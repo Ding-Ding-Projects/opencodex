@@ -136,6 +136,12 @@ export interface PricingLaneTotals {
 export interface ResolvedLaneTotal {
   total: number;
   pricedRequests: number;
+  /**
+   * Requests this lane saw but could not price, carried through so a surface
+   * showing the total can also say what it excludes. A direct subtotal that
+   * silently omits unpriced traffic presents as a complete figure otherwise.
+   */
+  unpricedRequests: number;
 }
 
 /**
@@ -153,7 +159,7 @@ export interface ResolvedLaneTotal {
 export interface ResolvedSummaryCost {
   direct: ResolvedLaneTotal | null;
   apiEquivalent: ResolvedLaneTotal | null;
-  primary: { kind: "direct" | "api_equivalent"; total: number } | null;
+  primary: { kind: "direct" | "api_equivalent"; total: number; unpricedRequests: number } | null;
 }
 
 export interface LaneBearingSummary {
@@ -167,7 +173,13 @@ function laneTotal(lane: PricingLaneTotals | undefined): ResolvedLaneTotal | nul
   if (!lane) return null;
   if (!Number.isFinite(lane.estimatedCostUsd) || lane.estimatedCostUsd < 0) return null;
   if (!(lane.pricedRequests > 0)) return null;
-  return { total: lane.estimatedCostUsd, pricedRequests: lane.pricedRequests };
+  return {
+    total: lane.estimatedCostUsd,
+    pricedRequests: lane.pricedRequests,
+    // An older remote proxy may omit the counter; an unknown exclusion count
+    // renders as zero exclusions rather than as a fabricated one.
+    unpricedRequests: Number.isFinite(lane.unpricedRequests) && lane.unpricedRequests > 0 ? lane.unpricedRequests : 0,
+  };
 }
 
 export function resolveSummaryCost(summary: LaneBearingSummary | undefined | null): ResolvedSummaryCost {
@@ -180,14 +192,14 @@ export function resolveSummaryCost(summary: LaneBearingSummary | undefined | nul
   if (!direct && !apiEquivalent && !summary.direct && !summary.apiEquivalent) {
     const legacy = summary.estimatedCostUsd;
     if (typeof legacy === "number" && Number.isFinite(legacy) && legacy > 0) {
-      direct = { total: legacy, pricedRequests: summary.pricedRequests ?? 0 };
+      direct = { total: legacy, pricedRequests: summary.pricedRequests ?? 0, unpricedRequests: 0 };
     }
   }
 
   const primary = direct
-    ? { kind: "direct" as const, total: direct.total }
+    ? { kind: "direct" as const, total: direct.total, unpricedRequests: direct.unpricedRequests }
     : apiEquivalent
-      ? { kind: "api_equivalent" as const, total: apiEquivalent.total }
+      ? { kind: "api_equivalent" as const, total: apiEquivalent.total, unpricedRequests: apiEquivalent.unpricedRequests }
       : null;
   return { direct, apiEquivalent, primary };
 }
