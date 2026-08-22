@@ -34,6 +34,7 @@ import Ollama from "./pages/Ollama";
 import OllamaChat from "./pages/OllamaChat";
 import Downloads from "./pages/Downloads";
 import DownloadsBridge from "./shell/DownloadsBridge";
+import DesktopUpdaterBanner from "./shell/DesktopUpdaterBanner";
 import OnboardingWizard from "./shell/OnboardingWizard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import RemoteConnectionDialog from "./components/RemoteConnectionDialog";
@@ -421,6 +422,7 @@ function AppShell() {
       </div>
 
       <SnackbarHost />
+      <DesktopUpdaterBanner />
       <DimSumCard version={displayedVersion} />
       {/* Ctrl+Shift+F, from anywhere in the app — decides for itself whether it
           is open, exactly like OnboardingWizard below it. */}

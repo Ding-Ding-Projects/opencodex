@@ -51,6 +51,14 @@ interface Window {
       /** Fixed native restore operation; no renderer path, command, or argv. */
       restoreNative: () => Promise<{ ok: true; message: string } | { ok: false; error: string }>;
     };
+    updater?: {
+      state: () => Promise<DesktopUpdateBridgeState>;
+      start: () => Promise<DesktopUpdateBridgeState>;
+      check: () => Promise<unknown>;
+      cancel: () => Promise<unknown>;
+      install: () => Promise<{ ok: boolean; reason?: string }>;
+      onState: (handler: (state: DesktopUpdateBridgeState) => void) => () => void;
+    };
     /**
      * The native file/folder picker behind every path text box.
      *
@@ -72,4 +80,12 @@ interface Window {
       }) => Promise<{ ok: boolean; canceled: boolean; path?: string; error?: string }>;
     };
   };
+}
+
+interface DesktopUpdateBridgeState {
+  status: "current" | "checking" | "available" | "downloading" | "ready" | "failed" | "offline" | "cancelled" | "corrupt";
+  version: string | null;
+  progress: number;
+  releaseNotesUrl?: string;
+  error?: string | null;
 }

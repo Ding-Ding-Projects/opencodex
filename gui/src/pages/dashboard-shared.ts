@@ -146,6 +146,7 @@ export function defaultUpdateChannel(version: string | undefined): UpdateChannel
 export function updateReasonLabel(reason: string | undefined, t: (key: TKey) => string): string {
   switch (reason) {
     case "source_checkout": return t("dash.updateReason.source_checkout");
+    case "desktop_installer": return t("dash.updateReason.desktop_installer");
     case "latest_unavailable": return t("dash.updateReason.latest_unavailable");
     case "already_latest": return t("dash.updateReason.already_latest");
     default: return t("dash.updateReason.unknown");

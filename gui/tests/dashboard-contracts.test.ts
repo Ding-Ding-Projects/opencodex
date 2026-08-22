@@ -12,6 +12,7 @@ import {
   modelMetaLabel,
   providerStatusPresentation,
   providersStatHint,
+  updateReasonLabel,
   type ProviderInfo,
 } from "../src/pages/dashboard-shared";
 import { PROJECT_CONFIG_DIAGNOSTICS_POLL_MS } from "../src/startup-health-ui";
@@ -21,6 +22,10 @@ const t: TFn = (key, vars) => interpolate(
   (en as Record<string, string>)[key] ?? (M3_EN as Record<string, string>)[key] ?? key,
   vars,
 );
+
+test("desktop-installer update reasons keep their dedicated localized label", () => {
+  expect(updateReasonLabel("desktop_installer", t)).toBe(t("dash.updateReason.desktop_installer"));
+});
 
 test("project-config diagnostics poll cadence is owned by the shared constant", () => {
   expect(PROJECT_CONFIG_DIAGNOSTICS_POLL_MS).toBe(30_000);
