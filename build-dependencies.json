@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "project": "opencodex",
+  "toolchain": {
+    "bun": {
+      "version": "1.3.14",
+      "windows": {
+        "wingetId": "Oven-sh.Bun",
+        "source": "https://github.com/oven-sh/bun/releases"
+      },
+      "unix": {
+        "installer": "https://bun.sh/install"
+      }
+    },
+    "node": {
+      "minimumMajor": 18,
+      "source": "https://nodejs.org/"
+    },
+    "electronBuilder": {
+      "version": "26.15.3",
+      "source": "https://www.npmjs.com/package/electron-builder"
+    }
+  },
+  "workspaces": [
+    {
+      "path": ".",
+      "install": "bun install --frozen-lockfile"
+    },
+    {
+      "path": "gui",
+      "install": "bun install --frozen-lockfile"
+    }
+  ],
+  "artifacts": {
+    "development": "gui/dist",
+    "windowsInstaller": "dist-desktop/squirrel-windows"
+  },
+  "notes": [
+    "The project is Windows-first for the packaged desktop application.",
+    "The installer is intentionally unsigned; no signing certificate or key is ever installed.",
+    "The manifest records canonical sources and exact project pins; package-manager metadata is verified by the package manager and the scripts verify the resulting tool versions."
+  ]
+}
