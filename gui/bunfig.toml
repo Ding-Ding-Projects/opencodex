@@ -1,0 +1,13 @@
+# Fail fast when the proxy's dependency tree is missing.
+#
+# GUI tests import the proxy's sources — `src/config.ts` needs `zod/v4`, and the
+# shared helpers in `tests/helpers/providers.tsx` import `src/settings-drafts`
+# and friends — so `bun test` inside gui/ needs the repository-root
+# dependencies installed on top of gui/'s own tree. With a GUI-only install,
+# bun used to report this state mid-suite as a bare "Unhandled error between
+# tests … Cannot find module 'zod/v4'", which reads exactly like cross-test
+# pollution and sends diagnosis down the wrong road. The preload below turns
+# it into one actionable failure instead. AGENTS.md records the same contract
+# under "Two dependency trees, both needed".
+[test]
+preload = ["./scripts/check-gui-test-deps.ts"]
