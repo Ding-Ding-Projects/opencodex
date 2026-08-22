@@ -156,6 +156,18 @@ func TestHostWildcardIsRemoteAndLoopbackIsLocal(t *testing.T) {
 	}
 }
 
+func TestHostTreatsEnvironmentAuthTokenAsCredential(t *testing.T) {
+	t.Setenv("OPENCODEX_API_AUTH_TOKEN", "environment-credential")
+	cfg := config.Default()
+	cfg.APIKeys = nil
+	cfg.AuthToken = ""
+	api := newParityAPI(t, &cfg)
+	response := serveManagement(api, http.MethodPut, "/api/host", `{"exposed":true,"hostname":"0.0.0.0"}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"credentialConfigured":true`) {
+		t.Fatalf("environment credential was ignored: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestLoopbackTerminalRunsFixedShellAndSupportsSessionLifecycle(t *testing.T) {
 	cfg := config.Default()
 	api := newParityAPI(t, &cfg, func(options *Options) { options.Loopback = func() bool { return true } })

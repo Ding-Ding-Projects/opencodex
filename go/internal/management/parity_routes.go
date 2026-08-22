@@ -383,7 +383,7 @@ func (a *API) handleNativeHost(w http.ResponseWriter, r *http.Request) bool {
 				return true
 			}
 			mintedKey = &key
-		} else if body.MintKeyIfMissing && len(a.config.APIKeys) == 0 {
+		} else if body.MintKeyIfMissing && !a.hasNativeCredential() {
 			key, err := mintNativeDataPlaneKey(a.config, body.NewKeyName)
 			if err != nil {
 				writeError(w, 500, err.Error())
@@ -398,7 +398,7 @@ func (a *API) handleNativeHost(w http.ResponseWriter, r *http.Request) bool {
 			}
 			mintedKey = &key
 		}
-		if len(a.config.APIKeys) == 0 {
+		if !a.hasNativeCredential() {
 			writeError(w, http.StatusConflict, "a data-plane credential is required before exposing the host")
 			return true
 		}
@@ -421,11 +421,15 @@ func (a *API) nativeHostStatus(restartRequired bool, mintedKey *string) map[stri
 	if strings.TrimSpace(host) == "" {
 		host = config.DefaultHost
 	}
-	result := map[string]any{"hostname": host, "port": a.config.Port, "exposed": !isLoopbackHost(host), "credentialConfigured": len(a.config.APIKeys) > 0, "urls": []string{}, "debugSandbox": false, "restartRequired": restartRequired}
+	result := map[string]any{"hostname": host, "port": a.config.Port, "exposed": !isLoopbackHost(host), "credentialConfigured": a.hasNativeCredential(), "urls": []string{}, "debugSandbox": false, "restartRequired": restartRequired}
 	if mintedKey != nil {
 		result["mintedKey"] = *mintedKey
 	}
 	return result
+}
+
+func (a *API) hasNativeCredential() bool {
+	return strings.TrimSpace(a.config.AuthToken) != "" || strings.TrimSpace(os.Getenv("OPENCODEX_API_AUTH_TOKEN")) != "" || len(a.config.APIKeys) > 0
 }
 
 func (a *API) hostHistoryPath() string { return a.parityConfigPath("host-history.json") }

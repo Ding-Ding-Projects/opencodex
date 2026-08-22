@@ -241,7 +241,7 @@ func (a *API) serializesConfigMutation(r *http.Request) bool {
 		"PUT /api/debug", "PUT /api/subagent-model-fallback",
 		"PUT /api/shadow-call-settings", "PUT /api/subagent-models", "PUT /api/injection-model",
 		"PUT /api/effort-caps", "PUT /api/v2", "PUT /api/claude-desktop",
-		"POST /api/claude-desktop/apply", "PUT /api/grok/selection", "PUT /api/host",
+		"POST /api/claude-desktop/apply", "PUT /api/grok/selection",
 		"PUT /api/disabled-models", "PUT /api/model-visibility", "PUT /api/selected-models",
 		"POST /api/custom-models", "PUT /api/model-aliases", "PUT /api/provider-context-caps":
 		return true
