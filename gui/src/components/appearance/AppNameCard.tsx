@@ -59,6 +59,8 @@ function recordRenameHistory(action: "renamed" | "reset", previous: string, next
       // by the caller (recordRevision + notify) is about the rename itself,
       // which unambiguously succeeded; this is a secondary, lower-severity
       // fact that does not deserve its own toast on top of that one.
+      // This is a developer diagnostic, not user-facing UI copy.
+      // eslint-disable-next-line local-i18n/no-hardcoded-ui-strings
       console.warn(`opencodex: display-name change was not recorded in the secret history (${result.historyReason ?? "unknown reason"}).`);
     }
   });

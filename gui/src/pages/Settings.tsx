@@ -195,8 +195,9 @@ export default function SettingsPage({ apiBase }: { apiBase: string }) {
   // Recomputed whenever School Mode flips — see `elsewhereFor`'s own doc
   // comment for why a module-scope constant went stale the moment the mode
   // could change live while this page was already open.
-  const schoolModeActive = useSchoolModeActive();
-  const ELSEWHERE = useMemo(() => elsewhereFor("nav.settings"), [schoolModeActive]);
+  // Subscribe so live School Mode changes recompute the registry-backed list.
+  useSchoolModeActive();
+  const ELSEWHERE = elsewhereFor("nav.settings");
 
   // `recordRevision` fires this event, so the history count stays honest whether the
   // change was made here or on another screen.

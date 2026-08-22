@@ -595,7 +595,7 @@ function ArchivedCleanupPanel({
     } catch (e) {
       const message = localizedCatch(e, t("storage.cleanup.cleanupFailed"));
       setError(message);
-      throw new Error(message);
+      throw new Error(message, { cause: e });
     } finally {
       setBusy(false);
     }

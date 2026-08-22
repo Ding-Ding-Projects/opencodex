@@ -109,6 +109,9 @@ export default function ViewportPreview() {
 
   useEffect(() => {
     if (preview === null) return;
+    // Refresh the measurement when a preview is opened; resize events keep it
+    // current thereafter.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setWindowWidth(window.innerWidth);
     const onResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener("resize", onResize);

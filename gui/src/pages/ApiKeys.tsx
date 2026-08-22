@@ -63,13 +63,14 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
   // The app supplies both providers, but a no-op fallback keeps this surface
   // independently renderable in lightweight desktop probes.
   const notifications = useContext(NotificationsContext);
-  const notify = notifications?.notify ?? (() => "");
+  const notify = useMemo(() => notifications?.notify ?? (() => ""), [notifications]);
   /* Shadows the global `confirm` deliberately, as the other pages here do — and
      the shadowing is the point. Without this import, `confirm({ title, ... })`
      silently resolved to the DOM's `confirm(message: string)`, which accepts one
      string, ignores an object, and returns immediately. A destructive bulk
      action would have run with no dialog at all. */
-  const confirm = useContext(ConfirmContext) ?? (async () => false);
+  const confirmContext = useContext(ConfirmContext);
+  const confirm = useMemo(() => confirmContext ?? (async () => false), [confirmContext]);
   const localeTag = LOCALES.find(l => l.code === locale)?.htmlLang;
   const [keys, setKeys] = useState<ApiKeyEntry[]>([]);
   const [copilotProfile, setCopilotProfile] = useState<CopilotDesktopProfile | null>(null);

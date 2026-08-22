@@ -112,6 +112,9 @@ export default function DownloadPopup({ route }: { route: DownloadPopupRoute }) 
 
   useEffect(() => {
     const controller = new AbortController();
+    // This starts an asynchronous external-resource load; state changes occur
+    // when the request settles rather than as part of render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);

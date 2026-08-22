@@ -150,16 +150,20 @@ export default function ScheduledSettings({ apiBase }: ScheduledSettingsProps) {
 
   const { tz, offset } = useMemo(() => timezoneInfo(), []);
   const activeRule = rules.find(r => r.id === drafts.scheduleActiveRuleId) ?? null;
+  const editingId = editing?.id;
+  const editingSourceKind = editing?.form.sourceKind;
 
   useEffect(() => {
-    if (!editing || editing.form.sourceKind !== "homeAssistant" || !editing.id) {
+    if (editingSourceKind !== "homeAssistant" || !editingId) {
+      // This resets derived async status when the editor leaves Home Assistant.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHaConfigured(false);
       return;
     }
     let cancelled = false;
-    void haTokenConfigured(apiBase, editing.id).then(configured => { if (!cancelled) setHaConfigured(configured); });
+    void haTokenConfigured(apiBase, editingId).then(configured => { if (!cancelled) setHaConfigured(configured); });
     return () => { cancelled = true; };
-  }, [apiBase, editing?.id, editing?.form.sourceKind]);
+  }, [apiBase, editingId, editingSourceKind]);
 
   const openCreate = () => { setError(null); setEditing({ id: null, form: emptyForm() }); };
   const openEdit = (rule: ScheduleRule) => { setError(null); setEditing({ id: rule.id, form: formFromRule(rule) }); };

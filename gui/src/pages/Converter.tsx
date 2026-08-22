@@ -569,7 +569,12 @@ export default function Converter({ apiBase }: { apiBase: string }) {
 
   useEffect(() => {
     if (!structuredTargets.length) {
-      if (targetFormat !== "") setTargetFormat("");
+      if (targetFormat !== "") {
+        // This effect reconciles persisted selection with the catalog returned
+        // by the external adapter registry.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setTargetFormat("");
+      }
       return;
     }
     if (!structuredTargets.some(f => f.id === targetFormat)) {
@@ -1068,7 +1073,7 @@ export default function Converter({ apiBase }: { apiBase: string }) {
         const search = categorySearch[id];
         const matcher = settingsMatcher(search.query, search.regex, search.flags);
         const rowText = (f: CatalogFormat) =>
-          [f.label, f.id, f.extensions.join(" "), f.bundled ? "bundled enabled" : `disabled ${f.reason ?? ""}`].join(" ");
+          [f.label, f.id, f.extensions.join(" "), f.bundled ? "bundled enabled" : t("converter.disabledBanner", { reason: f.reason ?? "" })].join(" ");
         const filtered = category.formats.filter(f => matcher.test(rowText(f)));
         const sample = category.formats.map(rowText).slice(0, 20).join("\n");
         const categoryLabel = t(CATEGORY_LABEL_KEY[id]);

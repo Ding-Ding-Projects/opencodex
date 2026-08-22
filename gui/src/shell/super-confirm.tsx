@@ -58,7 +58,7 @@
 
 import {
   useEffect, useId, useLayoutEffect, useRef, useState,
-  type ReactNode, type RefObject,
+  useCallback, type ReactNode, type RefObject,
 } from "react";
 import { onOutsidePress } from "./outside-press";
 import { computeViewportPlacement } from "./use-anchored-placement";
@@ -130,7 +130,7 @@ export function SuperConfirmGate(props: SuperConfirmGateProps) {
    * caller keeps the same component instance mounted across a reopen; handing
    * focus back is what every exit route in this app already promises.
    */
-  const cancel = () => {
+  const cancel = useCallback(() => {
     setKey1(false);
     setKey2(false);
     setValue(0);
@@ -138,7 +138,7 @@ export function SuperConfirmGate(props: SuperConfirmGateProps) {
     setErrorMessage(null);
     onClose();
     anchorRef.current?.focus();
-  };
+  }, [anchorRef, onClose]);
 
   // `cancel` is rebuilt every render (it closes over `onClose`, which a caller
   // may hand down as a fresh inline function each time). The document listeners
@@ -148,7 +148,9 @@ export function SuperConfirmGate(props: SuperConfirmGateProps) {
   // fires — so they read through this ref instead of naming `cancel` as a
   // dependency, which would otherwise mean acting on a stale `onClose`.
   const cancelRef = useRef(cancel);
-  cancelRef.current = cancel;
+  useEffect(() => {
+    cancelRef.current = cancel;
+  }, [cancel]);
 
   // Anchored-only chrome: outside press and Escape. The modal presentation
   // gets both from `Dialog` itself (its own scrim and its own `onCancel`).
