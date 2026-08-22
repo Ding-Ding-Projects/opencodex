@@ -254,6 +254,8 @@ export const ja: Record<TKey, string> = {
   "dash.updateStatus.restarting": "更新をインストールしました。プロキシを再起動中。",
   "dash.updateStatus.succeeded": "更新が完了しました。",
   "dash.updateStatus.failed": "更新に失敗しました。",
+  "dash.updateStatus.cancelled": "更新をキャンセルしました。",
+  "dash.updateManualRestart": "新しいバージョンを使うには、プロキシを手動で再起動してください。",
 
   // providers
   "prov.subtitle": "opencodex が Codex にルーティングする上流プロバイダーを設定します。アカウントでログインするか、プロバイダーを追加、または生の設定を編集します。",

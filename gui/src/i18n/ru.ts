@@ -254,6 +254,8 @@ export const ru: Record<TKey, string> = {
   "dash.updateStatus.restarting": "Обновление установлено. Перезапуск прокси.",
   "dash.updateStatus.succeeded": "Обновление завершено.",
   "dash.updateStatus.failed": "Обновление не удалось.",
+  "dash.updateStatus.cancelled": "Обновление отменено.",
+  "dash.updateManualRestart": "Перезапустите прокси вручную, чтобы использовать новую версию.",
 
   // providers
   "prov.subtitle": "Настройте вышестоящих провайдеров, которых opencodex маршрутизирует в Codex. Войдите в аккаунт, добавьте провайдера или отредактируйте конфигурацию вручную.",
