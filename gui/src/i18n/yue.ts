@@ -47,6 +47,23 @@ export const yue: Partial<Record<TKey, string>> = {
   "common.loading": "載入緊…",
   "common.retry": "再試一次",
 
+  // ---- desktop updater ----
+  "desktopUpdater.availableTitle": "桌面更新有喇",
+  "desktopUpdater.availableBody": "版本 {version} 而家可以下載。",
+  "desktopUpdater.downloadingTitle": "下載緊桌面更新",
+  "desktopUpdater.downloadingBody": "版本下載緊 {progress}%。",
+  "desktopUpdater.readyTitle": "桌面更新準備好喇",
+  "desktopUpdater.readyBody": "版本 {version} 準備好。要唔要重啟，由你揀先算。",
+  "desktopUpdater.unsignedWarning": "呢個 Squirrel.Windows 更新冇簽名，Windows 可能會彈未知發佈者或者 SmartScreen 警告。",
+  "desktopUpdater.releaseNotes": "睇版本說明",
+  "desktopUpdater.restart": "重啟嚟裝更新",
+  "desktopUpdater.later": "遲啲先",
+  "desktopUpdater.cancel": "取消下載",
+  "desktopUpdater.retry": "再試一次",
+  "desktopUpdater.failedTitle": "桌面更新要望一望",
+  "desktopUpdater.failedBody": "更新未搞掂：{error}",
+  "desktopUpdater.unknownError": "驗證唔到呢個更新。",
+
   // ---- app chrome ----
   "app.logoAria": "{name} 標誌",
   "app.claudeOn": "Claude 已開",
