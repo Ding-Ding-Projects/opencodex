@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { OPENCODEX_GITHUB_REPOSITORY } from "../src/update/links";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 
@@ -7,7 +8,7 @@ async function readText(path: string): Promise<string> {
   return await Bun.file(new URL(path, root)).text();
 }
 
-describe("startup star prompt", () => {
+describe("startup prompts", () => {
   test("does not ship a package-manager postinstall lifecycle prompt", async () => {
     const pkg = JSON.parse(await readText("package.json")) as {
       scripts?: Record<string, string>;
@@ -18,58 +19,23 @@ describe("startup star prompt", () => {
     expect(pkg.files ?? []).not.toContain("scripts/postinstall.mjs");
   });
 
-  test("ocx start waits for the interactive prompt before sync/injection", async () => {
+  test("ocx start does not invoke a GitHub-star prompt", async () => {
     const cli = await readText("src/cli/index.ts");
-    const promptIndex = cli.indexOf("await maybeShowStarPrompt()");
-    const syncIndex = cli.indexOf("await syncModelsToCodex(port)");
-
-    expect(cli).not.toContain("void maybeShowStarPrompt()");
-    expect(promptIndex).toBeGreaterThan(-1);
-    expect(syncIndex).toBeGreaterThan(-1);
-    expect(promptIndex).toBeLessThan(syncIndex);
+    expect(cli).not.toContain("maybeShowStarPrompt");
+    expect(cli).not.toContain("GitHub-star prompt");
+    expect(cli).toContain("await syncModelsToCodex(port)");
   });
 
-  test("GitHub star prompt asks with an explicit Yes/No selector and names gh", async () => {
-    const prompt = await readText("src/cli/star-prompt.ts");
+  test("the removed GitHub-star prompt has no source or ownership marker", async () => {
+    const cli = await readText("src/cli/index.ts");
+    const notify = await readText("src/update/notify.ts");
+    const ownership = await readText("src/lib/config-ownership.ts");
+    const promptPath = fileURLToPath(new URL("src/cli/star-prompt.ts", root));
 
-    expect(prompt).toContain("interactiveConfirm");
-    expect(prompt).toContain("defaultYes: true");
-    expect(prompt).toContain("Star it on GitHub (via gh)?");
-    expect(prompt).toContain("OPENCODEX_GITHUB_REPOSITORY");
-    expect(OPENCODEX_GITHUB_REPOSITORY).toBe("Ding-Ding-Projects/opencodex");
-  });
-
-  test("an agent driving ocx is told to ask the user instead of answering", async () => {
-    const prompt = await readText("src/cli/star-prompt.ts");
-    const guardIndex = prompt.indexOf("if (isAgentDriven()) {");
-    const markerIndex = prompt.indexOf("writeFileSync(marker");
-
-    expect(guardIndex).toBeGreaterThan(-1);
-    // The guard must precede the marker write, otherwise an agent run would
-    // consume the one-time prompt the user never saw.
-    expect(guardIndex).toBeLessThan(markerIndex);
-    // The agent path relays the question rather than selecting a choice.
-    expect(prompt).toContain("printAgentDeferral");
-    expect(prompt).toContain("do not answer this yourself");
-    expect(prompt).toContain("Ask the user whether to star");
-    expect(prompt).not.toMatch(/isAgentDriven\(\)[\s\S]{0,80}starRepo\(\)/);
-  });
-
-  test("the star prompt only appears when gh can actually star", async () => {
-    const prompt = await readText("src/cli/star-prompt.ts");
-
-    expect(prompt).toContain('spawnSync("gh", ["auth", "status"]');
-    expect(prompt).toContain("if (!ghAvailable()) return;");
-  });
-
-  test("declining the star prompt does not steer the agent afterwards", async () => {
-    const prompt = await readText("src/cli/star-prompt.ts");
-
-    // A "No" ends the feature: no persisted decline state, and nothing injected
-    // into any model prompt to keep nudging the user later.
-    expect(prompt).toContain("if (!yes) return;");
-    expect(prompt).not.toMatch(/declined/i);
-    expect(prompt).not.toMatch(/system\s*prompt|encourage|remind the user/i);
+    expect(existsSync(promptPath)).toBe(false);
+    expect(cli).not.toContain("star-prompt");
+    expect(notify).not.toContain("hasStarPromptRun");
+    expect(ownership).not.toContain(".star-prompted");
   });
 
   test("ocx init offers the Codex autostart shim by default", async () => {

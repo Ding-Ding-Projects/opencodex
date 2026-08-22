@@ -206,13 +206,15 @@ function main() {
       const existing = readFileSync(path);
       if (!existing.equals(output)) throw new Error(`${path} is stale; run node scripts/generate-windows-icon.mjs`);
     }
-    console.log(`Windows icon is current: ${OUTPUTS.join(", ")}`);
+    // Keep stdout clean for `npm pack --json`, which runs this check through
+    // the package lifecycle and reserves stdout for its JSON manifest.
+    console.error(`Windows icon is current: ${OUTPUTS.join(", ")}`);
   } else {
     for (const path of OUTPUTS) {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, output);
     }
-    console.log(`Wrote deterministic Windows icon to ${OUTPUTS.join(", ")}`);
+    console.error(`Wrote deterministic Windows icon to ${OUTPUTS.join(", ")}`);
   }
 }
 

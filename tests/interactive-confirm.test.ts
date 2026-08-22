@@ -27,7 +27,7 @@ function makeTty() {
 
 async function ask(keys: string[], defaultYes = false): Promise<{ answer: boolean; frames: string[]; raw: boolean }> {
   const { input, output, frames } = makeTty();
-  const pending = interactiveConfirm({ question: "Star it?", defaultYes, input, output });
+  const pending = interactiveConfirm({ question: "Continue?", defaultYes, input, output });
   for (const key of keys) input.write(key);
   const answer = await pending;
   return { answer, frames, raw: input.isRaw };
@@ -72,11 +72,11 @@ describe("interactiveConfirm", () => {
   test("without raw mode it falls back to a typed answer honoring the same default", async () => {
     const input = new PassThrough() as unknown as NodeJS.ReadStream;
     const output = new PassThrough() as unknown as NodeJS.WriteStream;
-    const declined = interactiveConfirm({ question: "Star it?", defaultYes: false, input, output });
+    const declined = interactiveConfirm({ question: "Continue?", defaultYes: false, input, output });
     input.write("\n");
     expect(await declined).toBe(false);
 
-    const accepted = interactiveConfirm({ question: "Star it?", defaultYes: true, input, output });
+    const accepted = interactiveConfirm({ question: "Continue?", defaultYes: true, input, output });
     input.write("\n");
     expect(await accepted).toBe(true);
   });

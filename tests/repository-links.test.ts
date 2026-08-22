@@ -4,7 +4,6 @@ const root = new URL("../", import.meta.url);
 const activeFiles = [
   "src/update/links.ts",
   "src/update/notify.ts",
-  "src/cli/star-prompt.ts",
   "package.json",
   "tests/startup-prompt.test.ts",
   "tests/update-job.test.ts",

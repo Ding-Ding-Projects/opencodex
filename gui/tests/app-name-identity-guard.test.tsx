@@ -430,17 +430,18 @@ describe("no identity path ever reads the display name — repository-wide guard
     expect(text).toContain('ipcRenderer.invoke("appData:path")');
   });
 
-  test("the package/installer identifiers are literal constants equal to the shipped name, not a template", () => {
+  test("the package/installer identifiers are literal constants, not a display-name template", () => {
     const yml = readFileSync(join(REPO_ROOT, "electron-builder.yml"), "utf8");
     expect(APP_NAME_REFERENCE_PATTERN.test(yml)).toBe(false);
-    expect(yml).toMatch(/^productName:\s*opencodex\s*$/m);
+    expect(yml.split(/\r?\n/)).toContain("productName: OpenCodex");
+    expect(yml).toMatch(/^executableName:\s*opencodex\s*$/m);
     expect(yml).toMatch(/^appId:\s*com\.opencodex\.desktop\s*$/m);
-    expect(`productName: ${SHIPPED_APP_NAME}`).toMatch(/^productName:\s*opencodex$/);
 
     const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { name: string; bin: Record<string, string> };
     expect(APP_NAME_REFERENCE_PATTERN.test(JSON.stringify(pkg))).toBe(false);
     expect(pkg.name).toBe("@bitkyc08/opencodex");
-    expect(pkg.bin[SHIPPED_APP_NAME]).toBe("./bin/ocx.mjs");
+    expect(pkg.bin.opencodex).toBe("./bin/ocx.mjs");
+    expect(pkg.bin.ocx).toBe("./bin/ocx.mjs");
   });
 
   test("the local git-history repositories (the app's own audit trail, not a user's) stamp a hard-coded identity, never the display name", () => {
