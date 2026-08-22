@@ -17,6 +17,9 @@ import {
   usageForFinalLog,
   usageStatusForFinalLog,
   usageTotalTokens,
+  type FailureSide,
+  type FailureStage,
+  type StreamTimeline,
   type AttemptRecoveryKind,
   type PersistedUsageAttempt,
   type PersistedUsageEntry,
@@ -36,6 +39,11 @@ export interface RequestLogContext {
   provider: string;
   /** TTFT: ms from request start to the first non-empty model output delta (WP4, devlog 040). */
   firstOutputMs?: number;
+  /** Internal request origin for relative stream milestones; never persisted. */
+  requestStartedAt?: number;
+  streamTimeline?: StreamTimeline;
+  failureSide?: FailureSide;
+  failureStage?: FailureStage;
   /** Best-effort chat/session correlation for Logs grouping (#330). Opaque; omit when unknown. */
   conversationId?: string;
   surface?: "claude" | "claude-desktop" | "github-copilot-desktop" | "grok";
@@ -93,6 +101,9 @@ export interface RequestLogEntry {
   provider: string;
   /** TTFT: ms from request start to the first non-empty model output delta; unset for non-streaming/tool-only. */
   firstOutputMs?: number;
+  streamTimeline?: StreamTimeline;
+  failureSide?: FailureSide;
+  failureStage?: FailureStage;
   surface?: "claude" | "claude-desktop" | "github-copilot-desktop" | "grok";
   /** Best-effort chat/session correlation for Logs grouping (#330). */
   conversationId?: string;
@@ -164,6 +175,9 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
     model: entry.model,
     provider: entry.provider,
     ...(entry.firstOutputMs !== undefined ? { firstOutputMs: entry.firstOutputMs } : {}),
+    ...(entry.streamTimeline ? { streamTimeline: entry.streamTimeline } : {}),
+    ...(entry.failureSide ? { failureSide: entry.failureSide } : {}),
+    ...(entry.failureStage ? { failureStage: entry.failureStage } : {}),
     ...(isKnownUsageSurface(entry.surface) ? { surface: entry.surface } : {}),
     ...(entry.conversationId ? { conversationId: entry.conversationId } : {}),
     ...(entry.requestedModel ? { requestedModel: entry.requestedModel } : {}),
@@ -267,6 +281,9 @@ export function addRequestLog(entry: RequestLogEntry) {
       status: entry.status,
       durationMs: entry.durationMs,
       ...(entry.firstOutputMs !== undefined ? { firstOutputMs: entry.firstOutputMs } : {}),
+      ...(entry.streamTimeline ? { streamTimeline: entry.streamTimeline } : {}),
+      ...(entry.failureSide ? { failureSide: entry.failureSide } : {}),
+      ...(entry.failureStage ? { failureStage: entry.failureStage } : {}),
       usageStatus: entry.usageStatus,
       ...(entry.usage ? { usage: entry.usage } : {}),
       ...(entry.totalTokens !== undefined ? { totalTokens: entry.totalTokens } : {}),
@@ -297,10 +314,35 @@ export function recordFirstOutput(
   if (!Number.isFinite(requestStartedAt) || !Number.isFinite(now)) return;
   const requestElapsed = Math.max(0, now - requestStartedAt);
   if (logCtx.firstOutputMs === undefined) logCtx.firstOutputMs = requestElapsed;
+  if (logCtx.streamTimeline?.upstreamFirstSemanticOutputMs === undefined) {
+    recordStreamStage(logCtx, "upstreamFirstSemanticOutputMs", requestStartedAt, now);
+  }
   if (logCtx.activeAttempt && logCtx.activeAttempt.firstOutputMs === undefined) {
     const attemptStartedAt = logCtx.activeAttemptStartedAt ?? requestStartedAt;
     logCtx.activeAttempt.firstOutputMs = Math.max(0, now - attemptStartedAt);
   }
+}
+
+const STREAM_TIMELINE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+type StreamStage = keyof StreamTimeline;
+
+/** Record one bounded, first-observation-wins stream milestone. */
+export function recordStreamStage(
+  logCtx: RequestLogContext,
+  stage: StreamStage,
+  requestStartedAt = logCtx.requestStartedAt ?? Date.now(),
+  now = Date.now(),
+): void {
+  if (!Number.isFinite(requestStartedAt) || !Number.isFinite(now)) return;
+  const elapsed = Math.min(STREAM_TIMELINE_MAX_MS, Math.max(0, now - requestStartedAt));
+  const timeline = (logCtx.streamTimeline ??= {});
+  if (timeline[stage] === undefined) timeline[stage] = elapsed;
+}
+
+/** Attach only closed-set causal attribution; arbitrary error text never becomes a field. */
+export function recordStreamFailure(logCtx: RequestLogContext, side: FailureSide, stage: FailureStage): void {
+  if (logCtx.failureSide === undefined) logCtx.failureSide = side;
+  if (logCtx.failureStage === undefined) logCtx.failureStage = stage;
 }
 
 /** Snapshot target-specific requested effort even for runTurn adapters with no AdapterRequest. */
@@ -675,6 +717,8 @@ export function addFinalRequestLog(
   const closeReason = effectiveStatus === 499
     ? "client_cancel"
     : meta?.closeReason;
+  if (logCtx.streamTimeline) recordStreamStage(logCtx, "downstreamEndMs", start);
+  if (closeReason === "client_cancel") recordStreamFailure(logCtx, "client", "client_cancel");
   if (logCtx.activeAttempt) {
     finishRequestAttempt(
       logCtx.activeAttempt,
@@ -724,6 +768,9 @@ export function addFinalRequestLog(
     status: effectiveStatus,
     durationMs: Date.now() - start,
     ...(logCtx.firstOutputMs !== undefined ? { firstOutputMs: logCtx.firstOutputMs } : {}),
+    ...(logCtx.streamTimeline ? { streamTimeline: { ...logCtx.streamTimeline } } : {}),
+    ...(logCtx.failureSide ? { failureSide: logCtx.failureSide } : {}),
+    ...(logCtx.failureStage ? { failureStage: logCtx.failureStage } : {}),
     ...(errorCode ? { errorCode } : {}),
     ...(meta?.terminalStatus ? { terminalStatus: meta.terminalStatus } : {}),
     ...(closeReason ? { closeReason } : {}),

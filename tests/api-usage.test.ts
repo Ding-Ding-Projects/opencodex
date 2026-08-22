@@ -235,4 +235,38 @@ describe("GET /api/usage", () => {
       await server.stop(true);
     }
   });
+
+  test("GET /api/request-history/:requestId exposes persisted timeline and attribution", async () => {
+    const requestId = "ocx-history-stage";
+    writeFileSync(join(testDir, "usage.jsonl"), `${JSON.stringify({
+      requestId,
+      timestamp: Date.now(),
+      provider: "openai",
+      model: "gpt-5.5",
+      status: 502,
+      durationMs: 42,
+      usageStatus: "unreported",
+      streamTimeline: { upstreamDispatchMs: 2, upstreamHeadersMs: 5, downstreamEndMs: 42 },
+      failureSide: "upstream",
+      failureStage: "upstream_read",
+      prompt: "not retained",
+    })}\n`, { mode: 0o600 });
+    resetUsageReadCacheForTests();
+    const server = startServer(0);
+    try {
+      const res = await fetch(new URL(`/api/request-history/${requestId}`, server.url));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toMatchObject({
+        requestId,
+        streamTimeline: { upstreamDispatchMs: 2, upstreamHeadersMs: 5, downstreamEndMs: 42 },
+        failureSide: "upstream",
+        failureStage: "upstream_read",
+      });
+      expect(body).not.toHaveProperty("prompt");
+      expect(await fetch(new URL("/api/request-history/not-found", server.url))).toHaveProperty("status", 404);
+    } finally {
+      await server.stop(true);
+    }
+  });
 });

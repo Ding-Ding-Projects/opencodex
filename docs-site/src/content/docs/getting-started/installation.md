@@ -77,6 +77,13 @@ On Windows, the repository's PowerShell installer also repairs the current user'
 PowerShell process and the user's environment only, preserves unrelated entries, avoids machine-wide
 mutation or `setx`, and verifies `ocx.cmd`/`ocx` with `help` before reporting success:
 
+The Windows desktop Squirrel installer uses a stable `cli-bin\ocx.cmd` beside `Update.exe`, and
+regenerates it for each installed version. The shim scopes `ELECTRON_RUN_AS_NODE` to its child. On
+final uninstall, cleanup removes only the exact user-PATH entry and shim bytes this installation
+owns; edited or unrelated shims, unrelated PATH/data entries, non-empty stable directories, and the
+machine PATH remain untouched. The obsolete-version event leaves the shared shim for the incoming
+version.
+
 From a checkout of the repository, run the script from its root:
 
 ```powershell
@@ -118,6 +125,18 @@ Get-Command ocx
 > The installer does not require administrator privileges. If the npm global prefix itself is
 > protected or npm was installed for all users, use a user-owned Node/npm installation rather than
 > granting the installer machine-wide access.
+
+### Windows desktop identity and icon
+
+The packaged Windows desktop shell presents the product as **OpenCodex**. Its original mark is
+available as a deterministic, content-addressed multi-resolution ICO at
+[`https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico`](https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico), which Squirrel uses for the
+Add/Remove Programs entry. The filename is immutable by name: the suffix is the full SHA-256 of
+the ICO bytes, so a changed mark receives a new filename. The `com.opencodex.desktop` app id, `opencodex` executable and
+shortcut target, `opencodex-desktop` update-feed name, npm package name, and `.opencodex` data
+identity remain stable when the display capitalization is presented correctly. Code signing stays
+disabled by policy; the installer may therefore show the operating system's unknown-publisher or
+SmartScreen warning.
 
 ### Release channels
 

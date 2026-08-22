@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, uninstallCodexShim } from "../src/codex/shim";
+import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, setCodexShimStateAtomicWriteIOForTests, uninstallCodexShim } from "../src/codex/shim";
 import { removeTempDir } from "./helpers/temp-dir";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
@@ -481,6 +481,7 @@ describe("Codex autostart shim", () => {
         console.log(JSON.stringify(autoRestoreCodexShim({ enabled: () => true, stabilitySleep: () => {} })));
       `;
       const childEnv = { ...process.env, PATH: binDir, OPENCODEX_HOME: home };
+      childEnv.PATH = oldPath ? `${binDir}${delimiter}${oldPath}` : binDir;
       first = Bun.spawn([process.execPath, "-e", firstScript], {
         cwd: join(import.meta.dir, ".."),
         env: childEnv,
@@ -503,7 +504,8 @@ describe("Codex autostart shim", () => {
       expect(heldLock.token).toBeString();
 
       writeFileSync(releasePath, "release", "utf8");
-      expect(await first.exited).toBe(0);
+      const firstExit = await first.exited;
+      expect(firstExit).toBe(0);
       const firstStdout = await new Response(first.stdout).text();
       expect(JSON.parse(firstStdout.trim()).status).toBe("restored");
       expect(readFileSync(wrapper, "utf8")).toContain(SHIM_MARKER);
@@ -703,6 +705,44 @@ describe("Codex autostart shim", () => {
       removeTempDir(home);
       removeTempDir(binDir);
     }
+  });
+
+  test("interrupted state publication and rollback publication preserve the previous valid state", () => {
+    withInstalledShim(({ home, wrappers, backups, statePath }) => {
+      const oldState = readFileSync(statePath);
+      const oldBackups = backups.map(path => readFileSync(path));
+      wrappers.forEach((wrapper, index) => writeFileSync(wrapper, `interrupted replacement ${index}\n`, "utf8"));
+      const attemptedWrites: string[] = [];
+
+      const interruptedAtomicIo = {
+        write(path: string, content: string): void {
+          attemptedWrites.push(path);
+          writeFileSync(path, content.slice(0, Math.max(1, Math.floor(content.length / 2))), "utf8");
+          throw Object.assign(new Error("synthetic interrupted state publication"), { code: "EIO" });
+        },
+        harden(): void {},
+        rename(): void {
+          throw new Error("synthetic interrupted state publication must not rename a partial temp");
+        },
+        truncate(path: string): void { writeFileSync(path, "", "utf8"); },
+        unlink(path: string): void { rmSync(path, { force: true }); },
+      };
+
+      setCodexShimStateAtomicWriteIOForTests(interruptedAtomicIo);
+      try {
+        expect(() => autoRestoreCodexShim({ enabled: () => true, stabilitySleep: skipStabilityWait }))
+          .toThrow("Codex shim guarded refresh failed");
+
+        expect(readFileSync(statePath)).toEqual(oldState);
+        expect(attemptedWrites).toHaveLength(2);
+        expect(attemptedWrites.every(path => path !== statePath && path.endsWith(".tmp"))).toBe(true);
+        wrappers.forEach((wrapper, index) => expect(readFileSync(wrapper, "utf8")).toBe(`interrupted replacement ${index}\n`));
+        backups.forEach((backup, index) => expect(readFileSync(backup)).toEqual(oldBackups[index]));
+        expect(readdirSync(home).filter(name => name.includes(".ocx.") && name.endsWith(".tmp"))).toEqual([]);
+      } finally {
+        setCodexShimStateAtomicWriteIOForTests(null);
+      }
+    });
   });
 
   test("missing backup, missing wrapper, corrupt state, and platform mismatch never fresh-install", () => {

@@ -184,6 +184,21 @@ aliases onto `--m3-*` roles. Do not reintroduce literal hex values in component
 styles — they will not retint with the seed picker. Status and chart colours are
 the documented exception: they stay functional data colours.
 
+## Design reference source preservation
+
+The design-system source of truth is the exact `design/` tree at the first
+committed introduction of that directory. Before changing design-reference or
+parity work, locate that commit with `git log --reverse --diff-filter=A --format=%H -- design`
+and verify its complete tree with `git ls-tree -r <commit> -- design`. Do not
+silently substitute files added later.
+
+The first-introduced tree is preserved byte-for-byte under
+`design-reference/original-source/`, with the leading `design/` path removed.
+`design-reference/original-source/PROVENANCE.md` records the source commit and
+purpose, while `MANIFEST.json` records each historical path, Git blob, byte
+count, and SHA-256 in deterministic order. Verification must compare every
+copied file with the historical blob before the copy is treated as valid.
+
 ## Shared agent instructions (sanitized mirror)
 
 The maintainer's durable, cross-project working agreement, mirrored here so an

@@ -19,6 +19,13 @@ On Windows, `scripts/install.ps1` also repairs the current user's PATH using the
 reports that `ocx` is not recognized, add that exact prefix to the user PATH and open a new PowerShell
 window before retrying.
 
+The Windows desktop installer uses a stable `cli-bin\ocx.cmd` shim beside its Squirrel `Update.exe`
+and regenerates that shim on install and update. The shim scopes its child-only runtime environment,
+so invoking `ocx` does not change the caller's environment. Final uninstall removes only the exact
+user-PATH entry and shim bytes owned by this installation; edited shims, unrelated PATH entries,
+non-empty data, and machine PATH are preserved. The obsolete-version update event intentionally leaves
+the shared shim in place for the incoming version.
+
 <table align="center">
   <tr>
     <td width="50%" align="center">
@@ -100,6 +107,17 @@ GitHub Releases carry an intentionally unsigned Squirrel.Windows `Setup.exe` plu
 index and full `.nupkg` update package. Windows may show an Unknown Publisher or SmartScreen warning.
 Release workflows verify the installer is `NotSigned`, fail closed on an incomplete update feed, and
 retain safe installer/feed evidence as a GitHub Actions artifact even when a later step fails.
+
+The packaged Windows desktop shell presents the product as **OpenCodex**. Its committed original
+mark is emitted as a deterministic multi-resolution, content-addressed
+`assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico`; the same
+bytes are served at
+`https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico` for Squirrel's Add/Remove Programs icon. The
+`com.opencodex.desktop` app id, `opencodex` executable/shortcut target, `opencodex-desktop` update
+feed name, npm package name, and `.opencodex` data identity remain stable across that presentation
+change. The filename is immutable-by-name: its 64-character suffix is the full SHA-256 of the ICO
+bytes, and a changed mark must receive a new filename. The icon generator and its round-trip
+validation are `scripts/generate-windows-icon.mjs`.
 
 ## Quick start
 
@@ -368,10 +386,15 @@ ocx export data <dataset>      # export a redacted dashboard dataset
 ocx export <new-file> --yes    # protected full-state backup containing plaintext secrets
 ocx claude [args...]           # launch Claude Code wired to the proxy (model discovery on)
 ocx claude desktop             # save and apply the Claude Desktop four-family profile
-ocx service [install|start|stop|status|uninstall]   # install/update/start background service
+ocx service [install|repair|restart|start|stop|status|uninstall|remove]   # install-if-absent/repair-if-installed background service
 ocx update [--tag preview]     # update opencodex; preview installs stay on @preview
 ocx memory-sync <status|install|uninstall|profile> # inspect or synchronize canonical agent memory
 ```
+
+`ocx service` is idempotent: it installs only when both service backends are proven absent, and
+otherwise refreshes/restarts the installed backend without re-registering it. `ocx service restart`
+is an alias of `repair`; an unknown Windows registration state fails closed and is reported by
+`ocx service status`.
 
 ### Claude Desktop profile
 

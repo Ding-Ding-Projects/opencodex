@@ -97,9 +97,9 @@ describe("normalizeCostTokens", () => {
 
 describe("authoritative official schedules", () => {
   test("contains only exact direct products with dated first-party HTTPS sources", () => {
-    // 37 = the previous 25 non-OpenAI rows, plus 4 OpenAI models x 3 published
-    // bands each (standard short, standard long, Fast).
-    expect(OFFICIAL_PRICE_SCHEDULES).toHaveLength(37);
+    // 45 = 25 prior non-OpenAI rows + 12 OpenAI rows + 8 xAI rows
+    // (Grok 4.5/4.6 standard and priority short/long-context schedules).
+    expect(OFFICIAL_PRICE_SCHEDULES).toHaveLength(45);
     expect(validateOfficialPriceSchedules(OFFICIAL_PRICE_SCHEDULES)).toEqual([]);
     // Every OpenAI model carries all three bands, so none can lose one silently.
     for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]) {
@@ -110,9 +110,9 @@ describe("authoritative official schedules", () => {
       expect(bands, modelId).toEqual(["long_context", "priority", "standard"]);
     }
     const providers = new Set(OFFICIAL_PRICE_SCHEDULES.map(row => row.provider));
-    expect(providers).toEqual(new Set(["anthropic-apikey", "openai-apikey", "deepseek", "moonshot"]));
+    expect(providers).toEqual(new Set(["anthropic-apikey", "openai-apikey", "xai", "deepseek", "moonshot"]));
     for (const row of OFFICIAL_PRICE_SCHEDULES) {
-      expect(row.verifiedAt).toMatch(/^2026-08-(07|09)$/);
+      expect(row.verifiedAt).toMatch(/^2026-08-(07|09|21)$/);
       expect(row.status).toBe("verified");
       expect(row.sourceUrl.startsWith("https://")).toBe(true);
     }
@@ -353,6 +353,10 @@ describe("product and condition isolation", () => {
     expect(standard?.price?.scheduleId).toContain("standard/short-context");
     expect(effectiveServiceTier({ responseServiceTier: "fast" })).toBe("priority");
     expect(effectiveServiceTier({ responseServiceTier: "default", requestedServiceTier: "priority" })).toBe("default");
+    expect(effectiveServiceTier({ provider: "xai", requestedServiceTier: "priority" })).toBe("standard");
+    expect(effectiveServiceTier({ provider: "xai", configuredServiceTier: "priority" })).toBe("standard");
+    expect(effectiveServiceTier({ provider: "xai", responseServiceTier: "default", requestedServiceTier: "priority" })).toBe("standard");
+    expect(effectiveServiceTier({ provider: "xai", responseServiceTier: "priority", requestedServiceTier: "priority" })).toBe("priority");
   });
 
   test("the served-tier wire name 'default' resolves to the standard band", () => {

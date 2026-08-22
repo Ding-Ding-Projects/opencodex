@@ -16,6 +16,8 @@ import { recordOwnedConfigPath } from "./lib/config-ownership";
 import { announceDebugSandboxOnce, debugSandboxEnabled } from "./lib/debug-sandbox";
 import { providerDestinationConfigError } from "./lib/destination-policy";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
+import { vercelGatewayRoutingConfigError } from "./providers/vercel-gateway-routing";
+import { responsesTerminalRepairConfigError } from "./providers/terminal-repair";
 import {
   isWirePinnedModel,
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
@@ -28,6 +30,8 @@ import {
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "./providers/openai-tiers";
 import { parseDesktopProfile } from "./claude/desktop-profile";
 import { isCodexReasoningEffort, modelRecordValue } from "./reasoning-effort";
+import { parseSubagentRoles, salvageSubagentRoles } from "./codex/agent-roles";
+import { modelAutoCompactTokenLimitsConfigError } from "./providers/auto-compact-budget";
 
 let _atomicSeq = 0;
 
@@ -431,18 +435,40 @@ function resolveRuntimePortPath(): string {
 
 const warnedConfigFallbacks = new Set<string>();
 
+export function normalizeNonBlankStringArray(values: readonly string[]): string[] {
+  return [...new Set(values.map(value => value.trim()).filter(Boolean))];
+}
+
+export function nonBlankStringArrayConfigError(value: unknown, field: string): string | null {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return `${field} must be an array of nonblank strings`;
+  if (value.some(item => typeof item !== "string" || item.trim().length === 0)) {
+    return `${field} must contain only nonblank strings`;
+  }
+  return null;
+}
+
 const providerConfigSchema = z.object({
   adapter: z.string().min(1),
   baseUrl: z.string().min(1),
   apiKeyTransport: z.enum(["x-api-key", "bearer"]).optional(),
   responsesPath: z.string().min(1).optional(),
   allowPrivateNetwork: z.boolean().optional(),
+  modelDisplayNames: z.record(z.string().min(1).max(256), z.string().trim().min(1).max(128)
+    .refine(value => !/[\u0000-\u001f\u007f]/u.test(value) && !value.includes("/"), {
+      message: "modelDisplayNames values must be printable labels without slash characters",
+    })).optional(),
+  modelSuppressSyntheticMax: z.record(z.string().min(1), z.boolean()).optional(),
+  retainModels: z.array(z.string().trim().min(1))
+    .transform(normalizeNonBlankStringArray)
+    .optional(),
   codexAccountMode: z.enum(["pool", "direct"]).optional(),
   responsesItemIdRepair: z.object({
     message: z.array(z.string().min(1)).optional(),
     reasoning: z.array(z.string().min(1)).optional(),
     repairMissingTerminalIds: z.boolean().optional(),
   }).strict().optional(),
+  modelResponsesTerminalRepair: z.record(z.string(), z.object({ graceMs: z.number().int().positive().max(120_000).optional() }).strict()).optional(),
 }).passthrough();
 
 const RESERVED_PROVIDER_NAMES = new Set(["__proto__", "prototype", "constructor"]);
@@ -688,6 +714,10 @@ const configSchema = z.object({
   injectionModel: z.string().optional().catch(undefined),
   injectionEffort: z.string().optional().catch(undefined),
   syncCodexSubagentDefaults: z.boolean().optional().catch(undefined),
+  // Validate at the explicit boundary below while preserving unrelated config when loading.
+  subagentRoles: z.unknown().optional(),
+  subagentRolesRevision: z.unknown().optional(),
+  agentTaskRecovery: z.unknown().optional(),
   codexShimAutoRestore: z.boolean().optional(),
   pausedCodexAccountIds: z.array(z.string().regex(/^[a-zA-Z0-9._-]{1,64}$/)).optional(),
   codexAccountNamespaces: codexAccountNamespacesSchema.optional(),
@@ -762,6 +792,17 @@ const configSchema = z.object({
       });
     }
     const provider = config.providers[name];
+    const retainModelsError = nonBlankStringArrayConfigError(
+      (provider as { retainModels?: unknown }).retainModels,
+      "retainModels",
+    );
+    if (retainModelsError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", name, "retainModels"],
+        message: retainModelsError,
+      });
+    }
     const openRouterRoutingError = openRouterRoutingConfigError(provider);
     if (openRouterRoutingError) {
       ctx.addIssue({
@@ -775,6 +816,24 @@ const configSchema = z.object({
         ],
         message: openRouterRoutingError,
       });
+    }
+    const vercelGatewayRoutingError = vercelGatewayRoutingConfigError(provider);
+    if (vercelGatewayRoutingError) {
+      ctx.addIssue({
+        code: "custom",
+        path: [
+          "providers",
+          name,
+          vercelGatewayRoutingError.startsWith("modelVercelGatewayRouting")
+            ? "modelVercelGatewayRouting"
+            : "vercelGatewayRouting",
+        ],
+        message: vercelGatewayRoutingError,
+      });
+    }
+    const terminalRepairError = responsesTerminalRepairConfigError(provider);
+    if (terminalRepairError) {
+      ctx.addIssue({ code: "custom", path: ["providers", name, "modelResponsesTerminalRepair"], message: terminalRepairError });
     }
     if (Object.hasOwn(provider, "virtualModels")) {
       ctx.addIssue({
@@ -835,6 +894,17 @@ const configSchema = z.object({
         code: "custom",
         path: ["providers", name, "modelAdapters"],
         message: modelAdaptersError,
+      });
+    }
+    const suppressSyntheticMaxError = booleanRecordConfigError(
+      (provider as { modelSuppressSyntheticMax?: unknown }).modelSuppressSyntheticMax,
+      "modelSuppressSyntheticMax",
+    );
+    if (suppressSyntheticMaxError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", name, "modelSuppressSyntheticMax"],
+        message: suppressSyntheticMaxError,
       });
     }
     const maxInputError = positiveIntegerRecordConfigError(
@@ -1057,6 +1127,128 @@ function warnDegradedClaudeSubagentEffort(rawParsed: unknown): void {
   }
 }
 
+function normalizeSubagentRoles(config: OcxConfig, rawParsed: unknown): OcxConfig {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "subagentRoles")) return config;
+  const salvaged = salvageSubagentRoles(raw.subagentRoles);
+  const next = { ...config };
+  if (salvaged.roles === undefined) delete next.subagentRoles;
+  else next.subagentRoles = salvaged.roles;
+  return next;
+}
+
+function warnDegradedSubagentRoles(rawParsed: unknown): void {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "subagentRoles")) return;
+  for (const warning of salvageSubagentRoles(raw.subagentRoles).warnings) {
+    console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+  }
+}
+
+function subagentRolesError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "subagentRoles")) return null;
+  const parsed = parseSubagentRoles(raw.subagentRoles);
+  return parsed.ok ? null : `schema_invalid: ${parsed.error}`;
+}
+
+function validSubagentRolesRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function normalizeSubagentRolesRevision(config: OcxConfig, rawParsed: unknown): OcxConfig {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "subagentRolesRevision")) return config;
+  if (validSubagentRolesRevision(raw.subagentRolesRevision)) return { ...config, subagentRolesRevision: raw.subagentRolesRevision };
+  const next = { ...config };
+  delete next.subagentRolesRevision;
+  return next;
+}
+
+function warnDegradedSubagentRolesRevision(rawParsed: unknown): void {
+  const raw = rawConfigRecord(rawParsed);
+  if (raw && Object.hasOwn(raw, "subagentRolesRevision") && !validSubagentRolesRevision(raw.subagentRolesRevision)) {
+    console.warn("⚠️  config.json subagentRolesRevision ignored: expected a non-negative safe integer. Other settings were preserved.");
+  }
+}
+
+function subagentRolesRevisionError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "subagentRolesRevision") || raw.subagentRolesRevision === undefined) return null;
+  return validSubagentRolesRevision(raw.subagentRolesRevision)
+    ? null
+    : "schema_invalid: subagentRolesRevision: must be a non-negative safe integer";
+}
+
+function modelAutoCompactConfigError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  const providers = raw?.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return null;
+  for (const [name, provider] of Object.entries(providers as Record<string, unknown>)) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+    const map = (provider as Record<string, unknown>).modelAutoCompactTokenLimits;
+    const error = modelAutoCompactTokenLimitsConfigError(map, { requireNativeIds: name === "openai" });
+    if (error) return `schema_invalid: providers.${name}.${error}`;
+  }
+  return null;
+}
+
+function normalizeModelAutoCompactConfig(config: OcxConfig, rawParsed: unknown): OcxConfig {
+  const raw = rawConfigRecord(rawParsed);
+  const providers = raw?.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return config;
+  const next = { ...config, providers: { ...config.providers } };
+  for (const [name, provider] of Object.entries(providers as Record<string, unknown>)) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+    const map = (provider as Record<string, unknown>).modelAutoCompactTokenLimits;
+    if (map !== undefined && modelAutoCompactTokenLimitsConfigError(map, { requireNativeIds: name === "openai" })) {
+      if (!next.providers[name]) continue;
+      next.providers[name] = { ...next.providers[name] };
+      delete next.providers[name].modelAutoCompactTokenLimits;
+    }
+  }
+  return next;
+}
+
+function warnDegradedModelAutoCompactConfig(rawParsed: unknown): void {
+  const error = modelAutoCompactConfigError(rawParsed);
+  if (error) console.warn(`⚠️  config.json ${error.replace(/^schema_invalid: /, "")}. Other settings were preserved.`);
+}
+
+const agentTaskRecoverySchema = z.object({
+  enabled: z.boolean().optional(),
+  model: z.string().trim().min(1).max(128).optional(),
+  timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
+  cacheEntries: z.number().int().min(1).max(512).optional(),
+}).strict();
+
+function normalizeAgentTaskRecovery(config: OcxConfig, rawParsed: unknown): OcxConfig {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "agentTaskRecovery")) return config;
+  const parsed = agentTaskRecoverySchema.safeParse(raw.agentTaskRecovery);
+  if (parsed.success) return { ...config, agentTaskRecovery: parsed.data as OcxConfig["agentTaskRecovery"] };
+  const next = { ...config };
+  delete next.agentTaskRecovery;
+  return next;
+}
+
+function warnDegradedAgentTaskRecovery(rawParsed: unknown): void {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "agentTaskRecovery")) return;
+  if (!agentTaskRecoverySchema.safeParse(raw.agentTaskRecovery).success) {
+    console.warn("⚠️  config.json agentTaskRecovery ignored: invalid experimental recovery configuration. Other settings were preserved.");
+  }
+}
+
+function agentTaskRecoveryError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "agentTaskRecovery")) return null;
+  const result = agentTaskRecoverySchema.safeParse(raw.agentTaskRecovery);
+  if (result.success) return null;
+  const field = result.error.issues[0]?.path.join(".");
+  return `schema_invalid: agentTaskRecovery${field ? `.${field}` : ""}: ${result.error.issues[0]?.message ?? "invalid configuration"}`;
+}
+
 type NativeSubagentPersistedField = "injectionModel" | "injectionEffort" | "syncCodexSubagentDefaults";
 
 function rawConfigRecord(rawParsed: unknown): Record<string, unknown> | null {
@@ -1133,8 +1325,12 @@ export function loadConfig(): OcxConfig {
       warnDegradedStreamMode(parsed, config);
       warnDegradedHostname(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
+      warnDegradedSubagentRoles(parsed);
+      warnDegradedSubagentRolesRevision(parsed);
+      warnDegradedModelAutoCompactConfig(parsed);
+      warnDegradedAgentTaskRecovery(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
-      return normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed);
+      return normalizeModelAutoCompactConfig(normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed), parsed), parsed);
     }
     // Schema validation failed — merge defaults into the raw object instead of
     // discarding it entirely, so pool accounts and providers survive a missing
@@ -1151,8 +1347,12 @@ export function loadConfig(): OcxConfig {
       const config = retryResult.data as OcxConfig;
       warnDegradedHostname(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
+      warnDegradedSubagentRoles(parsed);
+      warnDegradedSubagentRolesRevision(parsed);
+      warnDegradedModelAutoCompactConfig(parsed);
+      warnDegradedAgentTaskRecovery(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
-      return normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed);
+      return normalizeModelAutoCompactConfig(normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed), parsed), parsed), parsed), parsed);
     }
     // Merge couldn't fix it — truly broken config
     warnAndBackupInvalidConfig(configPath, result.error);
@@ -1188,10 +1388,19 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   // ordinary save persists the normalized absence.
   const syncDisabledReason = nativeSubagentSyncDisabledReason(config, rawParsed);
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
-  const normalized = normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed);
+  const normalized = normalizeModelAutoCompactConfig(normalizeSubagentRolesRevision(normalizeAgentTaskRecovery(normalizeSubagentRoles(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed), rawParsed), rawParsed), rawParsed), rawParsed);
   const warnings = configPlaceholderWarnings(normalized);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {
     warnings.push(`claudeCode.subagentEffort ignored: expected one of ${CLAUDE_SUBAGENT_EFFORTS.join(", ")}`);
+  }
+  warnings.push(...salvageSubagentRoles((rawConfigRecord(rawParsed) ?? {}).subagentRoles).warnings);
+  if (rawConfigRecord(rawParsed)?.subagentRolesRevision !== undefined && !validSubagentRolesRevision(rawConfigRecord(rawParsed)?.subagentRolesRevision)) {
+    warnings.push("subagentRolesRevision ignored: expected a non-negative safe integer");
+  }
+  if (modelAutoCompactConfigError(rawParsed)) warnings.push("modelAutoCompactTokenLimits ignored: invalid persisted model budget map");
+  const rawRecovery = rawConfigRecord(rawParsed)?.agentTaskRecovery;
+  if (rawRecovery !== undefined && !agentTaskRecoverySchema.safeParse(rawRecovery).success) {
+    warnings.push("agentTaskRecovery ignored: invalid experimental recovery configuration");
   }
   warnings.push(...malformedNativeSubagentFields(rawParsed).map(malformedNativeSubagentFieldWarning));
   if (syncDisabledReason) {
@@ -1254,10 +1463,23 @@ function claudeSubagentEffortError(value: unknown): string | null {
 
 /** Validate an in-memory config candidate without touching disk. Used by headless CLI import/set. */
 export function validateConfigCandidate(value: unknown): { ok: true; config: OcxConfig } | { ok: false; error: string } {
-  const boundaryError = blankHostnameError(value) ?? claudeSubagentEffortError(value);
+  const boundaryError = blankHostnameError(value) ?? claudeSubagentEffortError(value) ?? subagentRolesError(value) ?? subagentRolesRevisionError(value) ?? modelAutoCompactConfigError(value) ?? agentTaskRecoveryError(value);
   if (boundaryError) return { ok: false, error: boundaryError };
   const result = configSchema.safeParse(value);
-  if (result.success) return { ok: true, config: result.data as OcxConfig };
+  if (result.success) {
+    const config = result.data as OcxConfig;
+    const raw = rawConfigRecord(value);
+    if (raw && Object.hasOwn(raw, "subagentRoles")) {
+      const parsed = parseSubagentRoles(raw.subagentRoles);
+      if (!parsed.ok) return { ok: false, error: `schema_invalid: ${parsed.error}` };
+      config.subagentRoles = parsed.roles;
+    }
+    if (raw && Object.hasOwn(raw, "subagentRolesRevision")) {
+      if (!validSubagentRolesRevision(raw.subagentRolesRevision)) return { ok: false, error: "schema_invalid: subagentRolesRevision: must be a non-negative safe integer" };
+      config.subagentRolesRevision = raw.subagentRolesRevision;
+    }
+    return { ok: true, config };
+  }
   return { ok: false, error: schemaDiagnosticsError(result.error) };
 }
 

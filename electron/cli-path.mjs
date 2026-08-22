@@ -46,7 +46,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -84,7 +84,15 @@ export function ensurePathScriptPath(execPath) {
 export function cliShimContent(execPath) {
   const exe = execPath;
   const entry = cliEntryPath(execPath);
-  return ["@echo off", 'set "ELECTRON_RUN_AS_NODE=1"', `"${exe}" "${entry}" %*`, ""].join("\r\n");
+  return [
+    "@echo off",
+    "setlocal",
+    'set "ELECTRON_RUN_AS_NODE=1"',
+    `"${exe}" "${entry}" %*`,
+    'set "OCX_EXIT=%ERRORLEVEL%"',
+    "endlocal & exit /b %OCX_EXIT%",
+    "",
+  ].join("\r\n");
 }
 
 /**
@@ -126,55 +134,77 @@ export function installCliOnPath(execPath, deps = {}) {
     platform = process.platform,
     exists = existsSync,
     mkdir = dir => mkdirSync(dir, { recursive: true }),
+    readFile = path => readFileSync(path, "utf8"),
     writeFile = (path, content) => writeFileSync(path, content),
-    runPowerShell = (scriptPath, binDir) =>
-      spawnSync(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-BinDir", binDir],
-        { encoding: "utf8", windowsHide: true, timeout: 15_000 },
-      ),
+    removeFile = path => unlinkSync(path),
+    removeDir = path => rmdirSync(path),
+    readDir = path => readdirSync(path),
+    runPowerShell = (scriptPath, binDir, options) =>
+      runPowerShellDefault(scriptPath, binDir, options ?? { action: "install" }),
   } = deps;
 
   const plan = planCliPathInstall(execPath, platform);
   if (!plan) return null;
 
+  const before = snapshotShim(plan, exists, readFile);
+  if (before.error) {
+    return {
+      ok: false,
+      binDir: plan.binDir,
+      reason: `could not inspect the existing ocx shim: ${before.error.message}`,
+      manualCommand: plan.manualCommand,
+    };
+  }
+
+  let binDirExisted = false;
   try {
+    binDirExisted = exists(plan.binDir);
     mkdir(plan.binDir);
     writeFile(plan.shimPath, plan.shimContent);
   } catch (err) {
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `could not write the ocx shim (${plan.shimPath}): ${err?.message ?? err}`,
       manualCommand: plan.manualCommand,
+      ...rollback,
     };
   }
 
   if (!exists(plan.scriptPath)) {
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `the PATH-repair helper is missing from this build (expected ${plan.scriptPath})`,
       manualCommand: plan.manualCommand,
+      ...rollback,
     };
   }
 
-  const result = runPowerShell(plan.scriptPath, plan.binDir);
+  const result = runPowerShell(plan.scriptPath, plan.binDir, { action: "install" });
   if (result.error) {
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, result);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `could not run the PATH-repair helper: ${result.error.message}`,
       manualCommand: plan.manualCommand,
+      ...combined,
     };
   }
   if (result.status !== 0) {
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, result);
     const stderrTail = String(result.stderr ?? "").trim().slice(0, 500);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: `the PATH-repair helper exited ${result.status}${stderrTail ? `: ${stderrTail}` : ""}`,
       manualCommand: plan.manualCommand,
+      ...combined,
     };
   }
 
@@ -182,20 +212,26 @@ export function installCliOnPath(execPath, deps = {}) {
   try {
     parsed = JSON.parse(String(result.stdout ?? "").trim());
   } catch {
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, result);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: "the PATH-repair helper produced output that could not be parsed",
       manualCommand: plan.manualCommand,
+      ...combined,
     };
   }
 
   if (!parsed || parsed.ok !== true) {
+    const rollback = restoreShim(plan, before, binDirExisted, { exists, writeFile, removeFile, removeDir, readDir });
+    const combined = combineRollback(rollback, parsed);
     return {
       ok: false,
       binDir: plan.binDir,
       reason: typeof parsed?.reason === "string" ? parsed.reason : "the PATH-repair helper reported failure",
       manualCommand: plan.manualCommand,
+      ...combined,
     };
   }
 
@@ -207,6 +243,146 @@ export function installCliOnPath(execPath, deps = {}) {
     collisionReordered: parsed.collisionReordered === true,
     collisionMachineBlocked: parsed.collisionMachineBlocked === true,
   };
+}
+
+function runPowerShellDefault(scriptPath, binDir, options = {}) {
+  const args = [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    scriptPath,
+    "-BinDir",
+    binDir,
+    "-Action",
+    options.action ?? "install",
+  ];
+  if (options.action === "uninstall") {
+    args.push("-ShimPath", options.shimPath, "-ExpectedShimContent", options.expectedShimContent);
+  }
+  return spawnSync("powershell.exe", args, { encoding: "utf8", windowsHide: true, timeout: 15_000 });
+}
+
+function snapshotShim(plan, exists, readFile) {
+  try {
+    const existed = exists(plan.shimPath);
+    return { existed, content: existed ? readFile(plan.shimPath) : undefined };
+  } catch (error) {
+    return { error };
+  }
+}
+
+function restoreShim(plan, before, binDirExisted, deps) {
+  let rollbackFailed = false;
+  try {
+    if (before.existed) {
+      deps.writeFile(plan.shimPath, before.content);
+      return { transactionRecovered: true, rollbackFailed: false };
+    }
+    try {
+      if (deps.exists(plan.shimPath)) deps.removeFile(plan.shimPath);
+    } catch {
+      rollbackFailed = true;
+    }
+    if (!binDirExisted) {
+      try {
+        if (deps.readDir(plan.binDir).length === 0) deps.removeDir(plan.binDir);
+      } catch {
+        rollbackFailed = true;
+      }
+    }
+  } catch {
+    rollbackFailed = true;
+  }
+  return { transactionRecovered: !rollbackFailed, rollbackFailed };
+}
+
+/**
+ * Combine helper-side rollback evidence with the local shim restoration. A
+ * missing mutationState is conservative: the helper may have changed PATH,
+ * so local shim recovery alone cannot claim the whole transaction recovered.
+ */
+function combineRollback(local, helper) {
+  const mutationState = helper?.mutationState === "none" || helper?.mutationState === "made" || helper?.mutationState === "unknown"
+    ? helper.mutationState
+    : helper?.helperMutation === false
+      ? "none"
+      : helper?.helperMutation === true || typeof helper?.transactionRecovered === "boolean" || typeof helper?.rollbackFailed === "boolean"
+        ? "made"
+        : "unknown";
+  const helperFailed = helper?.rollbackFailed === true;
+  const localFailed = local.rollbackFailed === true;
+  if (mutationState === "none") {
+    const rollbackFailed = helperFailed || localFailed;
+    return { transactionRecovered: !rollbackFailed && local.transactionRecovered === true, rollbackFailed };
+  }
+  if (mutationState === "made") {
+    const rollbackFailed = helperFailed || localFailed;
+    return {
+      transactionRecovered: !rollbackFailed && helper?.transactionRecovered === true && local.transactionRecovered === true,
+      rollbackFailed,
+    };
+  }
+  return { transactionRecovered: false, rollbackFailed: helperFailed || localFailed };
+}
+
+/**
+ * Remove this install's registration only when the stable shim still contains
+ * the exact bytes this version wrote. A user-edited or unrelated shim is never
+ * a deletion target.
+ */
+export function uninstallCliOnPath(execPath, deps = {}) {
+  const {
+    platform = process.platform,
+    exists = existsSync,
+    readFile = path => readFileSync(path, "utf8"),
+    runPowerShell = (scriptPath, binDir, options) => runPowerShellDefault(scriptPath, binDir, options),
+  } = deps;
+  const plan = planCliPathInstall(execPath, platform);
+  if (!plan) return null;
+
+  let shimContent;
+  try {
+    if (!exists(plan.shimPath)) return { ok: true, owned: false, removed: false, binDir: plan.binDir };
+    shimContent = readFile(plan.shimPath);
+  } catch (error) {
+    return { ok: false, owned: false, removed: false, binDir: plan.binDir, reason: `could not inspect the ocx shim: ${error?.message ?? error}` };
+  }
+  if (shimContent !== plan.shimContent) {
+    return { ok: true, owned: false, removed: false, binDir: plan.binDir, reason: "the stable ocx shim is not owned by this install" };
+  }
+  if (!exists(plan.scriptPath)) {
+    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: `the PATH-repair helper is missing from this build (expected ${plan.scriptPath})` };
+  }
+
+  const result = runPowerShell(plan.scriptPath, plan.binDir, {
+    action: "uninstall",
+    shimPath: plan.shimPath,
+    expectedShimContent: plan.shimContent,
+  });
+  if (result.error) {
+    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: `could not run the PATH-repair helper: ${result.error.message}`, transactionRecovered: false, rollbackFailed: false };
+  }
+  if (result.status !== 0) {
+    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: `the PATH-repair helper exited ${result.status}`, transactionRecovered: false, rollbackFailed: false };
+  }
+  try {
+    const parsed = JSON.parse(String(result.stdout ?? "").trim());
+    if (!parsed || parsed.ok !== true) {
+      return {
+        ...parsed,
+        ok: false,
+        owned: parsed?.owned === true,
+        removed: parsed?.removed === true,
+        binDir: plan.binDir,
+        reason: parsed?.reason ?? "the PATH-repair helper reported failure",
+      };
+    }
+    return { ...parsed, binDir: plan.binDir };
+  } catch {
+    return { ok: false, owned: true, removed: false, binDir: plan.binDir, reason: "the PATH-repair helper produced output that could not be parsed", transactionRecovered: false, rollbackFailed: false };
+  }
 }
 
 /**
@@ -250,9 +426,22 @@ export function recordDesktopCliPathStatus(result, deps = {}) {
     now = () => new Date().toISOString(),
   } = deps;
 
-  const record = result.ok
-    ? { ok: true, binDir: result.binDir, at: now() }
-    : { ok: false, binDir: result.binDir, reason: result.reason, manualCommand: result.manualCommand, at: now() };
+  const bounded = (value, max = 1024) => typeof value === "string" ? value.slice(0, max) : null;
+  const action = result.action === "uninstall" || result.removed !== undefined || result.owned !== undefined ? "uninstall" : "install";
+  const record = {
+    action,
+    ok: result.ok === true,
+    binDir: bounded(result.binDir),
+    reason: bounded(result.reason, 2000),
+    manualCommand: bounded(result.manualCommand, 2000),
+    owned: typeof result.owned === "boolean" ? result.owned : null,
+    removed: typeof result.removed === "boolean" ? result.removed : null,
+    transactionRecovered: typeof result.transactionRecovered === "boolean" ? result.transactionRecovered : null,
+    rollbackFailed: typeof result.rollbackFailed === "boolean" ? result.rollbackFailed : null,
+    replacementConflict: result.replacementConflict === true,
+    claimPath: bounded(result.claimPath),
+    at: now(),
+  };
 
   try {
     mkdir(configDir);

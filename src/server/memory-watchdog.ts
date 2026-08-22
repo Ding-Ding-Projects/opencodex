@@ -13,6 +13,8 @@
  * paths, hostnames, or tokens.
  */
 
+import { heapStats } from "bun:jsc";
+
 export type MemorySampleBase = {
   /** Epoch ms. */
   at: number;
@@ -26,6 +28,10 @@ export type MemorySampleBase = {
   external: number;
   /** ArrayBuffer memory tracked by process.memoryUsage(). */
   arrayBuffers: number;
+  /** JSC heap bytes, when the runtime exposes them. */
+  jscHeapSize?: number;
+  /** JSC-visible native memory; omitted when introspection does not provide it. */
+  jscExtraMemorySize?: number;
 };
 
 export type MemorySample = MemorySampleBase & {
@@ -78,6 +84,15 @@ export function getActiveMemoryWatchdog(): MemoryWatchdog | null {
 
 function defaultSample(now: () => number): MemorySample {
   const usage = process.memoryUsage();
+  let jscHeapSize: number | undefined;
+  let jscExtraMemorySize: number | undefined;
+  try {
+    const stats = heapStats();
+    if (typeof stats.heapSize === "number" && Number.isFinite(stats.heapSize) && stats.heapSize >= 0) jscHeapSize = stats.heapSize;
+    if (typeof stats.extraMemorySize === "number" && Number.isFinite(stats.extraMemorySize) && stats.extraMemorySize >= 0) jscExtraMemorySize = stats.extraMemorySize;
+  } catch {
+    // Runtime introspection is optional; a sampling failure must never break the server.
+  }
   const base = {
     at: now(),
     rss: usage.rss,
@@ -85,6 +100,8 @@ function defaultSample(now: () => number): MemorySample {
     heapTotal: usage.heapTotal,
     external: usage.external,
     arrayBuffers: usage.arrayBuffers,
+    ...(jscHeapSize !== undefined ? { jscHeapSize } : {}),
+    ...(jscExtraMemorySize !== undefined ? { jscExtraMemorySize } : {}),
   };
   return { ...base, ...observedMemoryCounter(base) };
 }

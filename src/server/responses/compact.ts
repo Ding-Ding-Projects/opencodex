@@ -254,7 +254,9 @@ export async function handleResponsesCompact(
     // so routed-model reasoning items (reasoning_text content) don't 400 the ChatGPT backend.
     const compactBody = sanitizeReasoningInputContent(compactBodyRaw) as typeof compactBodyRaw;
     const compactUrl = `${base}/responses/compact`;
-    const compactThreadId = req.headers.get("x-codex-parent-thread-id");
+    const compactThreadId = authCtx.kind === "pool" || authCtx.kind === "main-pool"
+      ? authCtx.affinityKey
+      : req.headers.get("x-codex-parent-thread-id");
     const connectMs = config.connectTimeoutMs ?? 200_000;
     const recordCompactPoolOutcome = (
       outcome: CodexUpstreamOutcome,

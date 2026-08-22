@@ -1,10 +1,30 @@
-import { existsSync, readFileSync } from "node:fs";
+import {
+  lstatSync,
+  readFileSync,
+  readdirSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 
-type Finding = {
+export type Finding = {
   file: string;
   line: number;
   kind: string;
   value: string;
+};
+
+export type PrivacyScanOptions = {
+  root?: string;
+  trackedFiles?: string[];
+  /** Test-only overlay for the historical copy; production always uses the checkout. */
+  designReferenceRoot?: string;
+  /** Test-only package manifest overlay. */
+  packageJsonPath?: string;
+  /** Test seam; production uses the fixed Windows PowerShell reparse check. */
+  reparsePointCheck?: (path: string) => ReparsePointStatus;
+  /** Test seam proving oversized files are rejected before their bytes are read. */
+  readHistoricalFile?: (path: string) => Uint8Array;
 };
 
 const TEXT_FILE_RE = /\.(?:cjs|css|html|js|json|jsonc|md|mjs|ps1|sh|toml|ts|tsx|txt|yml|yaml)$/;
@@ -24,8 +44,397 @@ const EXCLUDED_SUFFIXES = [
   "package-lock.json",
 ];
 
-function gitLsFiles(): string[] {
-  const result = Bun.spawnSync(["git", "ls-files"], { stdout: "pipe", stderr: "pipe" });
+const DESIGN_REFERENCE_PREFIX = "design-reference/original-source/";
+const DESIGN_REFERENCE_MANIFEST = `${DESIGN_REFERENCE_PREFIX}MANIFEST.json`;
+const MAX_MANIFEST_BYTES = 256 * 1024;
+const MAX_HISTORICAL_FILE_BYTES = 16 * 1024 * 1024;
+const DESIGN_REFERENCE_SOURCE_DIRECTORY = "design/";
+const DESIGN_REFERENCE_COPY_DIRECTORY = "design-reference/original-source/";
+const MANIFEST_ROOT_KEYS = new Set(["schemaVersion", "sourceCommit", "sourceDirectory", "copyDirectory", "ordering", "fileCount", "files"]);
+const MANIFEST_ENTRY_KEYS = new Set(["path", "historicalPath", "blob", "bytes", "sha256"]);
+
+type HistoricalManifestEntry = {
+  path: string;
+  historicalPath: string;
+  blob: string;
+  bytes: number;
+  sha256: string;
+};
+
+export type ReparsePointStatus = "clear" | "reparse" | "unavailable";
+
+export type HistoricalDesignValidation = {
+  excludedFiles: Set<string>;
+  findings: Finding[];
+};
+
+const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+const REPARSE_STATUS_CACHE = new Map<string, ReparsePointStatus>();
+
+function finding(file: string, kind: string, value: string): Finding {
+  return { file, line: 1, kind, value };
+}
+
+function runGit(root: string, args: string[]): { success: boolean; stdout: string; stderr: string } {
+  const result = Bun.spawnSync(["git", "-C", root, ...args], { stdout: "pipe", stderr: "pipe" });
+  return {
+    success: result.success,
+    stdout: new TextDecoder().decode(result.stdout),
+    stderr: new TextDecoder().decode(result.stderr),
+  };
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function gitBlobForBytes(bytes: Uint8Array): string {
+  // Git's blob id is SHA-1 over this exact type-and-length header plus bytes.
+  // Computing it here keeps validation deterministic and avoids spawning one
+  // process per historical file while retaining the same content address as
+  // `git hash-object`.
+  const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
+  return createHash("sha1").update(header).update(bytes).digest("hex");
+}
+
+function pathForFile(root: string, file: string, designReferenceRoot?: string): string {
+  if (designReferenceRoot && file.startsWith(DESIGN_REFERENCE_PREFIX)) {
+    return join(designReferenceRoot, file.slice(DESIGN_REFERENCE_PREFIX.length));
+  }
+  return join(root, ...file.split("/"));
+}
+
+function isSafeRelativePath(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 512) return false;
+  if (value.includes("\\") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) return false;
+  const segments = value.split("/");
+  return segments.every(segment => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function isRegularFile(path: string, reparsePointCheck?: (path: string) => ReparsePointStatus): boolean {
+  try {
+    const stats = lstatSync(path);
+    return stats.isFile() && pathReparsePointStatus(path, reparsePointCheck) === "clear";
+  } catch {
+    return false;
+  }
+}
+
+function isTrackedTextFile(path: string): boolean {
+  try {
+    const stats = lstatSync(path);
+    return stats.isFile() && !stats.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function windowsReparsePointStatus(path: string): ReparsePointStatus {
+  return windowsReparsePointStatuses([path]).get(path) ?? "unavailable";
+}
+
+function windowsReparsePointStatuses(paths: string[]): Map<string, ReparsePointStatus> {
+  const statuses = new Map<string, ReparsePointStatus>();
+  if (process.platform !== "win32") {
+    for (const path of paths) statuses.set(path, "clear");
+    return statuses;
+  }
+  if (paths.length === 0) return statuses;
+  const pathPayload = Buffer.from(JSON.stringify(paths), "utf8").toString("base64");
+  const script = [
+    `$paths = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pathPayload}')) | ConvertFrom-Json`,
+    "foreach ($p in $paths) {",
+    "  try {",
+    "    $item = Get-Item -LiteralPath ([string]$p) -Force -ErrorAction Stop",
+    "    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { 'R' } else { 'C' }",
+    "  } catch { 'U' }",
+    "}",
+  ].join(";");
+  const encodedScript = Buffer.from(script, "utf16le").toString("base64");
+  const result = spawnSync(
+    WINDOWS_POWERSHELL,
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
+    { encoding: "utf8", timeout: 10_000, windowsHide: true, maxBuffer: 4096 },
+  );
+  const output = result.error || result.status !== 0 ? [] : String(result.stdout).trim().split(/\r?\n/);
+  for (let index = 0; index < paths.length; index += 1) {
+    const marker = output[index];
+    statuses.set(paths[index], marker === "R" ? "reparse" : marker === "C" ? "clear" : "unavailable");
+  }
+  return statuses;
+}
+
+function pathReparsePointStatus(
+  path: string,
+  check?: (path: string) => ReparsePointStatus,
+  precomputed?: Map<string, ReparsePointStatus>,
+): ReparsePointStatus {
+  try {
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink()) return "reparse";
+    // Keep the lstat symlink fast path, then ask the trusted platform probe
+    // about every remaining candidate. Junctions are directories, but regular
+    // files can also carry a reparse attribute and must not be excluded before
+    // that check.
+    if (!check && precomputed?.has(path)) return precomputed.get(path) as ReparsePointStatus;
+    if (!check && REPARSE_STATUS_CACHE.has(path)) return REPARSE_STATUS_CACHE.get(path) as ReparsePointStatus;
+    const status = (check ?? windowsReparsePointStatus)(path);
+    if (!check) REPARSE_STATUS_CACHE.set(path, status);
+    return status;
+  } catch {
+    return "unavailable";
+  }
+}
+
+function listFilesOnDisk(
+  root: string,
+  reparsePointCheck?: (path: string) => ReparsePointStatus,
+  precomputed?: Map<string, ReparsePointStatus>,
+): { files: string[]; invalidPaths: Array<{ path: string; status: ReparsePointStatus | "unreadable" }> } {
+  const files: string[] = [];
+  const invalidPaths: Array<{ path: string; status: ReparsePointStatus | "unreadable" }> = [];
+
+  function walk(directory: string, prefix: string): void {
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      invalidPaths.push({ path: prefix || ".", status: "unreadable" });
+      return;
+    }
+    for (const entry of entries) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = join(directory, entry.name);
+      const reparseStatus = pathReparsePointStatus(full, reparsePointCheck, precomputed);
+      if (reparseStatus !== "clear") {
+        invalidPaths.push({ path: rel, status: reparseStatus });
+        continue;
+      }
+      if (entry.isDirectory()) {
+        walk(full, rel);
+      } else if (entry.isFile()) {
+        files.push(rel);
+      } else {
+        invalidPaths.push({ path: rel, status: "unreadable" });
+      }
+    }
+  }
+
+  walk(root, "");
+  return { files, invalidPaths };
+}
+
+function parseHistoricalManifest(
+  root: string,
+  designReferenceRoot: string,
+  reparsePointCheck?: (path: string) => ReparsePointStatus,
+  readHistoricalFile: (path: string) => Uint8Array = path => readFileSync(path),
+): { manifest: { sourceCommit: string; files: HistoricalManifestEntry[] } | undefined; excludedFiles: Set<string>; findings: Finding[] } {
+  const findings: Finding[] = [];
+  const excludedFiles = new Set<string>();
+  const rootStatus = pathReparsePointStatus(designReferenceRoot, reparsePointCheck);
+  if (rootStatus !== "clear") {
+    findings.push(finding(DESIGN_REFERENCE_PREFIX, "historical-design-path", `copy root is ${rootStatus}`));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  const manifestPath = join(designReferenceRoot, "MANIFEST.json");
+  if (!isRegularFile(manifestPath, reparsePointCheck)) {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest is missing or not a regular file"));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  let manifestBytes: Uint8Array;
+  try {
+    manifestBytes = readFileSync(manifestPath);
+  } catch {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest cannot be read"));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  if (manifestBytes.byteLength > MAX_MANIFEST_BYTES) {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest exceeds the size limit"));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(manifestBytes));
+  } catch {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest is not valid JSON"));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest root is not an object"));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  const raw = value as Record<string, unknown>;
+  const sourceCommit = raw.sourceCommit;
+  const files = raw.files;
+  if (![...Object.keys(raw)].every(key => MANIFEST_ROOT_KEYS.has(key)) ||
+      ![...MANIFEST_ROOT_KEYS].every(key => Object.prototype.hasOwnProperty.call(raw, key)) ||
+      raw.schemaVersion !== 1 || raw.sourceDirectory !== DESIGN_REFERENCE_SOURCE_DIRECTORY ||
+      raw.copyDirectory !== DESIGN_REFERENCE_COPY_DIRECTORY || raw.ordering !== "git-tree-order" ||
+      typeof sourceCommit !== "string" || !/^[0-9a-f]{40}$/.test(sourceCommit) || !Array.isArray(files)) {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest metadata is invalid"));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  if (files.length > 4096 || raw.fileCount !== files.length) {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest file count is invalid"));
+    return { manifest: undefined, excludedFiles, findings };
+  }
+  const parsed: HistoricalManifestEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of files) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest entry is invalid"));
+      continue;
+    }
+    const entry = item as Record<string, unknown>;
+    if (![...Object.keys(entry)].every(key => MANIFEST_ENTRY_KEYS.has(key)) ||
+        ![...MANIFEST_ENTRY_KEYS].every(key => Object.prototype.hasOwnProperty.call(entry, key))) {
+      findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest entry fields are invalid"));
+      continue;
+    }
+    const path = entry.path;
+    const historicalPath = entry.historicalPath;
+    const blob = entry.blob;
+    const bytes = entry.bytes;
+    const entrySha256 = entry.sha256;
+    if (!isSafeRelativePath(path) || !isSafeRelativePath(historicalPath) ||
+        typeof blob !== "string" || !/^[0-9a-f]{40}$/.test(blob) ||
+        typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > MAX_HISTORICAL_FILE_BYTES ||
+        typeof entrySha256 !== "string" || !/^[0-9a-f]{64}$/.test(entrySha256) ||
+        historicalPath !== `${DESIGN_REFERENCE_SOURCE_DIRECTORY}${path}` || seen.has(path)) {
+      findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest entry value is invalid"));
+      continue;
+    }
+    seen.add(path);
+    parsed.push({ path, historicalPath, blob, bytes, sha256: entrySha256 });
+  }
+  if (parsed.length !== files.length) return { manifest: undefined, excludedFiles, findings };
+
+  const sourceTree = runGit(root, ["ls-tree", "-r", "--name-only", sourceCommit, "--", "design"]);
+  const historicalTree = sourceTree.success
+    ? sourceTree.stdout.split(/\r?\n/).filter(Boolean).map(path => path.startsWith("design/") ? path.slice(7) : path)
+    : [];
+  const expectedTree = parsed.map(entry => entry.path);
+  if (!sourceTree.success || historicalTree.join("\n") !== expectedTree.join("\n")) {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest source tree does not match"));
+  }
+  const firstDesignCommit = runGit(root, ["log", "--reverse", "--diff-filter=A", "--format=%H", "--", "design"]);
+  if (!firstDesignCommit.success || firstDesignCommit.stdout.split(/\r?\n/).filter(Boolean)[0] !== sourceCommit) {
+    findings.push(finding(DESIGN_REFERENCE_MANIFEST, "historical-design-manifest", "manifest source commit does not match"));
+  }
+
+  const allowedSupportFiles = new Set(["MANIFEST.json", "PROVENANCE.md"]);
+  const expectedCopyFiles = new Set([...expectedTree, ...allowedSupportFiles]);
+  const precomputedReparse = reparsePointCheck
+    ? undefined
+    : windowsReparsePointStatuses([
+        designReferenceRoot,
+        ...[...expectedCopyFiles].map(path => join(designReferenceRoot, ...path.split("/"))),
+      ]);
+  const copied = listFilesOnDisk(designReferenceRoot, reparsePointCheck, precomputedReparse);
+  const actualCopyFiles = new Set(copied.files);
+  for (const invalidPath of copied.invalidPaths) {
+    findings.push(finding(
+      `${DESIGN_REFERENCE_PREFIX}${invalidPath.path}`,
+      "historical-design-path",
+      invalidPath.status === "unreadable" ? "unreadable path" : `path is ${invalidPath.status}`,
+    ));
+  }
+  for (const path of actualCopyFiles) {
+    if (!expectedCopyFiles.has(path)) {
+      findings.push(finding(`${DESIGN_REFERENCE_PREFIX}${path}`, "historical-design-path", "unlisted path"));
+    }
+  }
+  for (const path of expectedCopyFiles) {
+    if (!actualCopyFiles.has(path)) {
+      findings.push(finding(`${DESIGN_REFERENCE_PREFIX}${path}`, "historical-design-path", "missing path"));
+    }
+  }
+
+  // A wrong source commit/tree or an unsafe copied-directory shape invalidates
+  // the whole exception. Content checks below may narrow a valid manifest to
+  // exact matching files, but they may never revive a structurally invalid one.
+  const metadataValid = findings.length === 0;
+  for (const entry of parsed) {
+    const copyRelative = `${DESIGN_REFERENCE_PREFIX}${entry.path}`;
+    const copyPath = join(designReferenceRoot, ...entry.path.split("/"));
+    let copyStats;
+    try {
+      copyStats = lstatSync(copyPath);
+    } catch {
+      findings.push(finding(copyRelative, "historical-design-source", "copy is missing or cannot be inspected"));
+      continue;
+    }
+    if (!copyStats.isFile() || pathReparsePointStatus(copyPath, reparsePointCheck, precomputedReparse) !== "clear") {
+      findings.push(finding(copyRelative, "historical-design-source", "copy is not a regular non-reparse file"));
+      continue;
+    }
+    if (copyStats.size > MAX_HISTORICAL_FILE_BYTES) {
+      findings.push(finding(copyRelative, "historical-design-source", "copy exceeds the size limit"));
+      continue;
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = readHistoricalFile(copyPath);
+    } catch {
+      findings.push(finding(copyRelative, "historical-design-source", "copy cannot be read"));
+      continue;
+    }
+    const blob = gitBlobForBytes(bytes);
+    if (bytes.byteLength !== entry.bytes || sha256(bytes) !== entry.sha256 || blob !== entry.blob) {
+      findings.push(finding(copyRelative, "historical-design-source", "copy bytes do not match the historical manifest"));
+      continue;
+    }
+    if (metadataValid) excludedFiles.add(copyRelative);
+  }
+  return { manifest: { sourceCommit, files: parsed }, excludedFiles, findings };
+}
+
+export function validateHistoricalDesignReference(
+  root: string,
+  designReferenceRoot: string,
+  reparsePointCheck?: (path: string) => ReparsePointStatus,
+  readHistoricalFile?: (path: string) => Uint8Array,
+): HistoricalDesignValidation {
+  const result = parseHistoricalManifest(root, designReferenceRoot, reparsePointCheck, readHistoricalFile);
+  return { excludedFiles: result.excludedFiles, findings: result.findings };
+}
+
+function packagePatternCanSelectHistoricalCopy(pattern: string): boolean {
+  // npm's packlist matcher is not a project dependency, so keep this check
+  // conservative: only patterns that are provably below another literal root
+  // are accepted. Broad roots, glob roots, traversal, and any spelling of the
+  // historical directory are rejected before they can select its files.
+  const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "");
+  if (normalized === "" || normalized === "." || normalized === ".." || normalized.startsWith("../")) return true;
+  if (normalized.includes("design-reference")) return true;
+  const firstSegment = normalized.split("/")[0] ?? "";
+  if (firstSegment === "*" || firstSegment === "**" || firstSegment.includes("*") ||
+      firstSegment.includes("?") || firstSegment.includes("[")) return true;
+  return false;
+}
+
+function validatePackageAllowlist(root: string, packageJsonPath = join(root, "package.json")): Finding[] {
+  const packagePath = packageJsonPath;
+  if (!isRegularFile(packagePath)) return [];
+  try {
+    const packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as { files?: unknown };
+    if (!Array.isArray(packageJson.files)) {
+      return [finding("package.json", "package-allowlist", "files allowlist is missing or invalid")];
+    }
+    const includesHistoricalCopy = packageJson.files.some(
+      value => typeof value !== "string" || packagePatternCanSelectHistoricalCopy(value),
+    );
+    return includesHistoricalCopy
+      ? [finding("package.json", "package-allowlist", "package files allowlist includes design-reference")]
+      : [];
+  } catch {
+    return [finding("package.json", "package-allowlist", "package.json is not valid JSON")];
+  }
+}
+
+function gitLsFiles(root: string): string[] {
+  const result = Bun.spawnSync(["git", "-C", root, "ls-files"], { stdout: "pipe", stderr: "pipe" });
   if (!result.success) {
     const stderr = new TextDecoder().decode(result.stderr);
     throw new Error(`git ls-files failed: ${stderr.trim() || result.exitCode}`);
@@ -36,10 +445,11 @@ function gitLsFiles(): string[] {
     .filter(Boolean);
 }
 
-function shouldScan(file: string): boolean {
+function shouldScan(file: string, excludedFiles: Set<string>): boolean {
   if (!TEXT_FILE_RE.test(file)) return false;
   if (EXCLUDED_PREFIXES.some(prefix => file.startsWith(prefix))) return false;
   if (EXCLUDED_SUFFIXES.some(suffix => file.endsWith(suffix))) return false;
+  if (excludedFiles.has(file)) return false;
   return true;
 }
 
@@ -225,8 +635,8 @@ function addAccountNameFindings(findings: Finding[], file: string, text: string)
   }
 }
 
-function scanFile(file: string): Finding[] {
-  const text = readFileSync(file, "utf-8");
+function scanFile(file: string, absolutePath: string): Finding[] {
+  const text = readFileSync(absolutePath, "utf-8");
   const findings: Finding[] = [];
   addAccountNameFindings(findings, file, text);
   addFindingsForPattern(
@@ -274,17 +684,33 @@ function scanFile(file: string): Finding[] {
   return findings;
 }
 
-const findings = gitLsFiles()
-  .filter(existsSync)
-  .filter(shouldScan)
-  .flatMap(scanFile);
-
-if (findings.length > 0) {
-  console.error("Privacy scan failed:");
-  for (const finding of findings) {
-    console.error(`${finding.file}:${finding.line} ${finding.kind}: ${finding.value}`);
-  }
-  process.exit(1);
+export function scanRepository(options: PrivacyScanOptions = {}): Finding[] {
+  const root = options.root ?? process.cwd();
+  const trackedFiles = options.trackedFiles ?? gitLsFiles(root);
+  const designReferenceRoot = options.designReferenceRoot ?? join(root, "design-reference", "original-source");
+  const historical = validateHistoricalDesignReference(
+    root,
+    designReferenceRoot,
+    options.reparsePointCheck,
+    options.readHistoricalFile,
+  );
+  const findings = [...historical.findings, ...validatePackageAllowlist(root, options.packageJsonPath)];
+  return findings.concat(
+    trackedFiles
+      .filter(file => isTrackedTextFile(pathForFile(root, file, options.designReferenceRoot)))
+      .filter(file => shouldScan(file, historical.excludedFiles))
+      .flatMap(file => scanFile(file, pathForFile(root, file, options.designReferenceRoot))),
+  );
 }
 
-console.log("Privacy scan passed");
+if (import.meta.main) {
+  const findings = scanRepository();
+  if (findings.length > 0) {
+    console.error("Privacy scan failed:");
+    for (const result of findings) {
+      console.error(`${result.file}:${result.line} ${result.kind}: ${result.value}`);
+    }
+    process.exit(1);
+  }
+  console.log("Privacy scan passed");
+}

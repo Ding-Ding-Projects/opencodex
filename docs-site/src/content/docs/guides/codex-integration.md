@@ -271,8 +271,17 @@ connection error itself. Restart the proxy:
 
 ```bash
 ocx start              # foreground
-ocx service install    # persistent: auto-starts on login and respawns on crash
+ocx service            # install if absent; otherwise refresh and restart in place
+ocx service install    # explicit registration (Windows may require elevation)
+ocx service repair     # refresh an installed service without re-registering it
+ocx service restart    # alias of repair
 ```
+
+The bare `ocx service` command probes the installed backend before choosing an action. A proven
+absent service is installed; an existing service is repaired in place so Windows does not repeat
+the elevated Task Scheduler registration. If Task Scheduler or WinSW status is unknown, the command
+fails closed and asks you to run `ocx service status`; use explicit `ocx service install` only after
+confirming that no service is registered.
 
 `ocx status` shows whether the proxy is running and prints the same restart hint when
 it is not; `ocx doctor` reports restart safety (service/shim coverage).

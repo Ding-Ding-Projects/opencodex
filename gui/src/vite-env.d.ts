@@ -48,6 +48,8 @@ interface Window {
       status: () => Promise<{ running: boolean; port: number; pid: number | null; managed: boolean }>;
       /** Resolves only once `/healthz` answers, or explains why it did not. */
       start: () => Promise<{ ok: true; port: number; adopted: boolean } | { ok: false; error: string }>;
+      /** Fixed native restore operation; no renderer path, command, or argv. */
+      restoreNative: () => Promise<{ ok: true; message: string } | { ok: false; error: string }>;
     };
     /**
      * The native file/folder picker behind every path text box.

@@ -650,6 +650,28 @@ describe("Responses bridge reasoning and usage parity", () => {
     expect(frames.some(f => f.event === "response.function_call_arguments.done")).toBe(false);
   });
 
+  test("repairs decorated apply_patch envelopes without rewriting exec input", () => {
+    const patchJson = buildResponseJSON([
+      { type: "tool_call_start", id: "patch", name: "apply_patch" },
+      { type: "tool_call_delta", arguments: JSON.stringify({ input: "*** Begin Patch ***\n*** Add File: note.txt\n+ok\n*** End Patch ***" }) },
+      { type: "tool_call_end" }, { type: "done" },
+    ], "model", { freeformToolNames: new Set(["apply_patch"]) });
+    const patchItem = (patchJson.output as Record<string, unknown>[]).find(item => item.type === "custom_tool_call");
+    expect(patchItem).toMatchObject({
+      name: "apply_patch",
+      input: "*** Begin Patch\n*** Add File: note.txt\n+ok\n*** End Patch",
+    });
+
+    const execText = "const result = await tools.exec_command({ cmd: \"echo *** Begin Patch ***\" });";
+    const execJson = buildResponseJSON([
+      { type: "tool_call_start", id: "exec", name: "exec" },
+      { type: "tool_call_delta", arguments: JSON.stringify({ input: execText }) },
+      { type: "tool_call_end" }, { type: "done" },
+    ], "model", { freeformToolNames: new Set(["exec"]) });
+    const execItem = (execJson.output as Record<string, unknown>[]).find(item => item.type === "custom_tool_call");
+    expect(execItem).toMatchObject({ name: "exec", input: execText });
+  });
+
   test("non-streaming error produces failed status", () => {
     const json = buildResponseJSON([
       {
