@@ -76,6 +76,12 @@ describe("ocx.mjs npm launcher (source invariants)", () => {
     expect(source).not.toContain('${override} is missing, unreadable');
   });
 
+  test("spawn failures expose only a safe error code, never the executable-bearing message", () => {
+    expect(source).toContain('typeof result.error.code === "string"');
+    expect(source).toContain("failed to launch Bun runtime (${errorCode})");
+    expect(source).not.toContain("result.error.message");
+  });
+
   test("shares the Node-safe Bun regular-file size gate across both runtime paths", () => {
     const launcherLines = source.replaceAll("\r\n", "\n").split("\n");
     const runtimeLines = runtimeSource.replaceAll("\r\n", "\n").split("\n");
