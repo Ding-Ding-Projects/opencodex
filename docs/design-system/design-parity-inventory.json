@@ -1,7 +1,7 @@
 {
   "schemaVersion": "design-parity-inventory/v1",
   "inventoryId": "desktop-material-design-parity",
-  "sourceCommitAtGeneration": "dc9401145e99c1dc6a5e981e257575749a38f882",
+  "sourceCommitAtGeneration": "23d570f031bb62c18e49c763d0a03383a472d5f3",
   "captureSourceCommit": "dc9401145e99c1dc6a5e981e257575749a38f882",
   "referenceFile": "design/OpenCodex M3.dc.html",
   "screenIds": [

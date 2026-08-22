@@ -19,7 +19,7 @@ describe("design parity inventory contract", () => {
 
   test("observes red then green for every exact required boundary", () => {
     const receipts = runNegativeRegression(inventory);
-    expect(receipts).toHaveLength(19);
+    expect(receipts).toHaveLength(20);
     expect(receipts.filter(line => line.startsWith("RED "))).toHaveLength(10);
     expect(receipts.filter(line => line.startsWith("GREEN "))).toHaveLength(10);
   });

@@ -54,10 +54,17 @@ function assertTuple(tuple: AnyRecord, expectedId: string, label: string): void 
   for (const field of ["state", "theme", "locale"]) requiredString(tuple[field], `${label}.${field}`);
 }
 
-function evidenceFile(entry: AnyRecord, label: string, repoRoot: string, dimensions: { width: number; height: number } | null = null): void {
+function evidenceFile(
+  entry: AnyRecord,
+  label: string,
+  repoRoot: string,
+  dimensions: { width: number; height: number } | null = null,
+  checkFiles = true,
+): void {
   const path = requiredString(entry.path, `${label}.path`);
   const hash = requiredString(entry.sha256, `${label}.sha256`);
   if (!/^[a-f0-9]{64}$/.test(hash)) fail(`${label}.sha256 must be a lowercase SHA-256`);
+  if (!checkFiles) return;
   const absolute = resolve(repoRoot, path);
   const actual = sha256(absolute);
   if (actual !== hash) fail(`${label}.sha256 does not match ${path}`);
@@ -128,11 +135,12 @@ export function validateInventory(inventory: Inventory, options: { repoRoot?: st
     const builtRaw = requiredObject(evidence.builtRaw, `${id}.evidence.builtRaw`);
     const sideBySide = requiredObject(evidence.sideBySide, `${id}.evidence.sideBySide`);
     const diff = requiredObject(evidence.diff, `${id}.evidence.diff`);
-    if (options.checkFiles !== false) {
-      evidenceFile(referenceRaw, `${id}.evidence.referenceRaw`, repoRoot, { width: 2880, height: 1800 });
-      evidenceFile(builtRaw, `${id}.evidence.builtRaw`, repoRoot, { width: 2880, height: 1800 });
-      evidenceFile(sideBySide, `${id}.evidence.sideBySide`, repoRoot, { width: 1956, height: 685 });
-      evidenceFile(diff, `${id}.evidence.diff`, repoRoot);
+    const checkFiles = options.checkFiles !== false;
+    evidenceFile(referenceRaw, `${id}.evidence.referenceRaw`, repoRoot, { width: 2880, height: 1800 }, checkFiles);
+    evidenceFile(builtRaw, `${id}.evidence.builtRaw`, repoRoot, { width: 2880, height: 1800 }, checkFiles);
+    evidenceFile(sideBySide, `${id}.evidence.sideBySide`, repoRoot, { width: 1956, height: 685 }, checkFiles);
+    evidenceFile(diff, `${id}.evidence.diff`, repoRoot, null, checkFiles);
+    if (checkFiles) {
       const diffPayload = JSON.parse(readFileSync(resolve(repoRoot, diff.path), "utf8")) as AnyRecord;
       if (diffPayload.id !== id) fail(`${id}.evidence.diff record id mismatch`);
       if (diffPayload.inputs?.reference?.sha256 !== referenceRaw.sha256 || diffPayload.inputs?.built?.sha256 !== builtRaw.sha256) fail(`${id}.evidence.diff does not bind both raw input hashes`);
