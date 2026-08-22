@@ -1,6 +1,6 @@
 ---
-title: Bun Startup Crashes on Windows
-description: How opencodex recovers a stale Codex journal and retries a panic-qualified Bun startup without hiding ordinary CLI failures.
+title: Bun Startup Crash Recovery on Windows
+description: How opencodex separates stale-journal recovery from a native Bun crash, protects a live owner, and performs one bounded retry.
 ---
 
 On Windows, a previous abnormal proxy exit can be followed by output like this on the next
@@ -25,20 +25,21 @@ opencodex handles this failure at two separate process boundaries:
    proxy. If a healthy proxy owns routing, its injected Codex files, PID state, and journal are left
    untouched. Only a definitively dead owner can trigger recovery. PID removal is compare-guarded so
    a concurrent new starter cannot have its fresh state deleted.
-2. **One external retry for a real Bun panic.** The Node launcher retains at most 64 KiB of the Bun
-   child's stderr while forwarding every byte live. It retries only `start` and `ensure`, only after
-   an abnormal exit whose stderr contains Bun's official `oh no: Bun has crashed` marker, and only
-   once. The second attempt receives a fresh stderr tail, so output from the first crash cannot turn
-   an ordinary second failure into another crash.
+2. **One external retry for a real Bun panic.** The external Node npm launcher supervises only direct
+   `start` and `ensure` invocations. It forwards the Bun child's stderr byte-for-byte while retaining
+   an attempt-local tail of at most 64 KiB for classification. It retries exactly once, and only
+   after an abnormal termination whose tail contains the exact `oh no: Bun has crashed` marker.
+   The second attempt receives a fresh stderr tail, so output from the first crash cannot turn an
+   ordinary second failure into another crash.
 
 An ordinary nonzero CLI exit, a spawn failure, a warning without the Bun marker, exit code `139`
 without the marker, or a user termination signal is never retried. If both eligible attempts produce
 the Bun crash marker, the real second failure is returned and the launcher prints one runtime-override
 hint instead of looping.
 
-The generated Codex launcher shims follow the same bounded policy: they run `ocx ensure`, retry it
-once after a nonzero result, and then launch the real Codex command even if both ensure attempts
-failed. The two ensure attempts are synchronous so Codex does not race ahead of proxy readiness.
+The generated Codex launcher shims separately run `ocx ensure` synchronously, make at most two
+best-effort ensure attempts, and then launch the real Codex command even if both attempts failed.
+That shim behavior is not the npm launcher's Bun-crash classifier.
 
 ## What to do if it still crashes twice
 
@@ -54,9 +55,9 @@ failed. The two ensure attempts are synchronous so Codex does not race ahead of 
    ocx ensure
    ```
 
-   The direct npm launcher reads this variable on every invocation. Durable service and Codex-shim
-   artifacts capture the chosen runtime when they are generated, so reinstall the artifact from the
-   same shell after setting the variable:
+   The direct npm launcher reads this variable on every invocation. For a durable runtime override,
+   reinstall the service or Codex-shim artifact from the same shell after setting the variable;
+   those artifacts capture the chosen runtime when they are generated:
 
    ```powershell
    ocx service install
@@ -73,8 +74,20 @@ failed. The two ensure attempts are synchronous so Codex does not race ahead of 
    ```
 
 `OPENCODEX_BUN_PATH` executes the selected file as the proxy runtime. Do not point it at an untrusted
-download, a writable shared directory, or an arbitrary large executable. opencodex rejects missing,
-unreadable, and incomplete placeholder binaries, but a size check is not a publisher-signature check.
+download, a writable shared directory, or an arbitrary large executable. The override must resolve
+to a readable regular file of at least 1,000,000 bytes (approximately 1 MiB); directories, missing
+files, and incomplete placeholder binaries are rejected. A rejected override produces a generic
+warning that does not echo the supplied path, then the npm launcher falls back to its bundled Bun
+runtime. This validation checks only file kind and size. It does not authenticate the binary's
+identity or verify a publisher signature.
+
+## Verification boundary
+
+This is non-visual CLI lifecycle behavior. Its deterministic regression coverage uses harmless
+fixture subprocesses that emit the exact diagnostic marker and terminate with controlled nonzero
+results. The tests do not generate a real native crash, invalid memory access, or crash dump.
+Separate isolated subprocess coverage exercises live-owner detection and the journal, PID, and
+runtime-state transitions. UI captures are not evidence for this command-line recovery contract.
 
 ## State and failure guarantees
 

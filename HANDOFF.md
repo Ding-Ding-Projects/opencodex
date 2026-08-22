@@ -1,28 +1,31 @@
 # Handoff
 
-## Bun crash-resilient startup — 2026-08-20, integration branch `codex/fix-bun-proxy-startup`
+## Bun crash-resilient startup — 2026-08-20, source snapshot `8924132d9`
 
-This work is implemented and locally verified but is not yet claimed as merged, pushed, or released.
-It addresses the Windows sequence where a stale-session recovery warning is followed by Bun's native
-`0xFFFFFFFFFFFFFFFF` segmentation-fault report.
+The source-line fix is implemented at exact snapshot
+`8924132d9021458bdb4dfbc220b6b3a5780204a6` and is present on the branch for pull request #37.
+It is not merged or released. Exact-head CI is currently red, and external review remains unresolved.
 
-| Area | Current integration state |
+| Area | Current source state |
 | --- | --- |
-| Owner ordering | `start` and `ensure` identity-probe a persisted owner before journal recovery. A healthy owner keeps its injected Codex files, journal, and PID. Dead-state removal compares the PID snapshot before unlinking. |
-| Journal restoration | Startup uses the async hardened atomic-write path. A retry recognizes exact original bytes already committed before a partial restore and finishes the remaining profile restoration. The synchronous exit-safe restore remains available. |
-| Native-crash boundary | The Node npm launcher retains a 64 KiB stderr tail and retries only `start` / `ensure`, once, after an abnormal exit containing Bun's official crash marker. Per-attempt tails prevent stale crash output from poisoning the retry. Ordinary failures and parent signals are never retried. |
+| Warning and classifier boundary | The `Previous session was interrupted — Codex config has been restored.` warning is emitted only after dead-owner journal restoration. It is not the Bun crash classifier. |
+| Owner ordering | Both `start` and `ensure` run owner preflight before journal recovery. The preflight probes the persisted owner and, when needed, the configured listener; a healthy owner keeps its injected Codex files, journal, and PID. Dead-state removal compares the PID snapshot before unlinking. |
+| Journal restoration | Startup uses the asynchronous hardened atomic-write path. A retry recognizes exact original bytes already committed before a partial restore and finishes the remaining profile restoration. The synchronous exit-safe restore remains available for exit and signal cleanup. |
+| External crash supervision | The Node npm launcher supervises Bun outside the process that can crash. It retries `start` or `ensure` exactly once only when termination is abnormal and that attempt's stderr contains the exact marker `oh no: Bun has crashed`. A marker-free exit 139, an ordinary nonzero exit, a parent signal, a spawn failure, and a second marked crash are not retried. |
+| Diagnostic preservation | Every stderr chunk is forwarded unchanged. Only a bounded 64 KiB per-attempt tail is retained for classification, so stale output from an earlier attempt cannot qualify a later one. |
+| Emergency runtime override | `OPENCODEX_BUN_PATH` is a validated emergency override shared by both runtime paths. The value is normalized and accepted only when it resolves to a stat-able regular file of at least 1,000,000 bytes; an invalid value warns without printing the rejected path and falls back to the bundled runtime. This is a shape-and-size validation, not an identity or signature guarantee, and validation does not execute the candidate. |
 | Codex shims | Unix, CMD, and PowerShell shims run at most two synchronous `ensure` attempts and then always launch the real Codex command. |
-| Runtime escape hatch | Direct and durable runtime selection now honor a validated, normalized `OPENCODEX_BUN_PATH`; invalid overrides warn without printing the rejected path and fall back to the bundled runtime. |
-| Missing launcher | `src/cli/codex.ts` restores the already-documented `ocx codex` command with healthy-owner adoption, exact-child readiness, live-port sync, trusted runtime selection, transparent argv/stdio, signal forwarding, and exit mirroring. |
+| Codex launcher | `src/cli/codex.ts` supplies the documented `ocx codex` command with healthy-owner adoption, exact-child readiness, live-port sync, trusted runtime selection, transparent argv and stdio, signal forwarding, and exit mirroring. |
 
-Local combined evidence at `ca66bd939`: **112 passed, 3 platform skips, 0 failed, 563 assertions**;
-root TypeScript passed and `git diff --check` passed. The first combined run lacked the worktree's
-dependency tree and was invalid; after `bun install --frozen-lockfile`, the identical command produced
-the green result above. Full-suite, docs-build, privacy, packaging, exact-commit CI, integration-line,
-release, and cleanup evidence remain pending and must not be inferred from this checkpoint.
+### Deterministic evidence and current external state
 
-The focused crash fixture prints the reporter's exact warning, panic, and Bun-crash lines, then calls
-`process.exit(139)`. It never triggers a real segfault, abort, or core dump.
+- Exact-tip recorded local checks at `8924132d9`: `bun test tests/bun-runtime.test.ts tests/update-job.test.ts` completed with **76 passed, 0 failed, 215 assertions**, and `bun run typecheck` passed.
+- Focused deterministic subprocess and fixture coverage lives in `tests/bun-start-supervisor.test.ts`, `tests/cli-start-journal-order.test.ts`, and `tests/bun-runtime.test.ts`. The crash fixture writes the exact warning, panic, and marker text and exits with code 139. It does not manufacture a real native crash, segmentation fault, abort, or core dump.
+- Earlier combined evidence at ancestor `ca66bd939` completed with **112 passed, 3 platform skips, 0 failed, 563 assertions** after `bun install --frozen-lockfile`; that result is useful focused evidence but is not exact-tip CI evidence.
+- No UI or screenshot evidence was produced because this is a CLI process-lifecycle fix with no visible product surface.
+- Pull request #37 is open against `dev` at exact head `8924132d9021458bdb4dfbc220b6b3a5780204a6`. Its latest exact-head run, `32421625042` (job `96594693735`), is red with **7,629 passed, 3 skipped, 1 failed**. The single failure is `ocx.mjs npm launcher (source invariants) > shares the Node-safe Bun binary validator across both runtime paths` at `tests/ocx-launcher-source.test.ts:84`: the source-text invariant still expects `isRealBunBinary(path)` with a direct `statSync(path)` call, while the exact-head implementation deliberately accepts an injectable `stat = statSync` and calls `stat(path)` so directory-shaped fixtures can be tested. This is the exact-head CI blocker; current evidence does not identify it as a runtime regression.
+- Pull requests #37 and #38 have zero submitted reviews and pending review requests for DingDingChae and MatDayProjects. Pull request #38 remains open and red at head `99ee1697b34a585725c7cce1753964732fcd0b99` with aggregate run `32347209263`.
+- External maintainer and security review, green exact-head CI, integration into `dev` and `dev2-go`, release, and cleanup remain unresolved. No merge, release, or cleanup is claimed by this handoff.
 
 ## Session close — 2026-08-16, tip `316ff9a5b`
 

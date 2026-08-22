@@ -49,8 +49,15 @@ TCP reachability. A concurrent starter cannot create a duplicate fallback daemon
 each provider's models into Codex's catalog. On shutdown it restores native Codex unless it was
 launched as a managed service (`OCX_SERVICE=1`). A healthy owner is identity-checked before stale
 journal recovery, so a dead launcher PID cannot make a live proxy lose its injected Codex state.
-The external Node launcher retries `start` once only for an abnormal exit carrying Bun's official
-crash marker; ordinary command failures are never retried. See [Bun Startup Crashes on
+The resulting stale-session warning reports recovery and is not a Bun-crash classifier.
+
+The external Node npm launcher supervises only direct `start` and `ensure` invocations. It forwards
+Bun stderr byte-for-byte, retains an attempt-local 64 KiB tail for classification, and retries
+exactly once only after abnormal termination plus the exact `oh no: Bun has crashed` marker.
+Ordinary failures are never retried. `OPENCODEX_BUN_PATH` is used only when it resolves to a readable
+regular file of at least 1,000,000 bytes (approximately 1 MiB); a rejected value is not echoed, and
+the launcher falls back to bundled Bun. This check does not verify binary identity or a publisher
+signature. See [Bun Startup Crash Recovery on
 Windows](/troubleshooting/bun-startup-crashes/).
 
 ```bash
@@ -104,8 +111,8 @@ background, and sync the live port back into Codex.
 
 Idempotently ensure a background proxy is running, then sync its live model catalog. If
 `codexAutoStart` is `false`, it prints that autostart is disabled and does nothing. The external
-launcher gives `ensure` the same one-attempt, panic-qualified Bun retry as `start`; it does not retry
-an ordinary nonzero result.
+launcher gives `ensure` the same one-retry, panic-qualified supervision described under `start`; it
+does not retry an ordinary nonzero result.
 
 ### `ocx status [--json]`
 

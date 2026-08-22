@@ -101,18 +101,24 @@ out directly against the source.
 | Failure evidence | Every artifact producer defensively collects allowlisted outputs and run/SHA/job/runner metadata behind `always()` without masking the original failure. Step-specific YAML tests guard the collector, upload, and real release asset arguments. |
 | Verification | Typecheck, privacy, GUI lint/build, docs build, and focused workflow, Squirrel, export, and storage tests are green locally. Exact-commit GitHub Actions and release evidence remain pending until the integration commit lands. |
 
-## In progress — Bun crash-resilient startup (2026-08-20)
+## Source-line complete; integration pending — Bun crash-resilient startup (2026-08-20)
 
-The Windows startup repair is implemented on `codex/fix-bun-proxy-startup` and has passed its first
-combined local gate. It is not yet claimed as merged, pushed, released, or exact-commit-CI verified.
+The startup repair is complete in source at `8924132d9021458bdb4dfbc220b6b3a5780204a6`, which is
+present on the branch for open PR [#37](https://github.com/Ding-Ding-Projects/opencodex/pull/37),
+`codex/fix-bun-proxy-startup`, against `dev`. This records source-line completion only: the pull
+request is not merged or released, its exact-head CI run is red, and independent review remains unresolved.
 
 | Work | Current state |
 | --- | --- |
-| Stale journal ordering | Healthy proxy ownership is established before recovery; only a definitively dead owner restores journaled Codex state. PID removal is snapshot-guarded against a concurrent starter. |
-| Bun native crash | The external Node launcher retries only `start` and `ensure`, once, after an abnormal exit with Bun's official crash marker. Retained stderr is bounded to 64 KiB per attempt, forwarded once, and never used across attempts. |
-| Runtime override | `OPENCODEX_BUN_PATH` is normalized, validated through the shared real-binary gate, and honored by both the direct launcher and durable service/shim selection. |
+| Stale journal ordering | Both `start` and `ensure` establish proxy ownership before journal recovery. A healthy configured listener keeps its injected Codex state and journal; only a failed owner probe reaches asynchronous startup recovery. Stale PID removal compares the preflight snapshot before deletion so a concurrent starter keeps its newly written state; synchronous recovery remains available only for exit-safe cleanup. |
+| Bun native crash | The external Node launcher retries exactly once only when the requested command is `start` or `ensure`, the Bun child terminates abnormally, and that attempt's stderr contains the exact `oh no: Bun has crashed` marker. Every stderr chunk is forwarded as received, while classification retains only an attempt-local 64 KiB tail. Ordinary nonzero exits, marker-free exit 139, spawn errors, parent termination signals, and unrelated commands do not retry. |
+| Runtime override | `OPENCODEX_BUN_PATH` is trimmed, resolved to an absolute path, and accepted only when the shared validator sees a regular file of at least 1 MB; an invalid override falls through to the bundled/runtime fallback. Validation does not execute the candidate and is intentionally a shape-and-size filter, not proof of Bun identity, signature, or trust. The direct launcher and durable service/shim selection share this boundary. |
 | Codex path | The documented `ocx codex` dispatcher target exists again and is behavior-tested across startup races, runtime refusal, argument/stdio forwarding, signals, and Windows command shims. |
-| Local evidence | 112 passed, 3 platform skips, 0 failed, 563 assertions; root typecheck and diff hygiene passed after a locked dependency install. Full repository, docs, privacy, packaging, integration-line, remote CI, and release evidence remain pending. |
+| Deterministic crash evidence | Supervisor tests use a harmless child process that writes the exact crash text to stderr and exits nonzero. They exercise retry, no-retry, bounded-tail, signal, and stderr-preservation behavior without manufacturing a native segmentation fault, invalid memory access, or crash dump. |
+| Exact-base local evidence | The final exact-base commit records `bun test tests/bun-runtime.test.ts tests/update-job.test.ts` at 76 passed, 0 failed, and 215 expect calls, plus a passing root typecheck. The earlier 112-test combined result remains historical evidence for the preceding source tip; it is not represented as a fresh aggregate verdict for `8924132d9`. |
+| Exact-head CI blocker | Run [32421625042](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/32421625042) is red at 7,629 passed, 3 skipped, and 1 failed. Job [96594693735](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/32421625042/job/96594693735) fails the source-text invariant at `tests/ocx-launcher-source.test.ts:84`: it still expects `isRealBunBinary(path)` with a direct `statSync(path)` call, while `8924132d9` intentionally changed the validator to injectable `isRealBunBinary(path, stat = statSync)` and `stat(path)` so directory-shaped fixtures can be tested. This is the exact-head CI blocker, not evidence of a runtime regression; the run remains red until the stale invariant is repaired and rerun. |
+| Evidence boundary | This is non-visual CLI/runtime behavior. Source inspection, deterministic process tests, stderr/exit-status assertions, and exact-SHA command results are applicable evidence; screenshots or UI captures would not prove the recovery contract and are not claimed. |
+| Remaining external work | PR #37 has zero submitted reviews and pending requests for `DingDingChae` and `MatDayProjects`. The `dev2-go` carry, PR [#38](https://github.com/Ding-Ding-Projects/opencodex/pull/38), is also open with zero submitted reviews and the same pending reviewers at head `99ee1697b34a585725c7cce1753964732fcd0b99`; aggregate run [32347209263](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/32347209263) remains red. `dev`/`dev2-go` integration, both review decisions, green aggregate exact-SHA CI, release publication, and post-release verification are still open. No source-line result in this section is evidence that any of those external stages completed. |
 
 ## Completed — plug-and-play local startup (2026-08-04)
 

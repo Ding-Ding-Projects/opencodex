@@ -155,16 +155,25 @@ a user npm prefix) when you can.
 <br/>
 
 The journal warning means opencodex recovered Codex state left by a definitively dead process; it is
-not itself the native-crash cause. Before recovery, `start` and `ensure` now identity-check whether a
-healthy proxy already owns routing. The external Node launcher also retries those two commands once,
-and only once, when Bun exits abnormally with its official `oh no: Bun has crashed` marker. Ordinary
-CLI errors, warnings without the marker, spawn failures, and termination signals are not retried.
+not itself the native-crash cause or part of the retry classifier. Before recovery, `start` and
+`ensure` identity-check whether a healthy proxy already owns routing. The external Node launcher
+supervises those two commands and retries exactly once only when the same attempt ends abnormally and
+its stderr contains the exact `oh no: Bun has crashed` marker. It forwards every stderr byte live,
+while retaining only a fresh, attempt-local 64 KiB tail for classification. Ordinary CLI errors,
+warning-only output, marker-free abnormal exits, spawn failures, and parent termination signals are
+not retried.
 
 If the second attempt also produces the Bun marker, opencodex preserves that failure and suggests
-`OPENCODEX_BUN_PATH`. Use only an absolute path to a Bun binary you deliberately downloaded and
-trust; reinstall a service or Codex shim after setting it so the durable artifact captures the same
-runtime. Full diagnosis, safety notes, and recovery commands are in [Bun Startup Crashes on
-Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
+the emergency `OPENCODEX_BUN_PATH` override. Use only an absolute path to a Bun binary you deliberately
+downloaded and trust. The launcher rejects a path it cannot inspect, a non-regular file, or a
+placeholder-sized file (less than 1 MiB), but that file-and-size check does not verify Bun identity
+or a publisher signature. Reinstall a service or Codex shim after setting the override so the
+durable artifact captures the same runtime. Full diagnosis, safety notes, and recovery commands are
+in [Bun Startup Crashes on Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
+
+This is a non-visual startup fix. Its regression evidence uses deterministic child-process and CLI
+fixtures for exit, signal, marker, stderr, and journal-owner behavior; it does not generate a real
+native Bun crash, and no UI capture is required or provided.
 
 </details>
 
