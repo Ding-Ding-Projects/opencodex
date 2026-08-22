@@ -4,7 +4,7 @@
 
 - [x] Remove the interactive GitHub-star prompt, marker, startup call, and `gh` mutation route; retain no user-facing star prompt.
 - [x] Repair the stale in-app docs bundle, packaged icon stdout contamination, app-name identity assertion, parity evidence hashes, and notification teardown race.
-- [x] Integrate the ready recovery, docs vocabulary/School mode, design-reference, dashboard/updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle, package-contract, line-attribution, docs-site, and network-safety lanes into `dev` at `76566f01f12048042f1ca257df4adb1f7a99b32c`.
+- [x] Integrate the ready recovery, docs vocabulary/School mode, design-reference, dashboard/updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle, package-contract, line-attribution, docs-site, and network-safety lanes into `dev` at `76566f01f12048042f1ca257df4adb1f7a99b32c`; follow-up safety repairs are `625708d07` and `50edc1a69`.
 - [x] Push `dev` and independently prove `origin/dev` contains the exact local tip.
 - [ ] Obtain a green CI verdict for the current exact tip; the prior failed run is recorded in `HANDOFF.md`, and the full blob-based line counter remains locally unverified after its bounded timeout.
 - [ ] Complete the 63 partial shared-contract rows, including documentation-site parity, real built-artifact interaction proof, and the required captures; do not promote a row from `partial` on source evidence alone.

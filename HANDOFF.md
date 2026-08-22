@@ -7,6 +7,8 @@ documentation-only record update on `dev`. This closeout removed the interactive
 docs bundle and packaging stdout check, and integrated the ready recovery, vocabulary, design-route,
 dashboard, updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle,
 package-contract, line-attribution, docs-site, and network-safety lanes into `dev`.
+Follow-up commits `625708d07` and `50edc1a69` removed an unpaired OAuth checkpoint and repaired the
+privacy scanner's public authorship boundary; the current `dev` tip is `50edc1a6984bd89ecbabf1f61fae419d916e6cc1`.
 
 ### Verified local evidence
 
@@ -16,7 +18,7 @@ package-contract, line-attribution, docs-site, and network-safety lanes into `de
 - Design determinism/routes/parity: 16 passed, 0 failed, 1,055 assertions; parity remains `stale-evidence` until the approved real built-artifact capture route supplies fresh receipts.
 - Dashboard/updater: 23 passed, 0 failed, 132 assertions; bootstrap: 22 passed, 0 failed, 87 assertions; workflow/release: 77 passed, 0 failed, 999 assertions.
 - Auth/account lifecycle: 159 passed, 0 failed, 526 assertions; OAuth/network/export/config: 172 passed, 0 failed, 718 assertions; docs-site: 290 passed, 1 skipped, 0 failed, 2,449 assertions.
-- Typecheck and privacy scan passed before the integration wave; the full blob-based line counter exceeded a 100-second bounded diagnostic window without a verdict and is not claimed green.
+- Root typecheck and privacy scan passed at the current repair tip; the GUI typecheck also passed. The full blob-based line counter exceeded a 60-second bounded diagnostic window without a verdict and is not claimed green.
 
 ### External and retained state
 
