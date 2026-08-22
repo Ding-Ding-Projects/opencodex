@@ -239,10 +239,13 @@ function useEdgeVoices(enabled: boolean, apiBase: string): {
 
   useEffect(() => {
     if (!enabled) {
+      // Resetting the async resource is the effect's external-state cleanup.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setState({ voices: [], loading: false, available: false, error: "" });
       return;
     }
     const controller = new AbortController();
+    // Mark the request pending before awaiting the external voice catalogue.
     setState(previous => ({ ...previous, loading: true, error: "" }));
     void fetchEdgeVoices(apiBase, controller.signal).then(result => {
       if (controller.signal.aborted) return;

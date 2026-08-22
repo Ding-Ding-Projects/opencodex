@@ -94,6 +94,8 @@ export default function DownloadsBridge({ apiBase }: { apiBase: string }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    // Polling synchronizes this shell bridge with an external download store.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void poll(controller.signal);
     const timer = setInterval(() => { void poll(); }, POLL_MS);
     return () => { clearInterval(timer); controller.abort(); };

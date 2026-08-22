@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components -- this provider intentionally keeps its tested reset helper beside the provider state it resets. */
+
 /**
  * One applied-vs-draft coordinator for every desktop setting.
  *

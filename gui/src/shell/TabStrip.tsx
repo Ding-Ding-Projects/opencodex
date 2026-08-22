@@ -1433,7 +1433,8 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
               tabs.assignGroup(tab.id, groupId);
               setMovePicker(null);
               if (vanishes) focusActiveOnCommit.current = true;
-              else focusTabOnCommit.current = tab.id;
+               // eslint-disable-next-line react-hooks/refs -- this assignment runs only from the picker event handler.
+               else focusTabOnCommit.current = tab.id;
             }}
             /* One call, not create-then-assign: `createGroup` takes its members,
                so the group and its first tab land in a single commit and there is

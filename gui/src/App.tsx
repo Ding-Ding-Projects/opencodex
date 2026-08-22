@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { setClientResourceData, useKeyedClientResource } from "./client-resource";
 import Dashboard from "./pages/Dashboard";
 import Terminal from "./pages/Terminal";
@@ -319,7 +319,7 @@ function AppShell() {
   // could not answer "is the fix in the build I am running". Build number and
   // dish codename come along now; the dish is derived from the commit with the
   // same function that titles the release, so the line matches the release list.
-  const buildInfo = readBuildInfo(displayedVersion);
+  const buildInfo = useMemo(() => readBuildInfo(displayedVersion), [displayedVersion]);
   const statusLine = shortBuildLabel(buildInfo, health?.port ?? null);
   const statusTitle = fullBuildLabel(buildInfo);
   const codename = codenameLabel(buildInfo);
@@ -339,7 +339,7 @@ function AppShell() {
   // reading over the user's shoulder.
   useEffect(() => {
     document.title = windowTitle(buildInfo, appName);
-  }, [buildInfo.version, buildInfo.build, buildInfo.commit, appName]);
+  }, [buildInfo, appName]);
 
   // The remote control used to short-circuit the whole shell here, on the
   // reasoning that a nav rail and a tab strip are the wrong furniture for a
