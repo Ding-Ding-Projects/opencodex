@@ -168,11 +168,11 @@ empty — the narrator, for instance — is partial, and the reason a user gets 
 | 5. History, export, bulk actions, changelog, editor handoff | 0 | 8 | 0 | 0 | 8 |
 | 6. Confirmation, notifications, locks, authenticator, forms | 0 | 8 | 0 | 0 | 8 |
 | 7. Landing page, documentation site, overlays, progress | 0 | 8 | 0 | 0 | 8 |
-| 8. Converter, Ollama, downloads, schedules, build scripts | 0 | 7 | 1 | 1 | 9 |
-| **Total** | **0** | **63** | **1** | **1** | **65** |
+| 8. Converter, Ollama, downloads, schedules, forge, build scripts, line count | 1 | 7 | 0 | 1 | 9 |
+| **Total** | **1** | **63** | **0** | **1** | **65** |
 
-No slice has a complete row. Slice 8 has the sole `absent` row:
-slice 6 lost all four of its at once, because the security-theatre suite this file described
+Slice 8 now has the sole complete row, for release line attribution; no slice has an `absent` row.
+Slice 6 lost all four of its at once, because the security-theatre suite this file described
 for two passes as four unbuilt interlocking pieces turned out to be four built ones, each with a
 named half still missing. Slice 8's original foursome — PDF tools, the universal file converter,
 the Ollama suite manager, and browser-extension download capture — is the one this file tracked
