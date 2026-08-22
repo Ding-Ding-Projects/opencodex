@@ -192,7 +192,7 @@ export function useDashboardData(apiBase: string) {
     const data = corePoll.data;
     if (!data) return;
     if (data.health) setHealth(data.health);
-    setProviders(data.providers);
+    if (data.providers) setProviders(data.providers);
     if (data.settings) setSettings(data.settings);
     // Latest-wins: only seed from settings when no newer dedicated probe has committed
     // while this core poll was in flight. Always merge against the live ref.
