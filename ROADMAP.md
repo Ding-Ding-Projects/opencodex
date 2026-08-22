@@ -1,5 +1,26 @@
 # Roadmap
 
+## Backend recovery closeout — 2026-08-21
+
+- [x] Integrate source-verified startup recovery, forced native-config restore, owner-safe proxy handling, updater scheduling, installer branding/PATH, protocol/provider, service, observability, catalog, and collaboration backend batches.
+- [x] Preserve the first checked-in `design/` source and add exact manifest/tree/blob/hash/size/package/reparse privacy validation.
+- [x] Preserve every paused UI/design and unfinished backend lane on its owning branch for handoff.
+- [ ] Merge the backend integration into the default branch after the closeout preservation/dew pass.
+- [ ] Reconcile the replacement UI and integrate the personal-vocabulary, updater UI, dashboard health, and design-parity checkpoints.
+- [ ] Finish native Go issue #17 parity and the remaining Antigravity, network/vault, architecture, and reset-credit review gaps.
+- [ ] Build and exercise the real unsigned Squirrel installer, then publish and verify a new release.
+- [ ] Capture the real built desktop through the required cheap headless route after UI work resumes.
+
+## Service, remote-login, and ACL ports — 2026-08-21
+
+- [x] Source contract: make bare `ocx service` install only when both Windows backends are proven absent; route an existing installation through repair/restart without re-registering it (`b37d17fc5`, focused planning/probe/repair tests pass). Follow-up `2f44fad02` now refuses unverified scheduler stop, deletion, and persisted-token boundaries. Live Windows Task Scheduler stop/restart evidence remains pending.
+- [x] Source/docs contract: add `ocx service restart` as a repair alias and document the tri-state fail-closed behavior (`b37d17fc5`, docs build 236 pages). Live Windows service lifecycle evidence remains pending.
+- [x] Document the safe SSH-forwarded remote-provider recipe that preserves the local Codex login and keeps provider OAuth ownership on the host where login runs (`4f08de6a9`).
+- [x] Add opt-in `OPENCODEX_ACL_VERIFY_EXISTING=1` strict read-before-write verification bound to the effective Windows token SID; ambiguity falls back to mutation (`b37d17fc5`, `a6784722f`, `tests/windows-secret-acl.test.ts`: 34 pass / 0 fail). Directory `(OI)(CI)(F)` is covered. Live ACL/service-account evidence remains pending.
+- [ ] Recover verified zero-byte coordinators after the write-substrate foundations land from the active architecture lane; this lane does not duplicate that owned substrate.
+- [ ] Add the optional package/AUMID-bound full Desktop restart path; the ordinary `--restart-codex` app-server-only path remains unchanged until the identity-bounded integration is independently verified.
+- [ ] Port release SSH credential-boundary validation after the active release-workflow lane frees `scripts/release.ts` and its tests.
+
 What is done, what is in flight, and what is known to be missing. Nothing here is a prediction, and
 an item is only "done" when the code exists in this repository.
 
@@ -100,6 +121,19 @@ out directly against the source.
 | Unsigned Squirrel delivery | Every installer path clears signing inputs, requires `NotSigned`, validates `Setup.exe` + `RELEASES` + a referenced full `.nupkg`, and attaches the update feed to its release. Stable packaging now finishes before npm publication, and super-express requires successful Windows CI for the exact SHA. |
 | Failure evidence | Every artifact producer defensively collects allowlisted outputs and run/SHA/job/runner metadata behind `always()` without masking the original failure. Step-specific YAML tests guard the collector, upload, and real release asset arguments. |
 | Verification | Typecheck, privacy, GUI lint/build, docs build, and focused workflow, Squirrel, export, and storage tests are green locally. Exact-commit GitHub Actions and release evidence remain pending until the integration commit lands. |
+
+## In progress — Bun crash-resilient startup (2026-08-20)
+
+The Windows startup repair is implemented on `codex/fix-bun-proxy-startup` and has passed its first
+combined local gate. It is not yet claimed as merged, pushed, released, or exact-commit-CI verified.
+
+| Work | Current state |
+| --- | --- |
+| Stale journal ordering | Healthy proxy ownership is established before recovery; only a definitively dead owner restores journaled Codex state. PID and runtime records are removed only when their complete preflight snapshots still match, and a concurrent new owner prevents reconciliation. |
+| Bun native crash | The external Node launcher retries only `start` and `ensure`, once, after an abnormal exit with Bun's official crash marker. An attempt-local latch preserves that exact classification after tail eviction; retained diagnostics remain bounded to 64 KiB and raw forwarding honors writable backpressure. The journal warning alone never classifies a crash, and this does not claim to fix Bun itself. |
+| Runtime override | `OPENCODEX_BUN_PATH` is normalized, validated through the shared real-binary gate, and honored by both the direct launcher and durable service/shim selection. |
+| Codex path | The documented `ocx codex` dispatcher target exists again and is behavior-tested across startup races, runtime refusal, argument/stdio forwarding, signals, and Windows command shims. |
+| Local evidence | 112 passed, 3 platform skips, 0 failed, 563 assertions; root typecheck and diff hygiene passed after a locked dependency install. Full repository, docs, privacy, packaging, integration-line, remote CI, and release evidence remain pending. |
 
 ## Completed — plug-and-play local startup (2026-08-04)
 

@@ -46,6 +46,15 @@ grok -m ocx-anthropic-claude-opus-4-8 -p "hello"
 # or in the TUI: /model ocx-anthropic-claude-opus-4-8
 ```
 
+## Reasoning effort
+
+Each managed model carries the reasoning ladder that the catalog actually advertises. Grok's
+managed TOML includes the selected default plus `[[model.<alias>.reasoning_efforts]]` rows, so
+the `/effort` picker is model-specific rather than one optimistic global list. Real `none` and
+`minimal` entries remain available when the upstream exposes them; the Codex-only `ultra` rung is
+never written to Grok. A model with no supported ladder omits the effort fields entirely instead
+of presenting a control that cannot work.
+
 ## Authentication note
 
 Grok Build requires a non-empty API key for custom models even on loopback. The injected

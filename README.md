@@ -19,6 +19,13 @@ On Windows, `scripts/install.ps1` also repairs the current user's PATH using the
 reports that `ocx` is not recognized, add that exact prefix to the user PATH and open a new PowerShell
 window before retrying.
 
+The Windows desktop installer uses a stable `cli-bin\ocx.cmd` shim beside its Squirrel `Update.exe`
+and regenerates that shim on install and update. The shim scopes its child-only runtime environment,
+so invoking `ocx` does not change the caller's environment. Final uninstall removes only the exact
+user-PATH entry and shim bytes owned by this installation; edited shims, unrelated PATH entries,
+non-empty data, and machine PATH are preserved. The obsolete-version update event intentionally leaves
+the shared shim in place for the incoming version.
+
 <table align="center">
   <tr>
     <td width="50%" align="center">
@@ -101,6 +108,17 @@ index and full `.nupkg` update package. Windows may show an Unknown Publisher or
 Release workflows verify the installer is `NotSigned`, fail closed on an incomplete update feed, and
 retain safe installer/feed evidence as a GitHub Actions artifact even when a later step fails.
 
+The packaged Windows desktop shell presents the product as **OpenCodex**. Its committed original
+mark is emitted as a deterministic multi-resolution, content-addressed
+`assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico`; the same
+bytes are served at
+`https://opencodex.me/assets/opencodex-1823ce3c34bea1857fc42f0fafcaa8a93618a071a1c66acaee4e300d63f25b18.ico` for Squirrel's Add/Remove Programs icon. The
+`com.opencodex.desktop` app id, `opencodex` executable/shortcut target, `opencodex-desktop` update
+feed name, npm package name, and `.opencodex` data identity remain stable across that presentation
+change. The filename is immutable-by-name: its 64-character suffix is the full SHA-256 of the ICO
+bytes, and a changed mark must receive a new filename. The icon generator and its round-trip
+validation are `scripts/generate-windows-icon.mjs`.
+
 ## Quick start
 
 ```bash
@@ -146,6 +164,29 @@ that would reinstall the current directory, so always pass
 If you installed with `sudo` into a root-owned prefix, the sudo reinstall above
 unblocks that prefix — but prefer migrating to a user-owned Node (nvm, fnm, or
 a user npm prefix) when you can.
+
+</details>
+
+<details>
+<summary><b>Windows shows “Previous session … restored from journal”, then Bun crashes?</b></summary>
+
+<br/>
+
+The journal warning means opencodex recovered Codex state left by a definitively dead process; it is
+not itself the native-crash cause. Before recovery, `start` and `ensure` now identity-check whether a
+healthy proxy already owns routing, compare both persisted owner records before removing stale state,
+and skip journal recovery if a concurrent owner publishes new state. The external Node launcher also
+retries those two commands once, and only once, when Bun exits abnormally with its official
+`oh no: Bun has crashed` marker. The marker is latched independently of the bounded diagnostic tail,
+and live stderr forwarding honors writable backpressure. Ordinary CLI errors, the journal warning by
+itself, warnings without the marker, spawn failures, and termination signals are not retried. This is
+a bounded recovery measure, not a claim that Bun itself was fixed.
+
+If the second attempt also produces the Bun marker, opencodex preserves that failure and suggests
+`OPENCODEX_BUN_PATH`. Use only an absolute path to a Bun binary you deliberately downloaded and
+trust; reinstall a service or Codex shim after setting it so the durable artifact captures the same
+runtime. Full diagnosis, safety notes, and recovery commands are in [Bun Startup Crashes on
+Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
 
 </details>
 
@@ -345,10 +386,15 @@ ocx export data <dataset>      # export a redacted dashboard dataset
 ocx export <new-file> --yes    # protected full-state backup containing plaintext secrets
 ocx claude [args...]           # launch Claude Code wired to the proxy (model discovery on)
 ocx claude desktop             # save and apply the Claude Desktop four-family profile
-ocx service [install|start|stop|status|uninstall]   # install/update/start background service
+ocx service [install|repair|restart|start|stop|status|uninstall|remove]   # install-if-absent/repair-if-installed background service
 ocx update [--tag preview]     # update opencodex; preview installs stay on @preview
 ocx memory-sync <status|install|uninstall|profile> # inspect or synchronize canonical agent memory
 ```
+
+`ocx service` is idempotent: it installs only when both service backends are proven absent, and
+otherwise refreshes/restarts the installed backend without re-registering it. `ocx service restart`
+is an alias of `repair`; an unknown Windows registration state fails closed and is reported by
+`ocx service status`.
 
 ### Claude Desktop profile
 

@@ -1,9 +1,18 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { atomicWriteFile } from "../config";
+import { atomicWriteFile, atomicWriteFileAsync } from "../config";
 import { hasInjectedCodexRouting } from "./injected-marker";
 import { CODEX_HOME, CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "./paths";
+import {
+  isPersistedProcessIdentity,
+  normalizePersistedProcessIdentity,
+  readProcessIdentity,
+  sameProcessIdentity,
+  toPersistedProcessIdentity,
+  type PersistedProcessIdentity,
+  type ProcessIdentity,
+} from "../lib/process-identity";
 
 const JOURNAL_PATH = join(CODEX_HOME, "opencodex-journal.json");
 
@@ -14,6 +23,8 @@ interface Journal {
   injectedConfigHash?: string;
   injectedProfileHash?: string | null;
   pid: number;
+  /** PID-reuse protection; old version-1 journals may not have this field. */
+  ownerIdentity?: PersistedProcessIdentity;
   timestamp: string;
 }
 
@@ -76,6 +87,10 @@ export function writeJournal(options: WriteJournalOptions = {}): void {
     originalConfig: Buffer.from(config).toString("base64"),
     originalProfile: profile ? Buffer.from(profile).toString("base64") : null,
     pid: process.pid,
+    ownerIdentity: (() => {
+      const identity = readProcessIdentity(process.pid);
+      return identity ? toPersistedProcessIdentity(identity) : undefined;
+    })(),
     timestamp: new Date().toISOString(),
   };
   atomicWriteFile(JOURNAL_PATH, JSON.stringify(journal));
@@ -99,6 +114,14 @@ function readJournal(): Journal | null {
   try {
     const journal = JSON.parse(readFileSync(JOURNAL_PATH, "utf-8")) as Journal;
     if (journal.version !== 1) throw new Error("unknown version");
+    if (journal.ownerIdentity !== undefined) {
+      const normalized = normalizePersistedProcessIdentity(journal.ownerIdentity);
+      // Preserve an invalid identity record as recovery evidence. It cannot
+      // authorize recovery, but deleting it would destroy the only snapshot
+      // a later repair may be able to use.
+      if (!normalized || !isPersistedProcessIdentity(normalized)) return null;
+      journal.ownerIdentity = normalized;
+    }
     return journal;
   } catch {
     removeJournal();
@@ -113,21 +136,34 @@ export function restoreJournalState(): RestoreJournalResult {
   }
   const currentConfig = existsSync(CODEX_CONFIG_PATH) ? readFileSync(CODEX_CONFIG_PATH, "utf-8") : "";
   const currentProfile = existsSync(CODEX_PROFILE_PATH) ? readFileSync(CODEX_PROFILE_PATH, "utf-8") : null;
+  const originalConfig = Buffer.from(journal.originalConfig, "base64").toString("utf-8");
+  const originalProfile = journal.originalProfile === null
+    ? null
+    : Buffer.from(journal.originalProfile, "base64").toString("utf-8");
   const configUnchanged = !journal.injectedConfigHash || sha256(currentConfig) === journal.injectedConfigHash;
   const profileUnchanged = journal.injectedProfileHash === undefined || sha256(currentProfile) === (journal.injectedProfileHash ?? null);
+  // A prior restore may have committed one file before the other failed. Treat
+  // exact original bytes as already restored so a retry can finish the journal
+  // instead of permanently classifying the restored file as a user edit.
+  const configAlreadyRestored = currentConfig === originalConfig;
+  const profileAlreadyRestored = currentProfile === originalProfile;
 
   let configRestored = false;
   let profileRestored = false;
   if (configUnchanged) {
-    atomicWriteFile(CODEX_CONFIG_PATH, Buffer.from(journal.originalConfig, "base64").toString("utf-8"));
+    atomicWriteFile(CODEX_CONFIG_PATH, originalConfig);
+    configRestored = true;
+  } else if (configAlreadyRestored) {
     configRestored = true;
   }
   if (profileUnchanged) {
-    if (journal.originalProfile !== null) {
-      atomicWriteFile(CODEX_PROFILE_PATH, Buffer.from(journal.originalProfile, "base64").toString("utf-8"));
+    if (originalProfile !== null) {
+      atomicWriteFile(CODEX_PROFILE_PATH, originalProfile);
     } else if (existsSync(CODEX_PROFILE_PATH)) {
       try { unlinkSync(CODEX_PROFILE_PATH); } catch { /* ignore */ }
     }
+    profileRestored = true;
+  } else if (profileAlreadyRestored) {
     profileRestored = true;
   }
   const complete = configRestored && profileRestored;
@@ -135,8 +171,8 @@ export function restoreJournalState(): RestoreJournalResult {
   return {
     configRestored,
     profileRestored,
-    configChanged: !configUnchanged,
-    profileChanged: !profileUnchanged,
+    configChanged: !configUnchanged && !configAlreadyRestored,
+    profileChanged: !profileUnchanged && !profileAlreadyRestored,
     complete,
   };
 }
@@ -145,19 +181,100 @@ export function restoreJournal(): boolean {
   return restoreJournalState().complete;
 }
 
-export function reconcileJournal(): boolean {
-  const journal = readJournal();
-  if (!journal) return false;
+export interface JournalReconcileOptions {
+  /** Injectable identity reader for deterministic lifecycle regressions. */
+  readIdentity?: (pid: number) => ProcessIdentity | null;
+}
+
+function journalOwnerIsStillLive(journal: Journal, readIdentity: (pid: number) => ProcessIdentity | null): boolean {
   try {
     process.kill(journal.pid, 0);
-    return false;
-  } catch (e: unknown) {
-    if ((e as NodeJS.ErrnoException).code === "EPERM") {
-      return false;
-    }
+  } catch (error: unknown) {
+    // ESRCH is the only proof that the PID is gone. Access-denied and every
+    // other result are uncertain and must preserve the journal.
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    return true;
   }
+
+  const current = readIdentity(journal.pid);
+  // A live PID without an identity snapshot cannot be classified safely. This
+  // is the compatibility path for old journals: preserve rather than restore.
+  if (!current || !journal.ownerIdentity) return true;
+  // A different live process now owns the numeric PID. It cannot block
+  // recovery of the old proxy's ownership-bounded journal.
+  return sameProcessIdentity(journal.ownerIdentity, current);
+}
+
+export function reconcileJournal(options: JournalReconcileOptions = {}): boolean {
+  const journal = readJournal();
+  if (!journal) return false;
+  if (journalOwnerIsStillLive(journal, options.readIdentity ?? readProcessIdentity)) return false;
   const restored = restoreJournalState();
   if (!restored.configRestored && !restored.profileRestored) return false;
   console.error(`⚠️  Previous session (PID ${journal.pid}) did not shut down cleanly. Codex state restored from journal.`);
   return true;
+}
+
+/**
+ * Async startup counterpart to reconcileJournal. Startup runs while the event
+ * loop is still bringing integrations online, so Windows ACL hardening belongs
+ * on the existing async atomic-write path. The synchronous function above stays
+ * deliberately available for exit/signal cleanup, where awaiting a child would
+ * be unsafe during process teardown.
+ */
+export async function reconcileJournalAsync(options: JournalReconcileOptions = {}): Promise<boolean> {
+  const journal = readJournal();
+  if (!journal) return false;
+  if (journalOwnerIsStillLive(journal, options.readIdentity ?? readProcessIdentity)) return false;
+  const restored = await restoreJournalStateAsync();
+  if (!restored.configRestored && !restored.profileRestored) return false;
+  console.error(`⚠️  Previous session (PID ${journal.pid}) did not shut down cleanly. Codex state restored from journal.`);
+  return true;
+}
+
+async function restoreJournalStateAsync(): Promise<RestoreJournalResult> {
+  const journal = readJournal();
+  if (!journal) {
+    return { configRestored: false, profileRestored: false, configChanged: false, profileChanged: false, complete: false };
+  }
+  const currentConfig = existsSync(CODEX_CONFIG_PATH) ? readFileSync(CODEX_CONFIG_PATH, "utf-8") : "";
+  const currentProfile = existsSync(CODEX_PROFILE_PATH) ? readFileSync(CODEX_PROFILE_PATH, "utf-8") : null;
+  const originalConfig = Buffer.from(journal.originalConfig, "base64").toString("utf-8");
+  const originalProfile = journal.originalProfile === null
+    ? null
+    : Buffer.from(journal.originalProfile, "base64").toString("utf-8");
+  const configUnchanged = !journal.injectedConfigHash || sha256(currentConfig) === journal.injectedConfigHash;
+  const profileUnchanged = journal.injectedProfileHash === undefined || sha256(currentProfile) === (journal.injectedProfileHash ?? null);
+  // See restoreJournalState: startup can be interrupted after either atomic
+  // restore, so exact original bytes are durable completion evidence.
+  const configAlreadyRestored = currentConfig === originalConfig;
+  const profileAlreadyRestored = currentProfile === originalProfile;
+
+  let configRestored = false;
+  let profileRestored = false;
+  if (configUnchanged) {
+    await atomicWriteFileAsync(CODEX_CONFIG_PATH, originalConfig);
+    configRestored = true;
+  } else if (configAlreadyRestored) {
+    configRestored = true;
+  }
+  if (profileUnchanged) {
+    if (originalProfile !== null) {
+      await atomicWriteFileAsync(CODEX_PROFILE_PATH, originalProfile);
+    } else if (existsSync(CODEX_PROFILE_PATH)) {
+      try { unlinkSync(CODEX_PROFILE_PATH); } catch { /* ignore */ }
+    }
+    profileRestored = true;
+  } else if (profileAlreadyRestored) {
+    profileRestored = true;
+  }
+  const complete = configRestored && profileRestored;
+  if (complete) removeJournal();
+  return {
+    configRestored,
+    profileRestored,
+    configChanged: !configUnchanged && !configAlreadyRestored,
+    profileChanged: !profileUnchanged && !profileAlreadyRestored,
+    complete,
+  };
 }

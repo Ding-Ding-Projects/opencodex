@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { atomicWriteFile, expandUserPath, getConfigDir, websocketsEnabled } from "../../config";
-import { CODEX_CONFIG_PATH, CODEX_MODELS_CACHE_PATH, DEFAULT_CATALOG_PATH, readRootTomlString, resolveCodexConfigPath } from "../paths";
+import { CODEX_MODELS_CACHE_PATH, DEFAULT_CATALOG_PATH, readRootTomlString, resolveCodexConfigPath } from "../paths";
 import { clearModelCache, DEFAULT_MODEL_CACHE_TTL_MS, getFreshCached, getStaleCached, isModelsFetchCoolingDown, markModelsFetchFailure, setCached } from "../model-cache";
 import { buildModelsRequest, resolveModelsAuthToken } from "../../oauth";
 import type { OcxConfig, OcxProviderConfig } from "../../types";
@@ -31,7 +31,7 @@ import { redactSecretString } from "../../lib/redact";
 import upstreamModelsSnapshot from "../data/upstream-models.json";
 
 
-import { activeCodexModelsCachePath, applyJawcodeCatalogMetadata, applyMultiAgentMode, applyNativeOpenAiContextOverride, catalogModelSlug, ensureCatalogBackup, ensureStrictCatalogFields, findNativeTemplate, isRoutedModelCompatibilityExcluded, normalizeRoutedCatalogEntry, normalizeServiceTiers, readCatalog, readCatalogBackup, readCodexCatalogPath, readNativeBaseline } from "./parsing";
+import { activeCodexConfigPath, activeCodexModelsCachePath, applyJawcodeCatalogMetadata, applyMultiAgentMode, applyNativeOpenAiContextOverride, catalogModelSlug, ensureCatalogBackup, ensureStrictCatalogFields, findNativeTemplate, isRoutedModelCompatibilityExcluded, normalizeRoutedCatalogEntry, normalizeServiceTiers, readCatalog, readCatalogBackup, readCodexCatalogPath, readNativeBaseline } from "./parsing";
 import type { CatalogModel, MultiAgentMode, RawEntry } from "./parsing";
 import { applyNativeVisibility, disabledNativeSlugs, isUnsupportedOpenAiNativeSlug, nativeOpenAiSlugs, shouldUpgradeToUpstreamEntry, upstreamNativeEntry } from "./metadata";
 import { loadCatalogForSync, resetBundledCatalogCacheForTests } from "./bundled";
@@ -41,6 +41,25 @@ import { clearLastComboCatalogOmissions, comboCatalogWarningSignatures, comboMas
 import type { ComboCatalogOmission } from "./aggregation";
 
 export const MAX_SPAWN_AGENT_MODEL_OVERRIDES = 5;
+
+const MAX_AUTO_REVIEW_MODEL_LENGTH = 256;
+
+/** Read the optional root-level review target without allowing table values or control bytes in the catalog. */
+export function configuredAutoReviewModel(): string | undefined {
+  let content: string;
+  try {
+    content = readFileSync(activeCodexConfigPath(), "utf8");
+  } catch {
+    return undefined;
+  }
+  const raw = readRootTomlString(content, "auto_review_model");
+  if (raw === null) return undefined;
+  const model = raw.trim();
+  if (!model || model.length > MAX_AUTO_REVIEW_MODEL_LENGTH || /[\u0000-\u001f\u007f]/u.test(model)) {
+    return undefined;
+  }
+  return model;
+}
 
 export type SpawnAgentSurface = "v1" | "v2";
 
@@ -178,7 +197,7 @@ export function deriveEntry(
           `You are a coding agent powered by the ${modelName} model. Do not claim to be GPT-5 or made by OpenAI.`,
         );
       }
-      applyReasoningLevels(e, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact);
+      applyReasoningLevels(e, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact, model?.suppressSyntheticMax === true);
       normalizeRoutedCatalogEntry(e, model?.parallelToolCalls === true);
       if (model) applyJawcodeCatalogMetadata(e, model.provider, model.id, model.contextCap);
       applyCatalogModelMetadata(e, model);
@@ -211,7 +230,7 @@ export function deriveEntry(
     ...(isRouted ? { web_search_tool_type: "text_and_image", supports_search_tool: true } : {}),
   };
   if (isRouted) {
-    applyReasoningLevels(entry, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact);
+    applyReasoningLevels(entry, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact, model?.suppressSyntheticMax === true);
   }
   else {
     applyReasoningLevels(entry, isGpt56NativeSlug(slug) ? undefined : ["low", "medium", "high", "xhigh"]);
@@ -330,6 +349,7 @@ export function mergeCatalogEntriesForSync(
   exactComboSlugs: ReadonlySet<string> = new Set(),
   hasPhysicalComboProvider = false,
   includeNativeOpenAi = true,
+  syntheticMaxSuppressedSlugs: ReadonlySet<string> = new Set(),
 ): RawEntry[] {
   const rank = new Map(featured.map((slug, i) => [slug, i] as const));
   const native = includeNativeOpenAi
@@ -437,7 +457,8 @@ export function mergeCatalogEntriesForSync(
     // Mock-max universality (260709): preserved routed entries from disk may predate
     // the max rung — ensure it here so subagent max spawns validate on every
     // reasoning-capable entry. max only: 5.6 exact ladders (luna: no ultra) stay intact.
-    if (!exactCombo) {
+    const suppressSyntheticMax = typeof m.slug === "string" && syntheticMaxSuppressedSlugs.has(m.slug);
+    if (!exactCombo && !suppressSyntheticMax) {
       const levels = Array.isArray(e.supported_reasoning_levels)
         ? e.supported_reasoning_levels as Array<{ effort?: string }>
         : [];
@@ -458,6 +479,17 @@ export function mergeCatalogEntriesForSync(
   // Native enable/disable (single choke point: bare slugs in `disabledModels`). Runs as the
   // LAST pass so the upstream-upgrade branch above can never clobber a hide flag back to list.
   return applyMultiAgentMode(applyNativeVisibility(mergedEntries, disabledNative), multiAgentMode);
+}
+
+export function syntheticMaxSuppressedCatalogSlugs(config: Pick<OcxConfig, "providers">): Set<string> {
+  const slugs = new Set<string>();
+  for (const [provider, entry] of Object.entries(config.providers)) {
+    if (entry.disabled === true) continue;
+    for (const [model, suppress] of Object.entries(entry.modelSuppressSyntheticMax ?? {})) {
+      if (suppress === true) slugs.add(routedSlug(provider, model));
+    }
+  }
+  return slugs;
 }
 
 export async function syncCatalogModels(config: OcxConfig): Promise<{
@@ -512,9 +544,16 @@ export async function syncCatalogModels(config: OcxConfig): Promise<{
   // bare gpt-* rows that hard-404 via NoEnabledOpenAiProviderError. Keep natives when no
   // providers are configured yet (fresh install / catalog bootstrap tests).
   const includeNativeOpenAi = enabledProviders.length === 0 || hasCanonicalOpenai;
-  catalog.models = mergeCatalogEntriesForSync(catalog.models ?? [], goEntries, baseline, featured, wsEnabled, goIds, template, disabledNativeSlugs(config), gatheredProviderNames, multiAgentMode, exactComboSlugs, hasPhysicalComboProvider, includeNativeOpenAi);
+  catalog.models = mergeCatalogEntriesForSync(catalog.models ?? [], goEntries, baseline, featured, wsEnabled, goIds, template, disabledNativeSlugs(config), gatheredProviderNames, multiAgentMode, exactComboSlugs, hasPhysicalComboProvider, includeNativeOpenAi, syntheticMaxSuppressedCatalogSlugs(config));
   clampCatalogModelsToCodexSupport(catalog.models);
 
+  const autoReviewModel = configuredAutoReviewModel();
+  catalog.models = catalog.models.map((entry) => {
+    const next = { ...entry } as RawEntry;
+    if (autoReviewModel) next.auto_review_model_override = autoReviewModel;
+    else delete next.auto_review_model_override;
+    return next;
+  });
   atomicWriteFile(catalogPath, JSON.stringify(catalog, null, 2) + "\n");
   return { added: goEntries.length, path: catalogPath, catalogWritten: true, comboOmissions };
 }

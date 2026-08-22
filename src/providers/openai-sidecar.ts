@@ -110,7 +110,7 @@ export async function resolveFirstUsableOpenAiSidecar(
             config,
             authContext.accountId,
             outcome,
-            { probeLeaseId: authContext.probeLeaseId },
+            { threadId: authContext.affinityKey, probeLeaseId: authContext.probeLeaseId },
           ),
         }
         : {}),

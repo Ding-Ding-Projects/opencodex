@@ -389,6 +389,8 @@ class LiveCursorTransport implements CursorTransport {
   private firstFrameTimer?: ReturnType<typeof setTimeout>;
   private committed = false;
   private expectedClose = false;
+  /** True once a terminal `done` or `error` has been admitted to the outbound queue. */
+  private emittedTerminal = false;
   private pendingFinalize?: ReturnType<typeof setTimeout>;
   private readonly clientToolFinalizeGraceMs: number;
   private activeClientToolFinalizeGraceMs: number;
@@ -401,7 +403,8 @@ class LiveCursorTransport implements CursorTransport {
   // close; safe to read after a stream failure because open() owns the only writer before run().
   private turnStartedAt = 0;
   private framesReceived = 0;
- private firstFrameAt?: number;
+  private sawAssistantText = false;
+  private firstFrameAt?: number;
  private firstFrameLogged = false;
   /** Stable session identifier sent as x-session-id; mirrors IDE session semantics. */
   private readonly sessionId = crypto.randomUUID();
@@ -488,6 +491,7 @@ class LiveCursorTransport implements CursorTransport {
     };
 
     const push = (message: CursorServerMessage) => {
+      if (message.type === "done" || message.type === "error") this.emittedTerminal = true;
       queue.push(message);
       wake();
     };
@@ -576,6 +580,21 @@ class LiveCursorTransport implements CursorTransport {
     }
   }
 
+  /**
+   * A clean Connect END_STREAM is the protocol terminal even when Cursor keeps the HTTP body open
+   * or tears it down with an abort/reset immediately afterward. Stop client-side liveness work and
+   * classify that later transport close as expected without sending a second RST_STREAM.
+   */
+  private markProtocolComplete(): void {
+    this.expectedClose = true;
+    this.clearPendingFinalize();
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = undefined;
+    }
+    this.clearFirstFrameTimer();
+  }
+
   close(): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.clearPendingFinalize();
@@ -653,6 +672,8 @@ class LiveCursorTransport implements CursorTransport {
     this.framesReceived = 0;
     this.firstFrameAt = undefined;
     this.firstFrameLogged = false;
+    this.emittedTerminal = false;
+    this.sawAssistantText = false;
     const dialHost = cursorHostLabel(this.input.provider.baseUrl || "https://api2.cursor.sh");
     debugProviderDiagnostic("cursor", "dial", { host: dialHost });
     this.session = http2.connect(this.input.provider.baseUrl || "https://api2.cursor.sh");
@@ -725,7 +746,10 @@ class LiveCursorTransport implements CursorTransport {
     }, this.input.firstFrameTimeoutMs ?? CURSOR_FIRST_FRAME_TIMEOUT_MS);
 
     let pending: Uint8Array<ArrayBufferLike> = new Uint8Array();
+    let protocolEndSeen = false;
+    let frameWork: Promise<void> = Promise.resolve();
     this.stream.on("data", chunk => {
+      if (protocolEndSeen) return;
       this.clearFirstFrameTimer();
       if (!this.firstFrameLogged) {
         this.firstFrameLogged = true;
@@ -739,8 +763,10 @@ class LiveCursorTransport implements CursorTransport {
         pending = decoded.remainder;
         const frames = decoded.frames;
         for (const frame of frames) {
+          if (protocolEndSeen) break;
           this.framesReceived++;
           if ((frame.flags & CONNECT_FLAG_END_STREAM) === CONNECT_FLAG_END_STREAM) {
+            protocolEndSeen = true;
             const endError = parseConnectEndStreamError(frame.payload);
             debugProviderDiagnostic("cursor", "connect-end-stream", endError ? {
               code: cursorConnectErrorCode(frame.payload),
@@ -749,10 +775,38 @@ class LiveCursorTransport implements CursorTransport {
               framesReceived: this.framesReceived,
               elapsedMs: Date.now() - this.turnStartedAt,
             } : { framesReceived: this.framesReceived, elapsedMs: Date.now() - this.turnStartedAt });
-            if (endError) failAndClear(endError);
+            void frameWork.then(() => {
+              if (settler.settled()) return;
+              if (endError) {
+                failAndClear(endError);
+                return;
+              }
+              // Earlier frames in this serialized chain have already run. Preserve a real
+              // turnEnded/error terminal; otherwise finalize once through the existing fail-closed
+              // open-tool and drained client-tool logic before protocol cleanup clears its grace timer.
+              if (
+                !this.expectedClose
+                && !state.terminated
+                && !this.emittedTerminal
+                && (
+                  state.openToolCalls.size > 0
+                  || this.sawAssistantText
+                  || this.pendingFinalize !== undefined
+                )
+              ) {
+                const terminal = this.pendingFinalize !== undefined && state.openToolCalls.size === 0
+                  ? finalizeAfterDrain(state)
+                  : finalizeTurnEvents(state);
+                for (const event of terminal) push(event);
+              }
+              this.markProtocolComplete();
+              settler.settleFinish();
+            }).catch(err => failAndClear(err instanceof Error ? err : new Error(String(err))));
             continue;
           }
-          void this.handleServerMessage(fromBinary(AgentServerMessageSchema, frame.payload), state, push).catch(err => {
+          const message = fromBinary(AgentServerMessageSchema, frame.payload);
+          frameWork = frameWork.then(() => this.handleServerMessage(message, state, push));
+          frameWork = frameWork.catch(err => {
             failAndClear(err instanceof Error ? err : new Error(String(err)));
           });
         }
@@ -864,6 +918,7 @@ class LiveCursorTransport implements CursorTransport {
     }
     const mapped = mapCursorProtobufServerMessage(message, state);
     if (mapped.length > 0) {
+      if (mapped.some(event => event.type === "text")) this.sawAssistantText = true;
       // A client tool call announced/committed via interactionUpdate (toolCallStarted/partialToolCall/
       // toolCallCompleted) changes the call set, so revoke any finalize armed by an earlier drain.
       if (isClientToolFrame(message)) this.noteClientToolActivity();

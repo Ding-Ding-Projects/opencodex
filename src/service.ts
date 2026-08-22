@@ -16,7 +16,7 @@ import { stripGrokConfig } from "./grok/inject";
 import { isWslRuntime } from "./codex/home";
 import { durableBunPath, durableBunRuntime } from "./lib/bun-runtime";
 import { isProcessAlive, stopProxy } from "./lib/process-control";
-import { serviceApiTokenFilePath } from "./lib/service-secrets";
+import { loadServiceTokenFromFile, serviceApiTokenFilePath } from "./lib/service-secrets";
 import { randomUUID } from "node:crypto";
 import {
   ELEVATION_REQUEST_TIMEOUT_MS,
@@ -32,7 +32,7 @@ import {
   type ElevatedSchtasksCreateAndRunExecution,
   type ElevatedSchtasksCreateAndRunResult,
 } from "./lib/windows-elevation";
-import { buildWinswXml, defaultWinswEntry, installWinswService, startWinswService, stopWinswService, statusWinswRaw, uninstallWinswService, winswStatusSummary, winswXmlPath, WINSW_SERVICE_ID, WINSW_SHA256, WINSW_VERSION } from "./lib/winsw";
+import { buildWinswXml, defaultWinswEntry, installWinswService, startWinswService, stopWinswService, statusWinswRaw, uninstallWinswService, winswStatusSummary, winswXmlPath, WINSW_SERVICE_ID, WINSW_SHA256, WINSW_VERSION, type WinswStatus } from "./lib/winsw";
 import { hardenSecretDir, hardenSecretPath } from "./lib/windows-secret-acl";
 import { windowsEnvIndirectBatchPathList, windowsEnvIndirectBatchValue } from "./lib/win-paths";
 import { recordOwnedConfigPath } from "./lib/config-ownership";
@@ -250,9 +250,19 @@ export function assertServiceAuthEnvironment(): void {
   const config = loadConfig();
   if (isLoopbackHostname(config.hostname)) return;
   if (process.env.OPENCODEX_API_AUTH_TOKEN?.trim()) return;
+  const persisted = serviceApiTokenFilePath();
+  try {
+    // The file is written with owner-only permissions and Windows ACL hardening by
+    // writeServiceApiTokenFile. Re-validate that boundary before trusting a token
+    // left by an earlier installation when the current shell has no token.
+    const hardened = hardenSecretPath(persisted, { required: true });
+    if (hardened.ok && loadServiceTokenFromFile({ OCX_API_TOKEN_FILE: persisted })) return;
+  } catch {
+    // Fall through to the same actionable refusal without exposing token material.
+  }
   throw new Error(
-    "OPENCODEX_API_AUTH_TOKEN is required before installing a service for non-loopback hostname. " +
-      "Set it in the same shell, then rerun `ocx service install`.",
+    "OPENCODEX_API_AUTH_TOKEN or a validated persisted service token is required before installing a service for non-loopback hostname. " +
+      "Set it in the same shell, or repair the persisted service token, then rerun `ocx service install`.",
   );
 }
 
@@ -1326,16 +1336,89 @@ function installWindows(): void {
   }
   // End a running task BEFORE rewriting the assets it is executing — cmd.exe reading the
   // script mid-rewrite runs a torn batch file, and its open handle can fail the write.
-  try { stopWindows(); } catch { /* not running */ }
+  // A failed or unknown stop is a hard refusal: mutating the assets would race a live wrapper.
+  const schedulerProbe = probeWindowsSchedulerTask();
+  if (schedulerProbe.status === "unknown") {
+    throw new Error(`Task Scheduler state is unknown; refusing to rewrite service assets. ${schedulerProbe.detail}`);
+  }
+  if (schedulerProbe.status === "present") {
+    stopManagerWithVerification({
+      installed: true,
+      label: "Task Scheduler service",
+      runtimeState: () => {
+        const state = windowsSchedulerRuntimeState();
+        return state === "not-running" ? "stopped" : state;
+      },
+      stop: stopWindows,
+    });
+  }
+  writeWindowsSchedulerAssets();
+  schtasks(buildWindowsSchtasksCreateArgs(windowsServiceScriptPath()));
+  schtasks(["/run", "/tn", TASK]);
+  writeServiceInstallState("scheduler");
+}
+
+/** Refresh scheduler-owned assets without re-registering the existing task. */
+function writeWindowsSchedulerAssets(): void {
   const script = windowsServiceScriptPath();
   writeServiceAssetWithRetry(script, buildWindowsServiceScript(), "utf8");
   // UTF-16LE + BOM: a BOM-less UTF-8 VBS mis-decodes non-ASCII (e.g. Korean) profile
   // paths on some WSH/codepage combinations — same contract as the task XML below.
   writeServiceAssetWithRetry(windowsLauncherVbsPath(), `\uFEFF${buildWindowsLauncherVbs(script)}`, "utf16le");
   writeServiceAssetWithRetry(windowsTaskXmlPath(), `\uFEFF${buildWindowsTaskXml(script)}`, "utf16le");
-  schtasks(buildWindowsSchtasksCreateArgs(script));
-  schtasks(["/run", "/tn", TASK]);
-  writeServiceInstallState("scheduler");
+}
+
+export interface RepairServiceDeps {
+  diagnose?: () => ServiceDiagnostic;
+  assertEnv?: () => void;
+  assertAuth?: () => void;
+  writeSchedulerAssets?: () => void;
+  stopScheduler?: () => void;
+  schedulerRuntimeState?: () => ServiceManagerRuntimeState;
+  startScheduler?: () => void;
+  writeSchedulerState?: () => void;
+  writeNativeState?: () => void;
+  repairNative?: () => void | Promise<void>;
+  repairLaunchd?: () => void;
+  repairSystemd?: () => void;
+  platform?: NodeJS.Platform;
+}
+
+/** Refresh an installed backend in place; never call Task Scheduler /create here. */
+export async function repairService(deps: RepairServiceDeps = {}): Promise<void> {
+  const diagnose = deps.diagnose ?? diagnoseService;
+  const platform = deps.platform ?? process.platform;
+  const diag = diagnose();
+  if (!diag.supported) throw new Error(`Background service is unsupported (${diag.summary}).`);
+  if (diag.conflict) {
+    throw new Error("Cannot repair while Task Scheduler and native WinSW are both present. Run 'ocx service uninstall' then reinstall one backend with 'ocx service install'.");
+  }
+  if (!diag.installed) throw new Error("Background service is not installed. Run 'ocx service install' first.");
+  (deps.assertEnv ?? assertServiceEnvironmentMatchesInstall)();
+  (deps.assertAuth ?? assertServiceAuthEnvironment)();
+  if (platform === "win32") {
+    if (diag.backend === "native") {
+      await (deps.repairNative ?? (() => installWinswService(defaultWinswEntry(import.meta.dir))))();
+      (deps.writeNativeState ?? (() => writeServiceInstallState("native")))();
+      return;
+    }
+    const stopScheduler = deps.stopScheduler ?? stopWindows;
+    const schedulerRuntimeState = deps.schedulerRuntimeState
+      ?? (deps.stopScheduler
+        ? (() => "running" as ServiceManagerRuntimeState)
+        : () => {
+          const state = windowsSchedulerRuntimeState();
+          return state === "not-running" ? "stopped" : state;
+        });
+    stopManagerWithVerification({ installed: true, label: "Task Scheduler service", runtimeState: schedulerRuntimeState, stop: stopScheduler });
+    (deps.writeSchedulerAssets ?? writeWindowsSchedulerAssets)();
+    (deps.startScheduler ?? startWindows)();
+    (deps.writeSchedulerState ?? (() => writeServiceInstallState("scheduler")))();
+    return;
+  }
+  if (platform === "darwin") { (deps.repairLaunchd ?? installLaunchd)(); return; }
+  if (platform === "linux") { (deps.repairSystemd ?? installSystemd)(); return; }
+  throw new Error(`Background service repair is unsupported on ${platform}.`);
 }
 
 /**
@@ -1389,11 +1472,39 @@ function prepareWindowsNativeStart(): void {
 }
 function stopWindows(): void { schtasks(["/end", "/tn", TASK]); }
 function statusWindows(): string { try { return schtasks(["/query", "/tn", TASK]); } catch { return ""; } }
+export interface SchedulerUninstallDeps {
+  probe?: () => WindowsSchedulerTaskProbe;
+  removeRegistration?: () => void;
+  removeAssets?: () => void;
+}
+
+/** Delete a scheduler registration only after the post-delete absence is proven. */
+export function uninstallSchedulerSafely(deps: SchedulerUninstallDeps = {}): void {
+  const probe = deps.probe ?? (() => probeWindowsSchedulerTask());
+  const removeRegistration = deps.removeRegistration ?? (() => { schtasks(["/delete", "/tn", TASK, "/f"]); });
+  const removeAssets = deps.removeAssets ?? (() => {
+    if (existsSync(windowsServiceScriptPath())) unlinkSync(windowsServiceScriptPath());
+    if (existsSync(windowsLauncherVbsPath())) unlinkSync(windowsLauncherVbsPath());
+    if (existsSync(windowsTaskXmlPath())) unlinkSync(windowsTaskXmlPath());
+  });
+  const before = probe();
+  if (before.status === "unknown") {
+    throw new Error(`Task Scheduler state is unknown; uninstall aborted and service assets were retained. ${before.detail}`);
+  }
+  if (before.status === "present") {
+    try { removeRegistration(); } catch { /* post-probe decides whether it is gone */ }
+  }
+  const after = probe();
+  if (after.status !== "absent") {
+    throw new Error(after.status === "unknown"
+      ? `Task Scheduler absence could not be verified; uninstall aborted and service assets were retained. ${after.detail}`
+      : "Task Scheduler task is still present after uninstall; service assets were retained.");
+  }
+  removeAssets();
+}
+
 function uninstallWindows(): void {
-  try { schtasks(["/delete", "/tn", TASK, "/f"]); } catch { /* absent */ }
-  if (existsSync(windowsServiceScriptPath())) unlinkSync(windowsServiceScriptPath());
-  if (existsSync(windowsLauncherVbsPath())) unlinkSync(windowsLauncherVbsPath());
-  if (existsSync(windowsTaskXmlPath())) unlinkSync(windowsTaskXmlPath());
+  uninstallSchedulerSafely();
 }
 
 /**
@@ -1969,6 +2080,7 @@ export function serviceStatusSummary(): string {
 }
 
 export function normalizeServiceSubcommand(sub?: string): string {
+  if (sub === "restart") return "repair";
   return sub ?? "install";
 }
 
@@ -2060,6 +2172,72 @@ export interface ParsedServiceArgs {
   invalid: string[];
 }
 
+export type ServiceInstallationState = "installed" | "absent" | "unknown";
+export interface ServiceInstallationProbe { state: ServiceInstallationState; detail?: string; }
+export interface ServiceInstallationProbeHooks {
+  platform?: NodeJS.Platform;
+  exists?: (path: string) => boolean;
+  probeWindowsTask?: () => WindowsSchedulerTaskProbe;
+  nativeStatus?: () => WinswStatus;
+}
+
+/** Probe only enough registration state to choose install versus repair. */
+export function probeServiceInstallation(hooks: ServiceInstallationProbeHooks = {}): ServiceInstallationProbe {
+  const platform = hooks.platform ?? process.platform;
+  const exists = hooks.exists ?? existsSync;
+  if (platform === "darwin") return { state: exists(plistPath()) ? "installed" : "absent" };
+  if (platform === "linux") return { state: exists(unitPath()) ? "installed" : "absent" };
+  if (platform !== "win32") return { state: "absent" };
+  let scheduler: WindowsSchedulerTaskProbe;
+  try { scheduler = (hooks.probeWindowsTask ?? probeWindowsSchedulerTask)(); }
+  catch (cause) { scheduler = { status: "unknown", detail: schtasksErrorDetail(cause) }; }
+  let native: WinswStatus;
+  try { native = (hooks.nativeStatus ?? statusWinswRaw)(); }
+  catch { native = "unknown"; }
+  if (scheduler.status === "present" || native === "started" || native === "stopped") return { state: "installed" };
+  if (scheduler.status === "unknown" || native === "unknown") {
+    const parts = [
+      scheduler.status === "unknown" ? `Task Scheduler: ${scheduler.detail}` : null,
+      native === "unknown" ? "WinSW status could not be determined" : null,
+    ].filter((part): part is string => Boolean(part));
+    return { state: "unknown", detail: parts.join("; ") };
+  }
+  return { state: "absent" };
+}
+
+export function selectServiceSubcommand(
+  parsed: ParsedServiceArgs,
+  options: { hasExplicitSubcommand: boolean; installed: boolean },
+): string {
+  if (!options.hasExplicitSubcommand && parsed.backend === null && options.installed) return "repair";
+  return parsed.sub;
+}
+
+export type ServiceCommandPlan =
+  | { ok: true; parsed: ParsedServiceArgs; command: string }
+  | { ok: false; message: string };
+
+export function planServiceCommand(
+  args: string[],
+  options: { platform?: NodeJS.Platform; probeInstallation?: () => ServiceInstallationProbe } = {},
+): ServiceCommandPlan {
+  const parsed = parseServiceArgs(args);
+  if (parsed.invalid.length > 0) return { ok: false, message: `Unknown service option: ${parsed.invalid.join(" ")}` };
+  if (parsed.backend && parsed.sub !== "install") return { ok: false, message: "--native/--scheduler apply to `ocx service install` only; other subcommands use the installed backend." };
+  if (parsed.backend === "native" && (options.platform ?? process.platform) !== "win32") return { ok: false, message: "--native (WinSW) is Windows-only." };
+  const hasExplicitSubcommand = args.some(arg => !arg.startsWith("--"));
+  let installed = false;
+  if (!hasExplicitSubcommand && parsed.backend === null) {
+    const probe = (options.probeInstallation ?? probeServiceInstallation)();
+    if (probe.state === "unknown") {
+      const suffix = probe.detail ? ` (${probe.detail})` : "";
+      return { ok: false, message: `Could not safely determine whether the service is installed${suffix}. Run 'ocx service status' and retry; use explicit 'ocx service install' only after confirming it is absent.` };
+    }
+    installed = probe.state === "installed";
+  }
+  return { ok: true, parsed, command: selectServiceSubcommand(parsed, { hasExplicitSubcommand, installed }) };
+}
+
 /**
  * `ocx service [sub] [--native|--scheduler]`. The first non-flag token is the
  * subcommand; backend flags are only meaningful for `install` (validated by the caller).
@@ -2085,20 +2263,10 @@ export function parseServiceArgs(args: string[]): ParsedServiceArgs {
 }
 
 export async function serviceCommand(...args: (string | undefined)[]): Promise<boolean | void> {
-  const parsed = parseServiceArgs(args.filter((a): a is string => Boolean(a)));
-  const command = parsed.sub;
-  if (parsed.invalid.length > 0) {
-    console.error(`Unknown service option: ${parsed.invalid.join(" ")}`);
-    process.exit(1);
-  }
-  if (parsed.backend && command !== "install") {
-    console.error("--native/--scheduler apply to `ocx service install` only; other subcommands use the installed backend.");
-    process.exit(1);
-  }
-  if (parsed.backend === "native" && process.platform !== "win32") {
-    console.error("--native (WinSW) is Windows-only.");
-    process.exit(1);
-  }
+  const filteredArgs = args.filter((a): a is string => Boolean(a));
+  const plan = planServiceCommand(filteredArgs);
+  if (!plan.ok) { console.error(plan.message); process.exit(1); }
+  const { parsed, command } = plan;
   // Non-install subcommands follow the backend recorded at install time (state v2).
   const backend: ServiceBackend = parsed.backend ?? (process.platform === "win32" ? readServiceBackend() : "scheduler");
   const ops = platformOps(backend);
@@ -2107,6 +2275,11 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<b
     process.exit(1);
   }
   switch (command) {
+    case "repair":
+      await repairService();
+      if (!await confirmServiceStarted("started")) return false;
+      console.log("✅ service repaired and restarted.");
+      return true;
     case "install":
       assertServiceEnvironmentMatchesInstall();
       assertServiceAuthEnvironment();
@@ -2187,8 +2360,9 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<b
       console.log("✅ service uninstalled.");
       break;
     default:
-      console.error("Usage: ocx service [install|start|stop|status|uninstall|remove] [--native|--scheduler]");
-      console.error("       With no subcommand, installs/updates and starts the background service.");
+      console.error("Usage: ocx service [install|repair|restart|start|stop|status|uninstall|remove] [--native|--scheduler]");
+      console.error("       With no subcommand, installs when absent or repairs/restarts an existing service.");
+      console.error("       repair/restart: refresh assets and restart an already-installed service (no admin re-prompt).");
       console.error("       --native (Windows only): register a real SCM service via WinSW instead of Task Scheduler.");
       process.exit(1);
   }

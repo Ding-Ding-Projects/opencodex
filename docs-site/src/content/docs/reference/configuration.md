@@ -405,6 +405,38 @@ The local port does not have to match the remote one. opencodex treats any reque
 `Host` resolves to `localhost`, `127.0.0.1`, or `::1` as loopback regardless of port, so
 `http://localhost:20100/v1` works for Codex CLI, Claude Code, the dashboard, and `curl`.
 
+### Keep the local Codex login while using a remote proxy
+
+Use a dedicated provider entry for the forwarded proxy; do not replace Codex's built-in `openai`
+provider with `model_provider = "opencodex"` globally. The latter is a single-provider switch and
+is why a remote setup can appear to make the third-party models work while the local Codex login
+seems to disappear.
+
+On the remote host, log in to the providers that the proxy itself owns (`ocx login <provider>`),
+leave its listener on loopback, and keep the SSH forward open. In the local `CODEX_HOME/config.toml`,
+add a provider that retains Codex's incoming login headers and points at the forwarded address:
+
+```toml
+[model_providers.opencodex_remote]
+name = "OpenCodex Remote"
+base_url = "http://127.0.0.1:20100/v1"
+wire_api = "responses"
+requires_openai_auth = true
+```
+
+Keep the normal `openai` provider as the default for native Codex-login sessions. Select the
+`opencodex_remote` route only when you want a model served by the remote proxy. If the remote bind
+is intentionally non-loopback instead, create a data-plane key with `ocx host enable --new-key
+--yes`, send it through the documented `x-opencodex-api-key` environment-header mapping, and never
+put the key in the TOML or a shell history. The remote management API has no admin-token boundary,
+so SSH forwarding is the safer default for this workflow.
+
+Provider OAuth callbacks are still owned by the host where `ocx login` runs. A local browser cannot
+complete a callback listening only on the remote host unless the callback port is forwarded too;
+run the login on the remote host or add the provider's documented callback forward. This recipe
+preserves the local Codex login and the remote provider logins as two explicit, separate ownership
+boundaries.
+
 Point the client at the forwarded port yourself — `ocx` only ever writes `127.0.0.1` with the
 local default port into client config, so a forwarded setup needs the base URL set by hand.
 
@@ -440,6 +472,9 @@ or bind the forward explicitly to loopback (`ssh -L 127.0.0.1:20100:localhost:10
 | `models?` | `string[]` | Seed/fallback model list. When `liveModels` is `false`, these are the only discovered models. |
 | `liveModels?` | `boolean` | Fetch the provider's live `/models` catalog on start/sync (default `true`). Set `false` to use only configured `models`. |
 | `selectedModels?` | `string[]` | Catalog allowlist applied after discovery. A non-empty list exposes only those ids to Codex; empty/omitted exposes all discovered models. |
+| `retainModels?` | `string[]` | Keep these exact native model ids in the catalog when authoritative live discovery omits them. The retained row is still subject to upstream availability at request time. |
+| `modelDisplayNames?` | `Record<string,string>` | Display-only labels for live-discovered rows, keyed by native model id. Labels are trimmed, printable, slash-free, and at most 128 characters; they never change routing. |
+| `modelSuppressSyntheticMax?` | `Record<string,boolean>` | For an exact model id, suppress only the catalog's invented `max` reasoning rung. A provider-declared `max` and Codex `ultra` remain intact. |
 | `contextWindow?` | `number` | Provider-wide Codex-visible context-window cap for routed catalog entries. Live metadata below this value is kept. |
 | `modelContextWindows?` | `Record<string,number>` | Model-specific context-window caps. These override `contextWindow` for matching model ids and never raise smaller live metadata. |
 | `modelInputModalities?` | `Record<string,string[]>` | Model-specific catalog input hints such as `["text"]` or `["text", "image"]`. |

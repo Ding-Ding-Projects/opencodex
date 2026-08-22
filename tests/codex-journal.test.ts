@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -51,6 +52,79 @@ describe("codex-journal", () => {
     expect(out.hasPid).toBe(true);
   });
 
+  test("writeJournal persists only bounded comparison identity, never command-line text", () => {
+    const sentinel = "PRIVATE_OWNER_ARGV_SENTINEL";
+    const r = runScript(testDir, `
+      process.argv.push(${JSON.stringify(sentinel)});
+      const { writeJournal } = require("./src/codex/journal");
+      const fs = require("fs");
+      const path = require("path");
+      writeJournal();
+      const raw = fs.readFileSync(path.join(process.env.CODEX_HOME, "opencodex-journal.json"), "utf8");
+      const parsed = JSON.parse(raw);
+      console.log(JSON.stringify({ hasCommandLine: Object.prototype.hasOwnProperty.call(parsed.ownerIdentity ?? {}, "commandLine"), hasSentinel: raw.includes(${JSON.stringify(sentinel)}) }));
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ hasCommandLine: false, hasSentinel: false });
+  }, 15_000);
+
+  test("reconcileJournal upgrades a valid parent v1 owner identity before restoring", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const original = "# original parent snapshot\n";
+    writeFileSync(join(testDir, "config.toml"), "# injected parent snapshot\n", "utf8");
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(original).toString("base64"),
+      originalProfile: null,
+      pid: 999999,
+      ownerIdentity: {
+        pid: 999999,
+        startIdentity: "parent-start-identity",
+        executablePath: "C:/ocx.exe",
+        commandLine: `bun src/cli/index.ts start PRIVATE_PARENT_SENTINEL`,
+      },
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournal } = require("./src/codex/journal");
+      console.log(JSON.stringify({ restored: reconcileJournal() }));
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(true);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+  }, 15_000);
+
+  test("an invalid or oversized owner identity stays as recovery evidence and cannot restore", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const original = "# original invalid identity\n";
+    const injected = "# injected invalid identity\n";
+    writeFileSync(join(testDir, "config.toml"), injected, "utf8");
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(original).toString("base64"),
+      originalProfile: null,
+      pid: 999999,
+      ownerIdentity: {
+        pid: 999999,
+        startIdentity: "parent-start-identity",
+        executablePath: "C:/ocx.exe",
+        commandLine: "x".repeat(16_385),
+      },
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournal } = require("./src/codex/journal");
+      console.log(JSON.stringify({ restored: reconcileJournal() }));
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(false);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(injected);
+    expect(existsSync(journalPath)).toBe(true);
+  }, 15_000);
+
   test("reconcileJournal restores config when journaled PID is dead", () => {
     const journalPath = join(testDir, "opencodex-journal.json");
     const original = "# original config\nmodel_provider = \"openai\"\n";
@@ -72,6 +146,60 @@ describe("codex-journal", () => {
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).restored).toBe(true);
     expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+  });
+
+  test("reconcileJournalAsync restores config with the awaited atomic path", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const original = "# original config\nmodel_provider = \"openai\"\n";
+    writeFileSync(join(testDir, "config.toml"), "# modified\nmodel_provider = \"opencodex\"\n", "utf8");
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(original).toString("base64"),
+      originalProfile: null,
+      pid: 999999,
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournalAsync } = require("./src/codex/journal");
+      (async () => console.log(JSON.stringify({ restored: await reconcileJournalAsync() })))();
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(true);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+  });
+
+  test("reconcileJournalAsync finishes a retry after config was already restored", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const originalConfig = "# original config\nmodel_provider = \"openai\"\n";
+    const injectedConfig = "# injected config\nmodel_provider = \"opencodex\"\n";
+    const originalProfile = "model_provider = \"openai\"\n";
+    const injectedProfile = "model_provider = \"opencodex\"\n";
+    // Model the state after config's atomic restore committed but profile's
+    // restore did not: config is original, profile is still injected.
+    writeFileSync(join(testDir, "config.toml"), originalConfig, "utf8");
+    writeFileSync(join(testDir, "opencodex.config.toml"), injectedProfile, "utf8");
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(originalConfig).toString("base64"),
+      originalProfile: Buffer.from(originalProfile).toString("base64"),
+      injectedConfigHash: hash(injectedConfig),
+      injectedProfileHash: hash(injectedProfile),
+      pid: 999999,
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournalAsync } = require("./src/codex/journal");
+      (async () => console.log(JSON.stringify({ restored: await reconcileJournalAsync() })))();
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(true);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(originalConfig);
+    expect(readFileSync(join(testDir, "opencodex.config.toml"), "utf8")).toBe(originalProfile);
     expect(existsSync(journalPath)).toBe(false);
   });
 
@@ -121,6 +249,36 @@ describe("codex-journal", () => {
     expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(modified);
     expect(existsSync(journalPath)).toBe(true);
   });
+
+  test("reconcileJournal recovers when a live PID is now an unrelated process", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const original = "# original owner\n";
+    writeFileSync(join(testDir, "config.toml"), "# stale injected owner\n", "utf8");
+    // The test runner PID is definitely live, but the recorded start identity
+    // belongs to the old proxy lifetime. The injected reader models PID reuse
+    // by returning a different live identity for that same number.
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(original).toString("base64"),
+      originalProfile: null,
+      pid: process.pid,
+      ownerIdentity: { pid: process.pid, startIdentity: "old-proxy-start", executablePath: "C:/old/ocx.exe" },
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournal } = require("./src/codex/journal");
+      const journalPid = ${process.pid};
+      const result = reconcileJournal({
+        readIdentity: () => ({ pid: journalPid, startIdentity: "unrelated-live-start", executablePath: "C:/other.exe" }),
+      });
+      console.log(JSON.stringify({ restored: result }));
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(true);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+  }, 15_000);
 
   test("removeJournal cleans up", () => {
     const journalPath = join(testDir, "opencodex-journal.json");

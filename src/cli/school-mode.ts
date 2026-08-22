@@ -46,6 +46,7 @@ import {
   runtimeRequest,
   takeFlag,
   takeOption,
+  type CliStdin,
   type RuntimeApiDeps,
 } from "./runtime-api";
 
@@ -92,11 +93,14 @@ interface SchoolModeStatus {
  * invisible character fails verification with nothing to read. Interior
  * whitespace is kept: a passphrase may legitimately contain spaces.
  */
-async function readStdinLines(): Promise<string[]> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Uint8Array);
-  return Buffer.concat(chunks)
-    .toString("utf8")
+async function readStdinLines(deps: RuntimeApiDeps): Promise<string[]> {
+  const input: CliStdin = deps.stdinImpl ?? process.stdin;
+  const chunks: string[] = [];
+  for await (const chunk of input) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk));
+  }
+  return chunks
+    .join("")
     .split("\n")
     .map(line => line.replace(/\r$/, ""));
 }
@@ -129,7 +133,7 @@ async function enable(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   rejectArgs(argv, USAGE);
   const result = await runtimeRequest<SchoolModeStatus>(
     "/api/school-mode/enable",
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    { method: "POST" },
     deps,
   );
   printData(result, json, ["School Mode is on. Every app sharing the record picks this up without a restart."]);
@@ -139,7 +143,7 @@ async function disable(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const json = takeFlag(argv, "--json");
   rejectArgs(argv, USAGE);
   process.stderr.write("Unlock secret (read from stdin, not echoed):\n");
-  const secret = requireSecret(await readStdinLines(), "unlock secret");
+  const secret = requireSecret(await readStdinLines(deps), "unlock secret");
   const result = await runtimeRequest<SchoolModeStatus>(
     "/api/school-mode/disable",
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) },
@@ -158,13 +162,16 @@ async function disable(argv: string[], deps: RuntimeApiDeps): Promise<void> {
 async function credential(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const json = takeFlag(argv, "--json");
   rejectArgs(argv, USAGE);
-  // One read, two lines: the new secret first, then the current one where a
-  // credential already exists. Two reads would have lost the second line to a
-  // drained stream — see `readStdinLines`.
-  process.stderr.write("Line 1: the new unlock secret. Line 2: the current one, or blank if none is set.\n");
-  const lines = await readStdinLines();
-  const newSecret = requireSecret(lines, "new unlock secret");
-  const currentSecret = lines[1] ?? "";
+  const current = await runtimeRequest<SchoolModeStatus>("/api/school-mode", { method: "GET" }, deps);
+  const needsCurrent = current.hasCredential === true;
+  process.stderr.write(needsCurrent
+    ? "Line 1: the current unlock secret. Line 2: the new unlock secret.\n"
+    : "Line 1: the new unlock secret.\n");
+  const lines = await readStdinLines(deps);
+  const currentSecret = needsCurrent ? requireSecret(lines, "current unlock secret") : "";
+  const newSecret = needsCurrent
+    ? requireSecret(lines.slice(1), "new unlock secret")
+    : requireSecret(lines, "new unlock secret");
   const result = await runtimeRequest<SchoolModeStatus>(
     "/api/school-mode/credential",
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(currentSecret ? { newSecret, currentSecret } : { newSecret }) },
@@ -198,9 +205,9 @@ export async function handleSchoolModeCommand(argv: string[], deps: RuntimeApiDe
   return runCliAction(async () => {
     const [sub = "status", ...rest] = argv;
     if (sub === "status") await status(rest, deps);
-    else if (sub === "enable") await enable(rest, deps);
-    else if (sub === "disable") await disable(rest, deps);
-    else if (sub === "credential") await credential(rest, deps);
+    else if (sub === "enable" || sub === "on") await enable(rest, deps);
+    else if (sub === "disable" || sub === "off") await disable(rest, deps);
+    else if (sub === "credential" || sub === "set-credential") await credential(rest, deps);
     else if (sub === "rename") await rename(rest, deps);
     else throw new CliUsageError(`unknown school-mode command "${sub}"`, USAGE);
   });

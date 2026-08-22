@@ -1,12 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, uninstallCodexShim } from "../src/codex/shim";
+import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, setCodexShimStateAtomicWriteIOForTests, uninstallCodexShim } from "../src/codex/shim";
 import { removeTempDir } from "./helpers/temp-dir";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
+
+function waitForLog(path: string, predicate: (value: string) => boolean): string {
+  let value = "";
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    value = readFileSync(path, "utf8");
+    if (predicate(value)) return value;
+    Bun.sleepSync(10);
+  }
+  return value;
+}
 const skipStabilityWait = () => {};
 
 function withInstalledShim(run: (paths: {
@@ -59,6 +69,8 @@ describe("Codex autostart shim", () => {
     expect(script).not.toContain("sync-cache");
     expect(script).toContain("exec '/usr/local/bin/codex-real' \"$@\"");
     expect(script).toContain("OPENCODEX_API_AUTH_TOKEN");
+    expect(script.match(/ensure >\/dev\/null/g)).toHaveLength(2);
+    expect(script).not.toContain(") &");
   });
 
   test("builds a Windows shim that starts ocx before running Codex", () => {
@@ -71,6 +83,8 @@ describe("Codex autostart shim", () => {
     expect(script).toContain('set "OCX_API_TOKEN_FILE=');
     expect(script).toContain('set /p OPENCODEX_API_AUTH_TOKEN=<"%OCX_API_TOKEN_FILE%"');
     expect(script).toContain('"%OCX_REAL_CODEX%" %*');
+    expect(script.match(/ensure >nul/g)).toHaveLength(2);
+    expect(script).not.toContain('start "" /b');
   });
 
   test("Windows cmd shim escapes executable paths through variables", () => {
@@ -179,6 +193,8 @@ describe("Codex autostart shim", () => {
     expect(script).toContain("Test-Path -LiteralPath");
     expect(script).toContain("OPENCODEX_API_AUTH_TOKEN");
     expect(script).toContain("& 'C:\\codex-real.ps1' @args");
+    expect(script.match(/ensure \*> \$null/g)).toHaveLength(2);
+    expect(script).not.toContain("Start-Job");
   });
 
   test("Unix shim treats executable paths as literals instead of shell interpolation", () => {
@@ -274,15 +290,35 @@ describe("Codex autostart shim", () => {
 
     const exec = spawnSync(shimPath, ["exec", "hello"], { encoding: "utf8", env });
     expect(exec.status).toBe(0);
-    expect(readFileSync(logPath, "utf8")).toBe(
-      "codex:doctor\ncodex:-s read-only -a untrusted app-server\nbun:/opt/opencodex/src/cli.ts ensure\ncodex:exec hello\n",
-    );
+    const afterExec = waitForLog(logPath, value => value.includes("bun:/opt/opencodex/src/cli.ts ensure"));
+    expect(afterExec).toContain("codex:exec hello\n");
+    expect(afterExec).toContain("bun:/opt/opencodex/src/cli.ts ensure\n");
 
     const prompt = spawnSync(shimPath, ["hello"], { encoding: "utf8", env });
     expect(prompt.status).toBe(0);
-    expect(readFileSync(logPath, "utf8")).toBe(
-      "codex:doctor\ncodex:-s read-only -a untrusted app-server\nbun:/opt/opencodex/src/cli.ts ensure\ncodex:exec hello\nbun:/opt/opencodex/src/cli.ts ensure\ncodex:hello\n",
-    );
+    const afterPrompt = waitForLog(logPath, value => value.endsWith("bun:/opt/opencodex/src/cli.ts ensure\n"));
+    expect(afterPrompt).toContain("codex:hello\n");
+    expect(afterPrompt).toContain("bun:/opt/opencodex/src/cli.ts ensure\n");
+  });
+
+  test("Unix shim retries ensure synchronously and still launches Codex after two failures", () => {
+    if (process.platform === "win32") return;
+
+    const dir = mkdtempSync(join(tmpdir(), "ocx-shim-ensure-retry-"));
+    const logPath = join(dir, "calls.log");
+    const bunPath = join(dir, "bun");
+    const realCodexPath = join(dir, "codex-real");
+    const shimPath = join(dir, "codex");
+    writeFileSync(bunPath, `#!/usr/bin/env sh\nprintf 'ensure\\n' >> "${logPath}"\nexit 1\n`, "utf8");
+    writeFileSync(realCodexPath, `#!/usr/bin/env sh\nprintf 'codex\\n' >> "${logPath}"\nexit 0\n`, "utf8");
+    writeFileSync(shimPath, buildUnixCodexShim(realCodexPath, bunPath, "/opt/opencodex/src/cli.ts"), "utf8");
+    chmodSync(bunPath, 0o755);
+    chmodSync(realCodexPath, 0o755);
+    chmodSync(shimPath, 0o755);
+
+    const result = spawnSync(shimPath, ["hello"], { cwd: dir, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(readFileSync(logPath, "utf8")).toBe("ensure\nensure\ncodex\n");
   });
 
   test("Windows shim skips ocx startup only for Codex management commands", () => {
@@ -445,6 +481,7 @@ describe("Codex autostart shim", () => {
         console.log(JSON.stringify(autoRestoreCodexShim({ enabled: () => true, stabilitySleep: () => {} })));
       `;
       const childEnv = { ...process.env, PATH: binDir, OPENCODEX_HOME: home };
+      childEnv.PATH = oldPath ? `${binDir}${delimiter}${oldPath}` : binDir;
       first = Bun.spawn([process.execPath, "-e", firstScript], {
         cwd: join(import.meta.dir, ".."),
         env: childEnv,
@@ -467,7 +504,8 @@ describe("Codex autostart shim", () => {
       expect(heldLock.token).toBeString();
 
       writeFileSync(releasePath, "release", "utf8");
-      expect(await first.exited).toBe(0);
+      const firstExit = await first.exited;
+      expect(firstExit).toBe(0);
       const firstStdout = await new Response(first.stdout).text();
       expect(JSON.parse(firstStdout.trim()).status).toBe("restored");
       expect(readFileSync(wrapper, "utf8")).toContain(SHIM_MARKER);
@@ -667,6 +705,44 @@ describe("Codex autostart shim", () => {
       removeTempDir(home);
       removeTempDir(binDir);
     }
+  });
+
+  test("interrupted state publication and rollback publication preserve the previous valid state", () => {
+    withInstalledShim(({ home, wrappers, backups, statePath }) => {
+      const oldState = readFileSync(statePath);
+      const oldBackups = backups.map(path => readFileSync(path));
+      wrappers.forEach((wrapper, index) => writeFileSync(wrapper, `interrupted replacement ${index}\n`, "utf8"));
+      const attemptedWrites: string[] = [];
+
+      const interruptedAtomicIo = {
+        write(path: string, content: string): void {
+          attemptedWrites.push(path);
+          writeFileSync(path, content.slice(0, Math.max(1, Math.floor(content.length / 2))), "utf8");
+          throw Object.assign(new Error("synthetic interrupted state publication"), { code: "EIO" });
+        },
+        harden(): void {},
+        rename(): void {
+          throw new Error("synthetic interrupted state publication must not rename a partial temp");
+        },
+        truncate(path: string): void { writeFileSync(path, "", "utf8"); },
+        unlink(path: string): void { rmSync(path, { force: true }); },
+      };
+
+      setCodexShimStateAtomicWriteIOForTests(interruptedAtomicIo);
+      try {
+        expect(() => autoRestoreCodexShim({ enabled: () => true, stabilitySleep: skipStabilityWait }))
+          .toThrow("Codex shim guarded refresh failed");
+
+        expect(readFileSync(statePath)).toEqual(oldState);
+        expect(attemptedWrites).toHaveLength(2);
+        expect(attemptedWrites.every(path => path !== statePath && path.endsWith(".tmp"))).toBe(true);
+        wrappers.forEach((wrapper, index) => expect(readFileSync(wrapper, "utf8")).toBe(`interrupted replacement ${index}\n`));
+        backups.forEach((backup, index) => expect(readFileSync(backup)).toEqual(oldBackups[index]));
+        expect(readdirSync(home).filter(name => name.includes(".ocx.") && name.endsWith(".tmp"))).toEqual([]);
+      } finally {
+        setCodexShimStateAtomicWriteIOForTests(null);
+      }
+    });
   });
 
   test("missing backup, missing wrapper, corrupt state, and platform mismatch never fresh-install", () => {

@@ -12,6 +12,7 @@ import {
   CodexThreadAffinityExpiredError,
   cooldownErrorMessage,
   cooldownErrorResponse,
+  codexPoolAffinityKey,
   headersForCodexAuthContext,
   isCodexAuthContextUsable,
   resolveCodexAuthContext,
@@ -90,6 +91,15 @@ const forwardProvider: OcxProviderConfig = {
 };
 
 describe("Codex auth context", () => {
+  test("derives a process-local opaque affinity key from complete bounded Desktop ids", () => {
+    const headers = new Headers({ "session-id": "desktop-session", "thread-id": "desktop-thread" });
+    const key = codexPoolAffinityKey(headers);
+    expect(key?.startsWith("app:")).toBe(true);
+    expect(key).not.toContain("desktop-session");
+    expect(key).not.toContain("desktop-thread");
+    expect(codexPoolAffinityKey(new Headers({ "session-id": "desktop-session" }))).toBeUndefined();
+  });
+
   test("direct mode returns caller-owned main context without touching pool selection", async () => {
     const cfg = { ...config(), activeCodexAccountId: "missing-pool-account" };
     await expect(resolveCodexAuthContext(new Headers({ authorization: "Bearer caller" }), cfg, "direct"))

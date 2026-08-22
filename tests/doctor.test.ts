@@ -103,14 +103,27 @@ describe("doctor", () => {
   });
 
   test("desktop CLI PATH status reports success, reading exactly the file the desktop app writes", () => {
+    const binDir = join(TEST_OPENCODEX_HOME, "cli-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "ocx.cmd"), "@echo off\r\n");
     writeFileSync(
       join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
-      JSON.stringify({ ok: true, binDir: "C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin", at: "2026-08-13T00:00:00.000Z" }),
+      JSON.stringify({ action: "install", ok: true, binDir, at: "2026-08-13T00:00:00.000Z" }),
     );
     expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toEqual({
       present: true,
+      action: "install",
+      state: "installed",
       ok: true,
-      binDir: "C:\\Users\\tester\\AppData\\Local\\opencodex\\cli-bin",
+      binDir,
+      shimPath: join(binDir, "ocx.cmd"),
+      shimPresent: true,
+      owned: null,
+      removed: null,
+      transactionRecovered: null,
+      rollbackFailed: null,
+      replacementConflict: false,
+      claimPath: null,
       reason: null,
       manualCommand: null,
       at: "2026-08-13T00:00:00.000Z",
@@ -130,8 +143,46 @@ describe("doctor", () => {
     );
     const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
     expect(status.present).toBe(true);
-    expect(status).toMatchObject({ ok: false, reason: "the user PATH could not be updated" });
+    expect(status).toMatchObject({ action: null, state: "unresolved", ok: false, reason: "the user PATH could not be updated" });
     if (status.present) expect(status.manualCommand).toContain("setx PATH");
+  });
+
+  test("desktop PATH status never calls a stable bin directory installed when its shim is missing", () => {
+    const binDir = join(TEST_OPENCODEX_HOME, "cli-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
+      JSON.stringify({ action: "install", ok: true, binDir, at: "2026-08-21T00:00:00.000Z" }),
+    );
+    const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
+    expect(status).toMatchObject({ present: true, state: "unresolved", ok: true, shimPresent: false });
+    if (status.present) expect(status.state).not.toBe("installed");
+  });
+
+  test("desktop PATH status distinguishes removed, recovered rollback, failed rollback, and replacement conflict", () => {
+    const cases = [
+      [{ action: "uninstall", ok: true, owned: true, removed: true }, "removed"],
+      [{ action: "install", ok: false, transactionRecovered: true, rollbackFailed: false }, "rollback-recovered"],
+      [{ action: "install", ok: false, transactionRecovered: false, rollbackFailed: true }, "rollback-failed"],
+      [{ action: "uninstall", ok: false, replacementConflict: true, claimPath: "C:\\claim.tmp" }, "replacement-conflict"],
+    ] as const;
+    for (const [record, state] of cases) {
+      writeFileSync(join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME), JSON.stringify({ ...record, binDir: "", at: "2026-08-21T00:00:00.000Z" }));
+      expect(collectDesktopCliPathStatus(TEST_OPENCODEX_HOME)).toMatchObject({ present: true, state });
+    }
+  });
+
+  test("stale removed status with a present replacement shim is never reported as removed", () => {
+    const binDir = join(TEST_OPENCODEX_HOME, "cli-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "ocx.cmd"), "replacement\r\n");
+    writeFileSync(
+      join(TEST_OPENCODEX_HOME, DESKTOP_CLI_PATH_STATUS_FILENAME),
+      JSON.stringify({ action: "uninstall", ok: true, owned: true, removed: true, binDir, at: "2026-08-21T00:00:00.000Z" }),
+    );
+    const status = collectDesktopCliPathStatus(TEST_OPENCODEX_HOME);
+    expect(status).toMatchObject({ present: true, shimPresent: true, state: "unresolved" });
+    if (status.present) expect(status.state).not.toBe("removed");
   });
 
   test("desktop CLI PATH status tolerates a corrupt file rather than throwing", () => {
@@ -419,10 +470,32 @@ describe("service memory section (#314 WP4)", () => {
     if (malformed.status === "unreachable") expect(malformed.error).toBe("malformed response");
   });
 
+  test("fetchServiceMemory keeps a numeric JSC extra-memory counter and omits malformed values", async () => {
+    const withExtra = await fetchServiceMemory("127.0.0.1", 10100,
+      (async () => Response.json({ ...baseData, jscHeap: { heapSize: 10, extraMemorySize: 22 } })) as typeof fetch);
+    expect(withExtra.status).toBe("ok");
+    if (withExtra.status === "ok") expect(withExtra.data.jscHeap).toEqual({ heapSize: 10, extraMemorySize: 22 });
+
+    const malformedExtra = await fetchServiceMemory("127.0.0.1", 10100,
+      (async () => Response.json({ ...baseData, jscHeap: { heapSize: 10, extraMemorySize: "22" } })) as typeof fetch);
+    expect(malformedExtra.status).toBe("ok");
+    if (malformedExtra.status === "ok") expect(malformedExtra.data.jscHeap).toEqual({ heapSize: 10 });
+  });
+
   test("identity labels: doctor process is never presented as the service", () => {
     const lines = formatServiceMemoryLines({ status: "ok", data: baseData });
     expect(lines[0]).toContain("NOT the service process");
     expect(lines.some(l => l.includes(`service pid ${baseData.pid}`))).toBe(true);
+  });
+
+  test("memory lines include JSC extra-memory only when the service reported it", () => {
+    const withExtra = formatServiceMemoryLines({
+      status: "ok",
+      data: { ...baseData, jscHeap: { heapSize: 10, extraMemorySize: 22 * 1024 * 1024 } },
+    });
+    expect(withExtra.some(line => line.includes("jscExtra=22MB"))).toBe(true);
+    const withoutExtra = formatServiceMemoryLines({ status: "ok", data: baseData });
+    expect(withoutExtra.join("\n")).not.toContain("jscExtra=");
   });
 
   test("interpretation: high RSS + small JS heap → native-side line", () => {

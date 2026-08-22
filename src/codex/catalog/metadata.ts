@@ -13,6 +13,7 @@ import { getJawcodeModelMetadata, getJawcodeModelMetadataCaseInsensitive, listJa
 import { enrichProviderFromRegistry, shouldCaseFoldMetadataModelId } from "../../providers/derive";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { applyProviderContextCap, providerContextCap } from "../../providers/context-cap";
+import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { routedSlug, slugEquals, slugsEquivalent } from "../../providers/slug-codec";
 import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
@@ -72,6 +73,21 @@ export function nativeOpenAiContextWindow(slug: string): number | undefined {
       : undefined);
 }
 
+/** Effective native soft budget after the static context envelope and optional configured policy. */
+export function nativeOpenAiAutoCompactTokenLimit(
+  slug: string,
+  configured?: Readonly<Record<string, number>> | { modelAutoCompactTokenLimits?: Readonly<Record<string, number>> },
+): number | undefined {
+  const contextWindow = nativeOpenAiContextWindow(slug);
+  if (contextWindow === undefined) return undefined;
+  const limits: Readonly<Record<string, number>> | undefined = configured && typeof configured === "object"
+    && Object.hasOwn(configured, "modelAutoCompactTokenLimits")
+    ? (configured as { modelAutoCompactTokenLimits?: Readonly<Record<string, number>> }).modelAutoCompactTokenLimits
+    : configured as Readonly<Record<string, number>> | undefined;
+  const requested = limits?.[slug];
+  return clampAutoCompactTokenLimit(contextWindow, contextWindow, requested);
+}
+
 export function nativeInputModalities(slug: string): string[] {
   const upstream = UPSTREAM_NATIVE_ENTRIES.get(slug);
   if (Array.isArray(upstream?.input_modalities) && upstream!.input_modalities!.length > 0) {
@@ -101,6 +117,13 @@ export function nativeReasoningEfforts(slug: string): string[] {
   }
   // gpt-5.3-codex-spark is not in upstream snapshot — use the standard old-ladder default.
   return ["low", "medium", "high", "xhigh"];
+}
+
+export function nativeDefaultReasoningEffort(slug: string): string | undefined {
+  const efforts = nativeReasoningEfforts(slug);
+  if (efforts.includes("medium")) return "medium";
+  if (efforts.includes("high")) return "high";
+  return efforts[0];
 }
 
 export function nativeParallelToolCalls(slug: string): boolean {

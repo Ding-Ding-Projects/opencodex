@@ -67,7 +67,7 @@ describe("Grok fence lifecycle wiring", () => {
     const proxyFn = sliceFn(CLI_SOURCE, "async function stopTrackedProxyForCli(", "function reportUnsafeStop(");
     const reportFn = sliceFn(CLI_SOURCE, "function reportUnsafeStop(", "async function handleStop(");
     // Stop errors escape to runStopSequence, which blocks teardown and preserves the detail.
-    expect(proxyFn).toContain("await stopProxy(pid)");
+    expect(proxyFn).toContain("await stopProxy(pid, {");
     expect(proxyFn).not.toContain("catch {");
     expect(reportFn).toContain("outcome.error instanceof Error ? outcome.error.message");
     expect(reportFn).toContain("Proxy stop is not verified: ${detail}");
@@ -163,7 +163,7 @@ describe("POST /api/stop teardown", () => {
 
     const stopProxyFn = sliceFn(PROCESS_CONTROL_SOURCE, "export async function stopProxy(", "export function killProxy(");
     const refusedAt = stopProxyFn.indexOf('graceful === "refused"');
-    const killAt = stopProxyFn.indexOf("killProxy(pid)");
+    const killAt = stopProxyFn.indexOf("killProxy(pid,");
     expect(refusedAt).toBeGreaterThan(-1);
     expect(refusedAt).toBeLessThan(killAt);
     expect(stopProxyFn).toContain("throw new Error(");

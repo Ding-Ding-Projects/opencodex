@@ -45,10 +45,11 @@ const helpEntries: Record<string, HelpEntry> = {
     ],
   },
   service: {
-    usage: "ocx service [install|start|stop|status|uninstall|remove]",
+    usage: "ocx service [install|repair|restart|start|stop|status|uninstall|remove]",
     summary: "Run as a background service.",
     details: [
-      "With no subcommand, installs/updates and starts the background service.",
+      "With no subcommand, installs when absent or repairs/restarts an existing service.",
+      "`restart` is an alias of `repair` and does not re-register an installed service.",
       "Use `ocx service status` to see diagnostics and log paths.",
     ],
   },
@@ -210,8 +211,8 @@ const helpEntries: Record<string, HelpEntry> = {
     summary: "Manage routing features; combo is currently the supported routing resource.",
   },
   agent: {
-    usage: "ocx agent <status|injection|effort|subagents|fallback|sidecar> ...",
-    summary: "Manage headless multi-agent, roster, effort, injection, and sidecar settings.",
+    usage: "ocx agent <status|injection|effort|subagents|roles|fallback|sidecar> ...",
+    summary: "Manage headless multi-agent, roster, named roles, effort, injection, and sidecar settings.",
   },
   observe: {
     usage: "ocx observe <logs|usage|storage|memory|debug|claude-inbound|injection> ...",
@@ -457,7 +458,7 @@ Usage:
   ocx recover-history --legacy-openai
                                Explicitly recover pre-backup syncResumeHistory rows
   ocx uninstall               Remove service/shim/config and restore native Codex (alias: remove)
-  ocx service [sub]           Run as a background service (default: install/update/start)
+  ocx service [sub]           Run as a background service (default: install-if-absent/repair-if-installed)
   ocx codex-shim <sub>        Auto-start proxy when \`codex\` launches (install|status|uninstall|remove)
   ocx tray <sub>              Windows status tray (install|start|stop|status|uninstall)
   ocx ensure                  Ensure the proxy is running and Codex config/cache are current
@@ -492,6 +493,7 @@ Usage:
   ocx memory-sync <sub>       Canonical global agent memory sync and profile inventory
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply
+  ocx school-mode <sub>       Universal cross-app English-only toggle (status|enable|disable|rename)
   ocx changelog [opts]        Released versions and their changes
   ocx host <sub>              Expose the proxy to other devices on your network
   ocx launch [target]         Open an agent CLI or desktop app (Codex, Grok, Claude)

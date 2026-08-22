@@ -47,7 +47,11 @@ hops. Update handoffs and dashboard restarts also pin their captured live port.
 Startup uses a cross-process lock and stable OpenCodex identity-health checks, not just PID-file or
 TCP reachability. A concurrent starter cannot create a duplicate fallback daemon. On start it syncs
 each provider's models into Codex's catalog. On shutdown it restores native Codex unless it was
-launched as a managed service (`OCX_SERVICE=1`).
+launched as a managed service (`OCX_SERVICE=1`). A healthy owner is identity-checked before stale
+journal recovery, so a dead launcher PID cannot make a live proxy lose its injected Codex state.
+The external Node launcher retries `start` once only for an abnormal exit carrying Bun's official
+crash marker; ordinary command failures are never retried. See [Bun Startup Crashes on
+Windows](/troubleshooting/bun-startup-crashes/).
 
 ```bash
 ocx start
@@ -99,7 +103,9 @@ background, and sync the live port back into Codex.
 ### `ocx ensure`
 
 Idempotently ensure a background proxy is running, then sync its live model catalog. If
-`codexAutoStart` is `false`, it prints that autostart is disabled and does nothing.
+`codexAutoStart` is `false`, it prints that autostart is disabled and does nothing. The external
+launcher gives `ensure` the same one-attempt, panic-qualified Bun retry as `start`; it does not retry
+an ordinary nonzero result.
 
 ### `ocx status [--json]`
 
@@ -185,6 +191,16 @@ new file: opencodex creates it exclusively with private permissions (and a harde
 refuses stdout, refuses overwrite/symlink replacement, and deletes an empty partial file if
 hardening fails. Store the result encrypted, never commit or upload it, and delete it when no longer
 needed.
+
+On Windows, secret-file ACL hardening normally performs the existing grant, inheritance, and broad
+ACE-removal sequence. Large already-hardened trees may opt into a strict read-before-write proof by
+setting `OPENCODEX_ACL_VERIFY_EXISTING=1` before starting opencodex. The read is accepted only when
+the complete `icacls` listing contains exactly one explicit Full Control ACE for the current effective
+SID, accepting file `(F)` and directory `(OI)(CI)(F)` shapes, with no inherited marker, extra ACE,
+localized-summary confusion, or principal mismatch. Any missing,
+localized, SID-shaped, or otherwise ambiguous identity falls back to the existing hardening mutation;
+the optimization never turns uncertainty into an ACL bypass. Remove the variable to return to the
+normal mutation-first path.
 
 ### `ocx host <status|enable|disable>`
 
@@ -651,8 +667,10 @@ service-owned runtime state; an unrelated direct proxy is not adopted as the ser
 
 | Subcommand | Action |
 | --- | --- |
-| none | Create/update and start the service. |
+| none | Install and start when both backends are proven absent; otherwise refresh and restart the installed backend without re-registering it. |
 | `install` | Create and start the service. |
+| `repair` | Refresh an installed backend and restart it without registration. |
+| `restart` | Alias of `repair`. |
 | `start` | Start an installed service. |
 | `stop` | Stop the service and restore native Codex. |
 | `status` | Report whether the service is running. |
@@ -662,9 +680,19 @@ service-owned runtime state; an unrelated direct proxy is not adopted as the ser
 ```bash
 ocx service
 ocx service install
+ocx service repair
+ocx service restart
 ocx service status
 ocx service uninstall
 ```
+
+The bare command validates arguments before probing installation. On Windows, Task Scheduler and
+WinSW are combined into an installed/absent/unknown state. Unknown status refuses registration and
+asks for `ocx service status`; only proven absence enters the registration path. A scheduler stop is
+also verified before asset rewrites, and uninstall keeps assets, install state, and token metadata
+when deletion or post-delete absence cannot be proven. A protected persisted service token may satisfy
+the non-loopback auth preflight when the current environment has no token; it is never printed or
+copied into command output.
 
 On Windows, creating the Task Scheduler entry requires elevation. Recognized localized
 access-denied text keeps the existing guidance path. If that text is unreadable, the fallback

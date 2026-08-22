@@ -12,6 +12,7 @@ import { buildCompactV1Output, COMPACT_PROMPT, decodeCompactionSummary, extractC
 import { FORWARD_HEADERS, sanitizeReasoningInputContent } from "../../adapters/openai-responses";
 import { expandPreviousResponseInput, previousResponseProviderState, rememberResponseState } from "../../responses/state";
 import { routeModel, type RouteResult } from "../../router";
+import { warnRetainedModel404Once } from "../../codex/catalog/provider-fetch";
 import {
   advanceComboAfterFailure,
   comboDefaultEffort,
@@ -52,6 +53,7 @@ import {
   oauthSessionKeyFromParts,
   promoteOAuthActiveAccount,
   resolveOAuthAccountForSession,
+  rotateOAuthAccountOnFailure,
   rotateOAuthAccountOn429,
 } from "../../oauth/provider-pool";
 import { buildWebSearchTool, planWebSearch, runWithWebSearch, shouldResolveOpenAiWebSearchSidecar } from "../../web-search";
@@ -60,6 +62,7 @@ import { describeImagesInPlace, planVisionSidecar, shouldResolveOpenAiVisionSide
 import { createAdapterEventQueue, preflightAdapterEvents } from "../../adapters/run-turn-queue";
 import {
   applyCodexAuthContextToProvider,
+  codexPoolAffinityKey,
   CodexAccountCooldownError,
   cooldownErrorResponse,
   CodexAuthContextError,
@@ -91,6 +94,7 @@ import { applyOpenAiVirtualModel, resolveOpenAiCompactModel } from "../../provid
 import { isUsageDebugEnabled } from "../../usage/debug";
 import { readJsonRequestBody, DecompressedBodyTooLargeError, UnsupportedContentEncodingError } from "../request-decompress";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
+import { providerModelResponsesTerminalRepair } from "../../providers/registry";
 import { hasKeyPoolFailover, rotateProviderTransportOn429 } from "../../providers/key-failover";
 import { shouldAttemptImageTierRetry } from "../image-retry";
 import { resolveProviderTransport } from "../../providers/xai-transport";
@@ -114,6 +118,8 @@ import {
   readConfiguredCodexServiceTier,
   recordAdapterReasoning,
   recordAttemptRequestedEffort,
+  recordStreamFailure,
+  recordStreamStage,
   requestLogSpeedLabel,
   sealRequestAttemptIdentity,
   usageFromResponsesPayload,
@@ -147,6 +153,12 @@ import {
   restoreImageGenCallsInJson,
 } from "../responses-image-gen-repair";
 import { composeSsePayloadRewrites, relaySseWithPayloadRewrite } from "../sse-payload-rewrite";
+import {
+  collectRoutedCustomToolNames,
+  customToolItemId,
+  routedCustomToolWireName,
+  unwrapRoutedCustomToolArguments,
+} from "../../responses/custom-tool-compat";
 import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/catalog";
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
@@ -158,8 +170,12 @@ import {
   type NestedSubagentDecision,
 } from "../nested-subagents";
 import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
+import { agentTaskRecoveryConfig, recoverEncryptedAgentTask } from "./agent-task-recovery";
+import { markBodyNonPersistable } from "../../responses/state";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel } from "./fetch-helpers";
 import { guardTerminalEventStream } from "./terminal-guard";
+import { grokNativeToolNamesForRequest } from "../../adapters/grok-structured-edit";
+import { relayResponsesSseWithTerminalRepair } from "../responses-terminal-repair";
 
 /**
  * Adapters whose continuation state must survive Codex's store:false requests.
@@ -175,7 +191,7 @@ export function sidecarOutcomeRecorder(
 ): ((outcome: CodexUpstreamOutcome) => void) | undefined {
   return authCtx.kind === "pool" || authCtx.kind === "main-pool"
     ? outcome => recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
-      threadId,
+      threadId: authCtx.affinityKey ?? threadId,
       probeLeaseId: authCtx.probeLeaseId,
     })
     : undefined;
@@ -352,7 +368,7 @@ async function retryCodexPoolOnAlternateAccount(
   if (!shouldDeferCodexResetDerivedCooldown(firstResponse, options.deferCodexResetDerivedCooldown)) {
     recordCodexUpstreamOutcome(config, firstAuthCtx.accountId, outcomeStatus, {
       ...quotaMeta,
-      threadId: req.headers.get("x-codex-parent-thread-id"),
+      threadId: firstAuthCtx.affinityKey,
       modelId: route.modelId,
       probeLeaseId: codexProbeLeaseId(firstAuthCtx),
       probeQuotaScope: codexProbeQuotaScope(firstAuthCtx),
@@ -427,7 +443,7 @@ export function codexForwardTerminalOutcomeRecorder(
       // request. Don't penalize account health; record success to clear any
       // prior soft-avoid so a healthy account isn't stuck avoided.
       recordCodexUpstreamOutcome(config, authCtx.accountId, 200, {
-        threadId,
+        threadId: authCtx.affinityKey ?? threadId,
         modelId,
         probeLeaseId: codexProbeLeaseId(authCtx),
         probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -447,7 +463,7 @@ export function codexForwardTerminalOutcomeRecorder(
       ? 200
       : (httpStatusOverride ?? logCtx?.terminalHttpStatus ?? 502);
     recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
-      threadId,
+      threadId: authCtx.affinityKey ?? threadId,
       modelId,
       probeLeaseId: codexProbeLeaseId(authCtx),
       probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -801,7 +817,8 @@ async function applyFinalRouteRequestNormalization(args: {
   applyOpenAiVirtualModel(parsed, route, logCtx);
 
   // Fast mode override for OpenAI-routed models.
-  if (config.fastMode !== undefined && route.provider.adapter === "openai-responses") {
+  const xaiApiKeyPriority = route.providerName === "xai" && route.provider.authMode === "key";
+  if (config.fastMode !== undefined && (route.provider.adapter === "openai-responses" || xaiApiKeyPriority)) {
     const tier = config.fastMode ? "priority" : undefined;
     if (parsed._rawBody && typeof parsed._rawBody === "object") {
       if (tier) (parsed._rawBody as Record<string, unknown>).service_tier = tier;
@@ -822,6 +839,7 @@ async function applyFinalRouteRequestNormalization(args: {
       subagentModels: childRow?.models ?? config.subagentModels,
       subagentModelFallback: config.subagentModelFallback,
       injectionPrompt: config.injectionPrompt,
+      subagentRoles: config.subagentRoles,
       depth: nested && !nested.clamp
         ? {
           depth: nested.depth,
@@ -915,7 +933,7 @@ export async function handleComboResponses(
     });
   };
 
-  const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+  let unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (rawBody as { input?: unknown } | undefined)?.input,
   );
   const canDecryptUnreadableAgentTask = (target: (typeof combo.targets)[number]): boolean => {
@@ -1119,6 +1137,7 @@ export async function handleResponses(
   logCtx: RequestLogContext,
   options: HandleResponsesOptions = {},
 ): Promise<Response> {
+  logCtx.requestStartedAt ??= Date.now();
   let body: unknown;
   try {
     body = await readJsonRequestBody(req);
@@ -1129,7 +1148,7 @@ export async function handleResponses(
   if (comboId && Object.hasOwn(config.combos ?? {}, comboId)) {
     return handleComboResponses(req, body, comboId, config, logCtx, options);
   }
-  const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+  let unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
   );
   const originalBody = body;
@@ -1266,8 +1285,8 @@ export async function handleResponses(
   // Preview the preferred Codex account without acquiring a probe lease or refreshing
   // tokens — auth is resolved only after the final route is selected.
   if (isThreadSpawnRequest(req.headers) && !options.comboAttempt) {
-    const threadId = req.headers.get("x-codex-parent-thread-id");
-    const previewAccountId = previewCodexAccountForRequest(threadId, config);
+    const poolAffinityKey = codexPoolAffinityKey(req.headers);
+    const previewAccountId = previewCodexAccountForRequest(poolAffinityKey ?? null, config);
     subagentFallbackAccountId = previewAccountId ?? config.activeCodexAccountId ?? null;
     const fallback = applySubagentModelFallback(
       parsed,
@@ -1297,6 +1316,42 @@ export async function handleResponses(
       }
     }
   }
+
+  // Optional, explicitly enabled recovery runs only after the final route is known. It never
+  // weakens the native-only encrypted-task refusal: recovery must produce plaintext before the
+  // route check can proceed, and a miss leaves the original ciphertext untouched.
+  if (isThreadSpawnRequest(req.headers)
+    && unreadableEncryptedAgentTask
+    && !isCanonicalOpenAiForwardProvider(route.provider)
+    && !options.comboAttempt) {
+    const recovery = agentTaskRecoveryConfig(config);
+    if (recovery) {
+      const recovered = await recoverEncryptedAgentTask(
+        req,
+        (body as { input?: unknown } | undefined)?.input,
+        recovery,
+        config,
+        { parentThreadId: req.headers.get("x-codex-parent-thread-id")?.trim() ?? null, abortSignal: options.abortSignal },
+      ).catch(() => false);
+      if (recovered) {
+        unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+        if (!unreadableEncryptedAgentTask) {
+          markBodyNonPersistable(body);
+          try {
+            const reparsed = parseRequest(body);
+            reparsed._providerContinuation = parsed._providerContinuation;
+            reparsed._cursorConversationId = parsed._cursorConversationId;
+            reparsed._clientThreadId = parsed._clientThreadId;
+            parsed = reparsed;
+          } catch {
+            unreadableEncryptedAgentTask = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (options.abortSignal?.aborted) return clientCancelledResponse();
 
   // Encrypted child tasks may only reach the canonical native backend. This check
   // runs against the FINAL route so native-only fallback can rescue a routed primary.
@@ -1534,6 +1589,52 @@ export async function handleResponses(
   }
 
   if ("passthrough" in adapter && adapter.passthrough && !routedCompaction) {
+    const routedCustomToolNames = isCanonicalOpenAiForwardProvider(route.provider)
+      ? new Set<string>()
+      : collectRoutedCustomToolNames(parsed._rawBody, route.provider.supportsResponsesCustomTools);
+    const routedCustomCallIds = new Set<string>();
+    const routedCustomItemIds = new Map<string, string>();
+    const restoreRoutedCustomPayload: (payload: string) => string = payload => {
+      if (routedCustomToolNames.size === 0) return payload;
+      let value: unknown;
+      try { value = JSON.parse(payload); } catch { return payload; }
+      const visit = (entry: unknown): unknown => {
+        if (Array.isArray(entry)) return entry.map(visit);
+        if (!entry || typeof entry !== "object") return entry;
+        const record = entry as Record<string, unknown>;
+        const next: Record<string, unknown> = {};
+        let changed = false;
+        for (const [key, child] of Object.entries(record)) {
+          const rewritten = visit(child);
+          next[key] = rewritten;
+          changed ||= rewritten !== child;
+        }
+        const wireName = routedCustomToolWireName(record);
+        if (record.type === "function_call" && wireName !== undefined && routedCustomToolNames.has(wireName)) {
+          if (typeof record.call_id === "string") routedCustomCallIds.add(record.call_id);
+          if (typeof record.id === "string") routedCustomItemIds.set(record.id, typeof record.call_id === "string" ? record.call_id : record.id);
+          next.type = "custom_tool_call";
+          next.id = customToolItemId(record.id);
+          next.input = unwrapRoutedCustomToolArguments(record.arguments);
+          delete next.arguments;
+          changed = true;
+        } else if (record.type === "function_call_output" && typeof record.call_id === "string" && routedCustomCallIds.has(record.call_id)) {
+          next.type = "custom_tool_call_output";
+          changed = true;
+        } else if ((record.type === "response.function_call_arguments.delta" || record.type === "response.function_call_arguments.done")
+          && typeof record.item_id === "string" && routedCustomItemIds.has(record.item_id)) {
+          next.type = record.type.endsWith(".done") ? "response.custom_tool_call_input.done" : "response.custom_tool_call_input.delta";
+          next.item_id = customToolItemId(record.item_id);
+          if (record.type.endsWith(".done")) {
+            next.input = unwrapRoutedCustomToolArguments(record.arguments);
+            delete next.arguments;
+          }
+          changed = true;
+        }
+        return changed ? next : entry;
+      };
+      return JSON.stringify(visit(value));
+    };
     const imageGenCallAliases = route.provider.authMode === "forward"
       ? new Map<string, { namespace: string; name: string }>()
       : imageGenToolCallAliases(buildToolBridgeMaps(parsed).toolNsMap, parsed._rawBody);
@@ -1575,11 +1676,15 @@ export async function handleResponses(
     let upstreamResponse: Response;
     const transportFailureResponse = (err: unknown): Response => {
       upstream.abort();
-      if (options.abortSignal?.aborted) return clientCancelledResponse();
+      if (options.abortSignal?.aborted) {
+        recordStreamFailure(logCtx, "client", "client_cancel");
+        return clientCancelledResponse();
+      }
+      recordStreamFailure(logCtx, "upstream", "upstream_wait_headers");
       const outcome = err instanceof Error && err.name === "TimeoutError" ? "timeout" : "connect_error";
       if (usesCodexForwardPoolAuth(authCtx, route.provider)) {
         recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
-          threadId: req.headers.get("x-codex-parent-thread-id"),
+          threadId: authCtx.affinityKey,
           modelId: route.modelId,
           probeLeaseId: codexProbeLeaseId(authCtx),
           probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -1591,6 +1696,7 @@ export async function handleResponses(
       return formatErrorResponse(502, "upstream_error", msg);
     };
     try {
+      recordStreamStage(logCtx, "upstreamDispatchMs");
       // Transient-5xx pre-stream retry (devlog/_plan/260716_claudecode_hardening/010):
       // the ChatGPT backend emits transient 502/520s that an immediate retry absorbs.
       // Body is a replayable string; nothing has streamed to the client yet.
@@ -1707,7 +1813,7 @@ export async function handleResponses(
       )) {
         recordCodexUpstreamOutcome(config, authCtx.accountId, upstreamResponse.status, {
           ...quotaMeta,
-          threadId: req.headers.get("x-codex-parent-thread-id"),
+          threadId: authCtx.affinityKey,
           modelId: route.modelId,
           probeLeaseId: codexProbeLeaseId(authCtx),
           probeQuotaScope: codexProbeQuotaScope(authCtx),
@@ -1720,6 +1826,7 @@ export async function handleResponses(
     // keep their typed failure envelope. Non-empty bodies are relayed verbatim
     // (headers included) so pool-retry Activation B/D and client diagnostics stay intact.
     if (!upstreamResponse.ok) {
+      if (upstreamResponse.status === 404) warnRetainedModel404Once(route.providerName, route.modelId);
       if (options.comboAttempt) {
         const failure = await consumeComboFailure(upstreamResponse, options.abortSignal);
         options.onConsumedComboFailure?.(failure);
@@ -1743,8 +1850,19 @@ export async function handleResponses(
     // devlog/_plan/260723_win_mem_safestream/020). Default on the bundled
     // known-bad runtime remains the tee path below.
     if (isEventStream && upstreamResponse.body) {
+      const terminalRepairPolicy = providerModelResponsesTerminalRepair(
+        route.providerName,
+        route.provider,
+        route.modelId,
+      );
+      const passthroughBody = terminalRepairPolicy
+        ? relayResponsesSseWithTerminalRepair(upstreamResponse.body, upstream, terminalRepairPolicy)
+        : upstreamResponse.body;
       const repairConfig = route.provider.responsesItemIdRepair;
-      const needsClientRewrite = imageGenCallAliases.size > 0 || hasResponsesItemIdRepair(repairConfig);
+      const needsClientRewrite = imageGenCallAliases.size > 0
+        || hasResponsesItemIdRepair(repairConfig)
+        || routedCustomToolNames.size > 0
+        || terminalRepairPolicy !== undefined;
       const winNoClientRewrite = process.platform === "win32" && !needsClientRewrite;
       const eagerDecision = winNoClientRewrite ? decideEagerRelay(config.streamMode ?? "auto") : null;
       if (eagerDecision?.useEagerRelay) {
@@ -1779,7 +1897,7 @@ export async function handleResponses(
           onCompletedResponse: rememberPassthroughResponse,
           onFirstOutput: options.onFirstOutput,
         });
-        const eagerBody = relaySseEagerBounded(upstreamResponse.body, turnAc, {
+        const eagerBody = relaySseEagerBounded(passthroughBody, turnAc, {
           inspectChunk: chunk => inspector.feed(chunk),
           finishInspection: () => inspector.finish(),
           sawTerminal: () => inspector.reported(),
@@ -1805,7 +1923,7 @@ export async function handleResponses(
           headers,
         }));
       }
-      const [nativeBody, inspectBody] = upstreamResponse.body.tee();
+      const [nativeBody, inspectBody] = passthroughBody.tee();
       const turnAc = new AbortController();
       linkAbortSignal(upstream, turnAc.signal);
       registerTurn(turnAc);
@@ -1864,6 +1982,7 @@ export async function handleResponses(
         hasResponsesItemIdRepair(repairConfig)
           ? createResponsesItemIdPayloadRewrite(repairConfig!)
           : undefined,
+        routedCustomToolNames.size > 0 ? restoreRoutedCustomPayload : undefined,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
       const rewrittenBody = payloadRewrites.length > 0
         ? relaySseWithPayloadRewrite(nativeBody, composeSsePayloadRewrites(...payloadRewrites))
@@ -2324,6 +2443,50 @@ export async function handleResponses(
         continue recovery;
       }
 
+      // Generic OAuth pools may fail over an account only when the provider's response
+      // proves the credential is unusable.  A bare 403 (including workspace/plan policy
+      // denials) stays terminal; the classifier consumes only a bounded cloned body.
+      if (
+        (upstreamResponse.status === 401 || upstreamResponse.status === 403)
+        && oauthPoolAccountId
+        && oauthPoolProvider
+        && oauthPoolFailovers < OAUTH_POOL_MAX_FAILOVERS_PER_REQUEST
+      ) {
+        let failureBody = "";
+        try { failureBody = (await upstreamResponse.clone().text()).slice(0, 16_384); } catch { /* keep empty */ }
+        const nextAccountId = await rotateOAuthAccountOnFailure(
+          config,
+          oauthPoolProvider,
+          oauthPoolAccountId,
+          upstreamResponse.status,
+          failureBody,
+          upstreamResponse.headers.get("retry-after"),
+          oauthPoolSessionKey,
+        );
+        if (nextAccountId) {
+          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already closed */ }
+          try {
+            const snapshot = await getOAuthPoolAccessSnapshot(oauthPoolProvider, nextAccountId);
+            oauthPoolAccountId = nextAccountId;
+            oauthPoolFailovers += 1;
+            applyOAuthAccountRouting(snapshot);
+            promoteOAuthActiveAccount(oauthPoolProvider, nextAccountId);
+            logCtx.provider = formatOAuthProviderForLog(oauthPoolProvider, nextAccountId);
+            activeAdapter = resolveAdapter(
+              resolveWireProtocolOverride(route.providerName, route.modelId, route.provider),
+              config.cacheRetention,
+            );
+            sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name);
+            const result = await rebuildAndRefetch("oauth-pool-auth-failure");
+            if ("failed" in result) return result.failed;
+            upstreamResponse = result;
+            continue recovery;
+          } catch {
+            // Keep the original provider response when the alternate cannot be materialized.
+          }
+        }
+      }
+
       // Multi-key 429 failover: rotate to the next pool key (cooldown-aware) and retry the
       // SAME request once per remaining key. OAuth/forward providers and single-key pools
       // return null immediately, so this stays a no-op for them (src/providers/key-failover.ts).
@@ -2405,6 +2568,7 @@ export async function handleResponses(
       break;
     }
     if (!upstreamResponse.ok) {
+      if (upstreamResponse.status === 404) warnRetainedModel404Once(route.providerName, route.modelId);
       if (options.comboAttempt) {
         const failure = await consumeComboFailure(upstreamResponse, options.abortSignal)
           .finally(cleanupUpstreamAbort);
@@ -2623,6 +2787,7 @@ export async function handleResponses(
             if (logCtx.activeAttempt) logCtx.activeAttempt.usage = usage;
           }
         },
+        convertedGrokNativeToolNames: grokNativeToolNamesForRequest(parsed, route.provider),
         // Compaction turns must NOT enter the continuation cache: _rawBody still holds the full
         // PRE-compaction history, and a later previous_response_id expansion would rehydrate the
         // giant stale chain Codex just replaced.
@@ -2679,6 +2844,7 @@ export async function handleResponses(
           if (logCtx.activeAttempt) logCtx.activeAttempt.usage = usage;
         }
       },
+      convertedGrokNativeToolNames: grokNativeToolNamesForRequest(parsed, route.provider),
     });
     // See the streaming branch: compaction turns skip the continuation cache.
     if (!routedCompaction) {

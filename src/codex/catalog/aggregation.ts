@@ -13,6 +13,7 @@ import { getJawcodeModelMetadata, getJawcodeModelMetadataCaseInsensitive, listJa
 import { enrichProviderFromRegistry, shouldCaseFoldMetadataModelId } from "../../providers/derive";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { applyProviderContextCap, providerContextCap } from "../../providers/context-cap";
+import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { routedSlug, slugEquals, slugsEquivalent } from "../../providers/slug-codec";
 import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
@@ -136,8 +137,15 @@ export function deriveComboCatalogModel(
   );
   const contextWindow = Math.min(...members.map(member => member.contextWindow!));
   const maxInputTokens = Math.min(
+    contextWindow,
     ...members.map(member => member.maxInputTokens ?? member.contextWindow!),
   );
+  const softBudgets = members
+    .map(member => member.autoCompactTokenLimit)
+    .filter((value): value is number => typeof value === "number" && value > 0);
+  const autoCompactTokenLimit = softBudgets.length > 0
+    ? clampAutoCompactTokenLimit(contextWindow, maxInputTokens, Math.min(...softBudgets))
+    : undefined;
   const defaultReasoningEffort = effectiveComboDefault(
     combo.defaultEffort,
     reasoningEfforts,
@@ -149,6 +157,7 @@ export function deriveComboCatalogModel(
     owned_by: COMBO_NAMESPACE,
     contextWindow,
     maxInputTokens,
+    ...(autoCompactTokenLimit !== undefined ? { autoCompactTokenLimit } : {}),
     inputModalities,
     reasoningEfforts,
     ...(combo.alias ? { alias: combo.alias } : {}),

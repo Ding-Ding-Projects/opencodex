@@ -10,10 +10,11 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";
 import { npmInvocation } from "../src/update/npm-invocation.mjs";
 import { checkNpmCacheOwnership, formatNpmCacheOwnershipFailure } from "../src/update/npm-cache-preflight.mjs";
 import {
@@ -21,6 +22,7 @@ import {
   runProcessTreeCommand,
 } from "../src/update/install-process.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
+import { runBunWithCrashRetry } from "../src/lib/bun-start-supervisor.mjs";
 import { parseConcreteUpdateVersion } from "../src/update/version-resolution.mjs";
 
 const PKG = "@bitkyc08/opencodex";
@@ -358,18 +360,14 @@ function bunBinDir() {
   return dirname(require.resolve("bun/package.json"));
 }
 
-// The `bun` package ships a tiny ASCII placeholder at bin/bun.exe until its
-// postinstall downloads the real ~60MB binary. --ignore-scripts / pnpm leave
-// the ~450-byte stub in place, which is NOT executable (ENOEXEC). A size gate
-// cleanly distinguishes the stub from a real binary on every platform.
-const REAL_BUN_MIN_BYTES = 1_000_000;
+const BUN_OVERRIDE_ENV = "OPENCODEX_BUN_PATH";
 
 function findBunBinary(bunDir) {
   // The npm `bun` package ships the binary as bin/bun.exe on every platform;
   // probe bin/bun too for forward compatibility.
   for (const name of ["bun.exe", "bun"]) {
     const p = join(bunDir, "bin", name);
-    if (existsSync(p) && statSync(p).size >= REAL_BUN_MIN_BYTES) return p;
+    if (isRealBunBinary(p)) return p;
   }
   return null;
 }
@@ -388,6 +386,17 @@ function fail(msg) {
 }
 
 function resolveBun() {
+  // Keep direct npm-launcher starts aligned with durable service/shim installs:
+  // a valid explicit runtime must win even when the bundled dependency exists.
+  const override = process.env[BUN_OVERRIDE_ENV]?.trim();
+  if (override) {
+    const overridePath = resolve(override);
+    if (isRealBunBinary(overridePath)) return overridePath;
+    console.error(
+      `opencodex: ${BUN_OVERRIDE_ENV} is missing, unreadable, or not a complete Bun binary; falling back to the bundled runtime.`,
+    );
+  }
+
   let bunDir;
   try {
     bunDir = bunBinDir();
@@ -434,37 +443,18 @@ const bun = resolveBun();
 // port left bound, pid/runtime-port files left behind, Codex config not restored.
 // windowsHide: from a windowless parent (the desktop app), a console-subsystem
 // child would otherwise allocate a visible console window on Windows.
-const child = spawn(bun, [cliPath, ...process.argv.slice(2)], { stdio: "inherit", windowsHide: true });
-
-// Windows has no real POSIX signals (no SIGHUP); forwarding is best-effort there.
-const FORWARDED = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
-const handlers = FORWARDED.map(sig => {
-  const handler = () => {
-    try {
-      child.kill(sig);
-    } catch {
-      /* child already exited */
-    }
-  };
-  process.on(sig, handler);
-  return [sig, handler];
+const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2)], {
+  windowsHide: true,
+  retryCommand: process.argv[2],
 });
-const clearHandlers = () => {
-  for (const [sig, handler] of handlers) process.removeListener(sig, handler);
-};
-
-child.on("error", err => {
-  clearHandlers();
-  console.error(`opencodex: failed to launch Bun runtime: ${err.message}`);
+if (result.error) {
+  console.error(`opencodex: failed to launch Bun runtime: ${result.error.message}`);
   process.exit(1);
-});
-
-child.on("exit", (code, signal) => {
-  clearHandlers();
-  // Mirror the child's terminating signal/exit code so this launcher's status matches.
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
-});
+}
+// Mirror the child’s terminating signal/exit code so this launcher has the same
+// status as the supervised Bun process, including parent termination signals.
+if (result.signal) {
+  process.kill(process.pid, result.signal);
+} else {
+  process.exit(result.code ?? 1);
+}

@@ -18,7 +18,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { getConfigDir } from "../config";
+import { atomicWriteFile, getConfigDir, type AtomicWriteIO } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
 import { isProcessAlive } from "../lib/process-control";
 import { serviceApiTokenFilePath } from "../lib/service-secrets";
@@ -400,7 +400,10 @@ case "$ocx_subcommand" in
     ;;
   *)
     if [ -z "$OCX_SHIM_BYPASS" ]; then
-      ${shQuote(bunPath)} ${shQuote(cliPath)} ensure >/dev/null 2>&1 || true
+      # Ensure routing is ready before Codex starts. A failed ensure gets one
+      # bounded retry, but neither result can prevent the real Codex launch.
+      ${shQuote(bunPath)} ${shQuote(cliPath)} ensure >/dev/null 2>&1 ||
+        ${shQuote(bunPath)} ${shQuote(cliPath)} ensure >/dev/null 2>&1 || true
     fi
     ;;
 esac
@@ -456,7 +459,7 @@ if "%~1"=="" goto ensure_ocx\r
 shift\r
 goto scan_codex_args\r
 :ensure_ocx\r
-"%OCX_BUN%" "%OCX_CLI%" ensure >nul 2>nul\r
+"%OCX_BUN%" "%OCX_CLI%" ensure >nul 2>nul || "%OCX_BUN%" "%OCX_CLI%" ensure >nul 2>nul\r
 :run_codex\r
 "%OCX_REAL_CODEX%" %*\r
 `;
@@ -491,7 +494,10 @@ foreach ($argValue in $args) {
 }
 $skipEnsure = $env:OCX_SHIM_BYPASS -or $internalCommands -contains $subcommand -or @("--help", "-h", "--version", "-V") -contains $subcommand
 if (-not $skipEnsure) {
+  # Ensure routing is ready before Codex starts. A failed ensure gets one
+  # bounded retry, but neither result can prevent the real Codex launch.
   & ${psString(bunPath)} ${psString(cliPath)} ensure *> $null
+  if ($LASTEXITCODE -ne 0) { & ${psString(bunPath)} ${psString(cliPath)} ensure *> $null }
 }
 & ${psString(realCodexPath)} @args
 exit $LASTEXITCODE
@@ -501,6 +507,13 @@ exit $LASTEXITCODE
 interface ShimStateReadResult {
   state: ShimState | null;
   warning?: string;
+}
+
+let codexShimStateAtomicWriteIOForTests: AtomicWriteIO | null = null;
+
+/** @internal Narrow deterministic seam for interrupted state-publication tests. */
+export function setCodexShimStateAtomicWriteIOForTests(io: AtomicWriteIO | null): void {
+  codexShimStateAtomicWriteIOForTests = io;
 }
 
 function fileErrorCode(error: unknown): string | undefined {
@@ -586,7 +599,11 @@ function writeState(state: ShimState): void {
   const path = statePath();
   recordOwnedConfigPath(getConfigDir(), path);
   if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true });
-  writeFileSync(path, JSON.stringify(state, null, 2) + "\n", "utf8");
+  writeStateBytes(path, JSON.stringify(state, null, 2) + "\n");
+}
+
+function writeStateBytes(path: string, content: string): void {
+  atomicWriteFile(path, content, codexShimStateAtomicWriteIOForTests ?? undefined);
 }
 
 /** Git-Bash accepts `C:/...` but not backslashed paths inside sh scripts. */
@@ -973,7 +990,7 @@ function installCodexShimInternal(options: InstallCodexShimInternalOptions): { i
           writeState(primaryState(files));
         } catch (writeError) {
           try {
-            writeFileSync(statePath(), originalStateBytes);
+            writeStateBytes(statePath(), originalStateBytes.toString("utf8"));
           } catch (restoreError) {
             throw new AggregateError(
               [writeError, restoreError],
