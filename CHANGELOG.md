@@ -6,6 +6,7 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(docs): point `/troubleshooting` at `troubleshooting/bun-startup-crashes` so the redirect lands on the section's first sidebar entry instead of one article below it
 - fix(cli): route `start`, `dev`, and `dev:proxy` package scripts through the supervised npm launcher so every visible-terminal proxy start gets the one bounded Bun-crash retry instead of dying on the first native panic
 - fix(kiro): accept client parallel_tool_calls permission while retaining the parsed hint and omitting unsupported parallel fields from the CodeWhisperer wire
 - fix(cursor): settle clean Connect END_STREAM after ordered frame drain, fail-close open tools, finish drained client-tool finalizers, and prohibit terminal replay after accepted output

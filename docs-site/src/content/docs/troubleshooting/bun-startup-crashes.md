@@ -44,7 +44,7 @@ opencodex handles this failure at two separate process boundaries:
 | --- | --- | --- |
 | npm bins (`ocx`, `opencodex`) | Yes | `bin/ocx.mjs` supervises every command. |
 | Package scripts (`bun run start`, `dev`, `dev:proxy`) | Yes | They route through `bin/ocx.mjs`; `tests/proxy-start-supervision.test.ts` fails if any of them is pointed back at direct `bun run src/cli/index.ts start`. |
-| WinSW service wrapper | Restart loop | An endless `cmd` loop restarts the proxy after any exit; it does not classify panics. |
+| Windows service wrappers | Restart on failure | The native (WinSW) backend restarts via `<onfailure action="restart" delay="5 sec"/>`; the Task Scheduler wrapper's `cmd` loop reruns only after a nonzero exit, and a clean exit ends it without restarting. Neither classifies panics. |
 | Generated Codex shims | Two attempts | Best-effort `ocx ensure` twice, then the real Codex command launches regardless. |
 | Windows tray (`__tray-host`) | No | Hidden stdio; a dead tray surfaces through tray status staleness rather than a console transcript. |
 

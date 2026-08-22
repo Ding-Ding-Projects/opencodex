@@ -19,7 +19,7 @@ verified red with the old direct-spawn scripts restored and green again after re
 Focused evidence: `bun test tests/proxy-start-supervision.test.ts tests/bun-start-supervisor.test.ts
 tests/ocx-launcher-source.test.ts` at the integration tip — 23 passed, 0 failed. The troubleshooting
 article gained a route-by-route coverage table (npm bins and package scripts supervised; service
-loop restarts forever; shims attempt ensure twice; the tray host remains unsupervised with hidden
+loop reruns after nonzero exits; shims attempt ensure twice; the tray host remains unsupervised with hidden
 stdio) plus the field-evidence paragraph; the in-app bundle was regenerated.
 
 Open items: the upstream Bun runtime fix remains unshipped (`OPENCODEX_BUN_PATH` override and the

@@ -93,10 +93,10 @@ describe("the README's documentation links", () => {
     // never ran, and the single `expect()` inside it never executed: a guard
     // written for a real 404 that could not have caught that 404 again.
     const paths = [
-      ...readme.matchAll(/https:\/\/opencodex\.me\/([a-z0-9./-]*)/g),
-      ...readme.matchAll(/https:\/\/[a-z.-]*github\.io\/opencodex\/([a-z0-9./-]*)/g),
+      ...readme.matchAll(/https:\/\/opencodex\.me\/([a-z0-9./-]*[a-z0-9-])?/g),
+      ...readme.matchAll(/https:\/\/[a-z.-]*github\.io\/opencodex\/([a-z0-9./-]*[a-z0-9-])?/g),
     ]
-      .map(m => m[1].replace(/\/$/, ""))
+      .map(m => m[1]?.replace(/\/$/, "") ?? "")
       .filter(Boolean);
 
     // Without this the assertion above can go quiet again the moment the host
@@ -105,6 +105,11 @@ describe("the README's documentation links", () => {
     expect(`README docs links found: ${paths.length > 0}`).toBe("README docs links found: true");
 
     for (const path of paths) {
+      // The capture must never climb out of the content/public roots: a '..'
+      // segment would make the existsSync joins below normalize above them and
+      // bless whatever file it lands on.
+      expect(`${path} escapes the docs tree: ${path.split("/").includes("..")}`)
+        .toBe(`${path} escapes the docs tree: false`);
       const isPage = [".md", ".mdx"].some(ext => existsSync(join(DOCS, `${path}${ext}`)));
       const isCoveredSection = hasIndexPage(path) || config.includes(`"/${path}"`);
       // The README also links shipped static assets -- the content-addressed

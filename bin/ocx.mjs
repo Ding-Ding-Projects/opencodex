@@ -5,8 +5,9 @@
  * The package source is TypeScript that runs on the Bun runtime. To let
  * `npm install -g @bitkyc08/opencodex` work without a separately-installed Bun,
  * we bundle the runtime via the `bun` npm dependency and exec it from this
- * Node shim. (Dev still runs `bun run src/cli/index.ts` directly via the shebang on
- * src/cli/index.ts — only the published npm `bin` routes through here.)
+ * Node shim. The package scripts (`start`, `dev`, `dev:proxy`) route through
+ * here too, so checkout starts carry the same crash supervision as the
+ * published bins; only tests and tools that import the CLI as a module bypass it.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -373,14 +374,23 @@ function findBunBinary(bunDir) {
 }
 
 function fail(msg) {
+  // A repository contributor hitting this from the package scripts just needs
+  // dependencies installed; the global reinstall line below cannot fix their
+  // checkout (createRequire resolves from this checkout either way).
+  const checkoutHint = isNodeModulesInstall()
+    ? ""
+    : "\nYou are running from a source checkout, so install its dependencies first:\n" +
+      "  bun install\n";
   console.error(
     `opencodex: ${msg}\n` +
       "The bundled Bun runtime could not be prepared. This usually means the\n" +
       "install skipped lifecycle scripts (e.g. npm blocked bun's postinstall\n" +
-      "under allowScripts) or optional dependencies. Reinstall with:\n" +
-      "  npm install -g --allow-scripts=bun @bitkyc08/opencodex\n" +
-      "(use sudo if the original install used sudo; without --ignore-scripts\n" +
-      "and without --omit=optional / optional=false)"
+      "under allowScripts) or optional dependencies." +
+      checkoutHint +
+      (checkoutHint ? "" : " Reinstall with:\n") +
+      (checkoutHint ? "" : "  npm install -g --allow-scripts=bun @bitkyc08/opencodex\n") +
+      (checkoutHint ? "" : "(use sudo if the original install used sudo; without --ignore-scripts\n" +
+      "and without --omit=optional / optional=false)")
   );
   process.exit(1);
 }

@@ -188,7 +188,7 @@ downloaded and trust. The launcher rejects a path it cannot inspect, a non-regul
 placeholder-sized file (less than 1 MiB), but that file-and-size check does not verify Bun identity
 or a publisher signature. Reinstall a service or Codex shim after setting the override so the
 durable artifact captures the same runtime. Full diagnosis, safety notes, and recovery commands are
-in [Bun Startup Crashes on Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
+in [Bun Startup Crash Recovery on Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
 
 This is a non-visual startup fix. Its regression evidence uses deterministic child-process and CLI
 fixtures for exit, signal, marker, stderr, and journal-owner behavior; it does not generate a real
