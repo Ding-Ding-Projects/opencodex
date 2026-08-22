@@ -38,10 +38,27 @@ opencodex handles this failure at two separate process boundaries:
    stderr tail, so output from the first crash cannot turn an ordinary second failure into another
    crash.
 
+### Which launch routes carry the retry
+
+| Route | Panic retry | Notes |
+| --- | --- | --- |
+| npm bins (`ocx`, `opencodex`) | Yes | `bin/ocx.mjs` supervises every command. |
+| Package scripts (`bun run start`, `dev`, `dev:proxy`) | Yes | They route through `bin/ocx.mjs`; `tests/proxy-start-supervision.test.ts` fails if any of them is pointed back at direct `bun run src/cli/index.ts start`. |
+| WinSW service wrapper | Restart loop | An endless `cmd` loop restarts the proxy after any exit; it does not classify panics. |
+| Generated Codex shims | Two attempts | Best-effort `ocx ensure` twice, then the real Codex command launches regardless. |
+| Windows tray (`__tray-host`) | No | Hidden stdio; a dead tray surfaces through tray status staleness rather than a console transcript. |
+
 An ordinary nonzero CLI exit, a spawn failure, a warning without the Bun marker, exit code `139`
 without the marker, or a user termination signal is never retried. If both eligible attempts produce
 the Bun crash marker, the real second failure is returned and the launcher prints one runtime-override
 hint instead of looping.
+
+The panic is transient rather than deterministic in opencodex's own startup path. In field testing,
+an armed reproduction — a stale journal owned by a provably dead process, with the journaled original
+config restored into place — printed the recovery warning and reached a healthy listening proxy on
+every attempt through both the installed launcher and a checkout of the same version. A crash
+that does reproduce on the second supervised attempt is therefore genuine runtime evidence worth the
+runtime override below.
 
 The generated Codex launcher shims separately run `ocx ensure` synchronously, make at most two
 best-effort ensure attempts, and then launch the real Codex command even if both attempts failed.

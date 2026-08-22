@@ -152,6 +152,22 @@ request is not merged or released, its exact-head CI run is red, and independent
 | Evidence boundary | This is non-visual CLI/runtime behavior. Source inspection, deterministic process tests, stderr/exit-status assertions, and exact-SHA command results are applicable evidence; screenshots or UI captures would not prove the recovery contract and are not claimed. |
 | Remaining external work | PR #37 has zero submitted reviews and pending requests for `DingDingChae` and `MatDayProjects`. The `dev2-go` carry, PR [#38](https://github.com/Ding-Ding-Projects/opencodex/pull/38), is also open with zero submitted reviews and the same pending reviewers at head `99ee1697b34a585725c7cce1753964732fcd0b99`; aggregate run [32347209263](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/32347209263) remains red. `dev`/`dev2-go` integration, both review decisions, green aggregate exact-SHA CI, release publication, and post-release verification are still open. No source-line result in this section is evidence that any of those external stages completed. |
 
+## Completed on `dev` — supervised package-script proxy starts (2026-08-22)
+
+The visible-terminal refusal from a transient native Bun panic is closed for checkout users: the
+`start`, `dev`, and `dev:proxy` package scripts now launch through the supervised npm launcher
+(`bun bin/ocx.mjs start`) instead of spawning the CLI directly, so every such start carries the same
+one bounded crash retry as the installed `ocx` bins, including signal forwarding that direct spawns
+never had.
+
+| Work | Current state |
+| --- | --- |
+| Script rerouting | All three proxy-starting scripts point at `bin/ocx.mjs`; `tests/proxy-start-supervision.test.ts` pins each script to the exact supervised command, forbids any of them referencing `src/cli/index.ts` directly, asserts the launcher still dispatches through `runBunWithCrashRetry`, and checks supervisor command eligibility (`start`/`ensure` retryable; `update`/`__tray-host`/`status` not). The negative regression was watched failing with the old script text restored and green again after re-applying it. |
+| Live evidence | On this host, an armed stale-journal restore (dead-owner journal plus journaled original config restored into place) printed the recovery warning and reached a healthy listening proxy through both the installed desktop launcher and `bun bin/ocx.mjs start`; eight reproduction attempts of the reported segfault, including two concurrent-start races and the user-shaped leftover-state fixture, all completed cleanly. The panic is treated as the known transient Bun Windows native family tracked by `src/lib/bun-stream-caps.ts`, not as an opencodex startup defect. |
+| Coverage boundary | Service wrapper restarts via its own endless loop; Codex shims make two best-effort ensure attempts; the tray host remains unsupervised with hidden stdio and surfaces liveness through status staleness. These are recorded in the troubleshooting article's route table rather than silently claimed as covered. |
+| Documentation | `docs-site/.../troubleshooting/bun-startup-crashes.md` gained the route-by-route coverage table and the field-evidence paragraph; the in-app bundle was regenerated; CHANGELOG carries the fix under Unreleased. |
+| Preservation note | The work was found uncommitted by a parallel session mid-integration and preserved at `63837acec` on `preserve/proxy-start-supervision`, then cherry-picked onto `dev`; the preservation branch tip is contained by content but not by ancestry until the next merge-based integration pass. |
+
 ## Completed — plug-and-play local startup (2026-08-04)
 
 This refresh was implemented and verified on `codex/plug-and-play-startup` for integration into

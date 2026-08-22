@@ -1,5 +1,33 @@
 # Handoff
 
+## Proxy-start panic supervision extended to package scripts — 2026-08-22, `dev`
+
+Reported defect: `ocx start` dying immediately after the stale-journal recovery warning with a Bun
+native panic (`Segmentation fault at address 0xFFFFFFFFFFFFFFFF`, `oh no: Bun has crashed`).
+Investigation found no deterministic opencodex startup defect: eight reproduction attempts — including
+an armed stale-journal restore with a provably dead owner and the journaled original config restored
+into place, run through both the installed desktop launcher and a checkout of the same version — all
+reached a healthy listening proxy. The panic matches the known transient Bun Windows native family
+tracked by `src/lib/bun-stream-caps.ts` (`MIN_FIXED_BUN_VERSION` remains `null`; no released Bun is
+proven to carry the upstream fix).
+
+The shipped change closes the gap that turned a transient panic into a permanent refusal on visible
+terminals: `start`, `dev`, and `dev:proxy` now route through the supervised launcher
+(`bun bin/ocx.mjs start`) and inherit the one bounded marker-qualified retry plus signal forwarding.
+`tests/proxy-start-supervision.test.ts` pins the wiring with exact-boundary assertions and was
+verified red with the old direct-spawn scripts restored and green again after re-applying them.
+Focused evidence: `bun test tests/proxy-start-supervision.test.ts tests/bun-start-supervisor.test.ts
+tests/ocx-launcher-source.test.ts` at the integration tip — 23 passed, 0 failed. The troubleshooting
+article gained a route-by-route coverage table (npm bins and package scripts supervised; service
+loop restarts forever; shims attempt ensure twice; the tray host remains unsupervised with hidden
+stdio) plus the field-evidence paragraph; the in-app bundle was regenerated.
+
+Open items: the upstream Bun runtime fix remains unshipped (`OPENCODEX_BUN_PATH` override and the
+documented canary guidance are the user-side escape hatch); the tray `__tray-host` route is still
+unsupervised by design and reports liveness through status staleness; the parallel-session
+preservation branch `preserve/proxy-start-supervision` (`63837acec`) holds the same change and is
+content-contained but not yet ancestry-proven into `dev`.
+
 ## Current integration closeout — 2026-08-21, source integration tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`
 
 The primary integration checkout is clean. This handoff is a documentation-only descendant of
