@@ -31,8 +31,10 @@ describe("install scripts", () => {
     expect(pkg.dependencies?.zod).toBe("4.4.3");
     expect(pkg.devDependencies?.typescript).toBe("5.9.3");
     expect(pkg.devDependencies?.["@types/bun"]).toBe("1.3.14");
-    expect(pkg.scripts?.dev).toBe("bun run src/cli/index.ts start");
-    expect(pkg.scripts?.["dev:proxy"]).toBe("bun run src/cli/index.ts start");
+    // Visible proxy starts are panic-supervised through bin/ocx.mjs —
+    // tests/proxy-start-supervision.test.ts is the negative regression for this.
+    expect(pkg.scripts?.dev).toBe("bun bin/ocx.mjs start");
+    expect(pkg.scripts?.["dev:proxy"]).toBe("bun bin/ocx.mjs start");
     expect(pkg.scripts?.["dev:gui"]).toBe("cd gui && bun run dev");
     expect(pkg.scripts?.["prepare:package"]).toBe("bun scripts/prepare-package.ts");
     expect(pkg.scripts?.["verify:gui-dist"]).toBe("bun scripts/verify-gui-dist.ts");
@@ -545,7 +547,9 @@ describe("install scripts", () => {
     const script = await readText("scripts/release.ts");
 
     expect(script).toContain("waitForReleaseWorkflowRun");
-    expect(script).toContain("gh run list --workflow release.yml --branch");
+    // The helper dispatches gh through runRequired argv arrays (portable shims),
+    // so pin the call shape rather than a spaced CLI string.
+    expect(script).toContain('["gh", "run", "list", "--workflow", "release.yml", "--branch"');
     expect(script).toContain("--commit");
     expect(script).toContain("createdAt,databaseId,headSha,status,url");
     expect(script).toContain("await watchRun(releaseRun.databaseId)");
