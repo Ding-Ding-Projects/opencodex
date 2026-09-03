@@ -1,9 +1,15 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildWindowsTrayRunCommand,
+  describeTrayCrash,
+  latestTrayCrash,
+  parseTrayCrashEvidence,
   parseWindowsTrayRunValue,
+  readTrayCrashEvidence,
+  recordTrayCrashEvidence,
   readWindowsTrayRunValueWithAsyncRunner,
   readWindowsTrayRunValueWithRunner,
   windowsTrayProcessArgs,
@@ -273,6 +279,96 @@ describe("Windows tray packaging and command safety", () => {
       expect(source).toContain("stop");
       expect(source).toContain("aborting before package replacement");
     }
+  });
+});
+
+describe("Windows tray crash evidence and supervised launch", () => {
+  let evidenceDir: string | null = null;
+  function evidencePath(): string {
+    evidenceDir ??= mkdtempSync(join(tmpdir(), "ocx-tray-crash-"));
+    return join(evidenceDir, "tray-crash.json");
+  }
+
+  test("records, reads back, and caps crash evidence at eight bounded entries", () => {
+    const path = evidencePath();
+    try { rmSync(path); } catch { /* first write in this test */ }
+    for (let index = 1; index <= 10; index += 1) {
+      recordTrayCrashEvidence({
+        at: 1_700_000_000_000 + index,
+        source: "host-launch",
+        exitCode: 139,
+        panic: true,
+      }, path);
+    }
+    const entries = readTrayCrashEvidence(path);
+    expect(entries).toHaveLength(8);
+    expect(entries[0].at).toBe(1_700_000_000_003);
+    expect(entries[entries.length - 1].at).toBe(1_700_000_000_010);
+    expect(latestTrayCrash(entries)?.at).toBe(1_700_000_000_010);
+    const raw = JSON.parse(readFileSync(path, "utf8")) as { version: number; entries: unknown[] };
+    expect(raw.version).toBe(1);
+    expect(raw.entries).toHaveLength(8);
+  });
+
+  test("tolerates malformed, hostile, and foreign crash records instead of trusting them", () => {
+    expect(parseTrayCrashEvidence("not json at all")).toEqual([]);
+    expect(parseTrayCrashEvidence(JSON.stringify({ version: 99, entries: [] }))).toEqual([]);
+    expect(parseTrayCrashEvidence(JSON.stringify({ version: 1, entries: "nope" }))).toEqual([]);
+    const hostile = parseTrayCrashEvidence(JSON.stringify({
+      version: 1,
+      entries: [
+        { at: 5, source: "host-launch", exitCode: 139, panic: true },
+        { at: "five", source: "host-launch" },
+        { at: 6, source: "" },
+        { at: 7, source: "x".repeat(65) },
+        null,
+        { at: 8, source: "tray-dispatch", command: "__tray-start", exitCode: "seven", panic: false, elapsedSeconds: 3 },
+        { at: 9, source: "host-launch", exitCode: null, panic: true, detail: "z".repeat(4096) },
+      ],
+    }));
+    // Only the well-formed entries survive; unknown fields are dropped.
+    expect(hostile.map(entry => entry.at)).toEqual([5, 8]);
+    expect(hostile[1].exitCode).toBeNull();
+    expect(hostile[1].command).toBe("__tray-start");
+  });
+
+  test("describes a host-launch crash with its reason and age in plain words", () => {
+    const now = 1_700_000_100_000;
+    const panic = describeTrayCrash({ at: now - 30_000, source: "host-launch", exitCode: 139, panic: true }, now);
+    expect(panic).toContain("native Bun crash marker");
+    expect(panic).toContain("<1m ago");
+    const plain = describeTrayCrash({ at: now - 5 * 60_000, source: "host-launch", exitCode: 3, panic: false }, now);
+    expect(plain).toContain("exit code 3");
+    expect(plain).toContain("5m ago");
+    const dispatch = describeTrayCrash({ at: now - 60_000, source: "tray-dispatch", command: "__tray-start", exitCode: 1, panic: false }, now);
+    expect(dispatch).toContain("__tray-start failed");
+  });
+
+  test("the tray controller supervises launches and records host-launch evidence", () => {
+    const tray = readFileSync(join(import.meta.dir, "..", "src", "tray", "windows.ts"), "utf8");
+    expect(tray).toContain('from "../lib/tray-host-supervisor.mjs"');
+    expect(tray).toContain("launchTrayHostWithCrashRetry");
+    expect(tray).toContain('source: "host-launch"');
+    expect(tray).toContain('join(getConfigDir(), "tray-crash.json")');
+    expect(tray).toContain("heartbeatFresh: () => heartbeatRunning()");
+    // Registration staleness stays about registration health; the crash note
+    // must not flip it.
+    expect(tray).toContain("crashNote ? { crash: trayCrashStatusField(lastCrash) } : {}");
+  });
+
+  test("the PowerShell menu observes dispatched exits into the shared crash record", () => {
+    const source = readFileSync(join(import.meta.dir, "..", "src", "tray", "windows-tray.ps1"), "utf8");
+    expect(source).toContain("$script:dispatched.Add($process)");
+    expect(source).toContain("Reap-DispatchedCommands");
+    expect(source).toContain("Write-CrashRecord \"tray-dispatch\"");
+    expect(source).toContain('Join-Path $OpenCodexHome "tray-crash.json"');
+    expect(source).not.toContain("Invoke-Expression");
+    expect(source).not.toContain("taskkill");
+    expect(source).not.toContain("Stop-Process");
+  });
+
+  afterAll(() => {
+    if (evidenceDir) rmSync(evidenceDir, { recursive: true, force: true });
   });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";
