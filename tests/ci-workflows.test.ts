@@ -2215,10 +2215,14 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("contents: read");
     expect(workflow).toContain("pull-requests: read");
     expect(workflow).not.toContain(": write");
-    expect(workflow).toMatch(/^\s+blocking:\s+warning\s*$/m);
+    expect(workflow).toMatch(/^\s+blocking:\s+error\s*$/m);
     expect(workflow).toMatch(/^\s+comment:\s+false\s*$/m);
     expect(workflow).toMatch(/^\s+review-comments:\s+false\s*$/m);
     expect(workflow).toMatch(/^\s+commit-status:\s+false\s*$/m);
+    expect(workflow).toContain("runs-on: windows-latest");
+    expect(workflow).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
+    expect(workflow).toContain("if: ${{ always() }}");
+    expect(workflow).toContain("if-no-files-found: warn");
     expect(workflow).toContain("timeout-minutes: 10");
   });
 

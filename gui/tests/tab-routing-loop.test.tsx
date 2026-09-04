@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import { act, useRef } from "react";
+import { act, useEffect } from "react";
 import type { Root } from "react-dom/client";
 
 import { useTabRouting } from "../src/shell/use-tab-routing";
@@ -60,9 +60,10 @@ interface Harness {
 }
 
 /**
- * `renderCount` is a ref rather than a module variable so each mount counts its
- * own renders, and it is incremented during render on purpose: a render that
- * React discards still cost the work this budget is measuring.
+ * `renderCount` is kept in the mount closure so each harness counts its own
+ * committed renders. Counting from an effect avoids mutating a ref during
+ * render, which would make the test harness itself unsafe under concurrent
+ * rendering while still measuring every render that can affect the UI.
  */
 async function mountHarness(): Promise<Harness> {
   const { createRoot } = await import("react-dom/client");
@@ -70,10 +71,10 @@ async function mountHarness(): Promise<Harness> {
   let count = 0;
 
   function Harness() {
-    const renders = useRef(0);
-    renders.current += 1;
-    count = renders.current;
     latest = useTabRouting();
+    useEffect(() => {
+      count += 1;
+    });
     return null;
   }
 

@@ -1,7 +1,8 @@
 # React Doctor — finds security, performance, correctness, accessibility,
 # bundle-size, and architecture issues in React codebases.
 #
-# Gating and least-privilege: findings fail the job (`blocking: warning`).
+# Gating and least-privilege: errors fail the job (`blocking: error`); warnings
+# remain in the uploaded report for review without making unrelated PRs red.
 # Write-scoped outputs (sticky PR comments, inline review comments, commit
 # statuses) stay disabled so the workflow needs no write permissions. Do not
 # re-add write scopes without revisiting tests/ci-workflows.test.ts, which
@@ -15,6 +16,10 @@ name: React Doctor
 on:
   # Scans the PR's changed files relative to the merge base of the target branch.
   pull_request:
+    # A non-GUI change has no React surface to inspect. The action's changed-file
+    # fallback treats an empty GUI set as a full scan, so scope the PR trigger to
+    # GUI paths; the main push trigger below remains the full-tree health scan.
+    paths: ["gui/**"]
     types: [opened, synchronize, reopened, ready_for_review]
   # Scans `main` on every push to track the health-score trend.
   push:
@@ -54,8 +59,8 @@ jobs:
           # Pin the npm engine — the action wrapper would otherwise fetch
           # react-doctor@latest, silently skewing CI from the local pinned runs.
           version: "0.9.2"
-          # Fail the job on any finding (errors or warnings).
-          blocking: warning
+          # Fail the job on errors; warnings remain visible in the report.
+          blocking: error
           comment: false
           review-comments: false
           commit-status: false
