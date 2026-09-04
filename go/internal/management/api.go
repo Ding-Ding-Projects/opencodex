@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -44,6 +45,9 @@ type Options struct {
 	// Restart is the injected drain-and-restart backend. Nil disables
 	// POST /api/system/restart rather than letting it half-work.
 	Restart             *RestartBackend
+	ChangelogPath       string
+	Drain               func(time.Duration) (drained bool, remaining int)
+	Loopback            func() bool
 	RefreshCatalog      func() error
 	OnAPIKeysChanged    func([]config.ProxyAPIKey)
 	ModelCache          ModelCacheInvalidator
@@ -93,6 +97,18 @@ type API struct {
 	version             string
 	stop                func()
 	restart             *RestartBackend
+	changelogPath       string
+	drain               func(time.Duration) (bool, int)
+	loopback            func() bool
+	terminalMu          sync.Mutex
+	terminalSessions    map[string]*nativeTerminalSession
+	pairMu              sync.Mutex
+	pairToken           string
+	pairExpires         time.Time
+	pairArmedWindow     time.Time
+	pairArmedAttempts   int
+	pairIdleWindow      time.Time
+	pairIdleAttempts    int
 	restartAccepted     atomic.Bool
 	refreshCatalog      func() error
 	onAPIKeysChanged    func([]config.ProxyAPIKey)
@@ -144,7 +160,11 @@ func New(options Options) (*API, error) {
 	if options.InjectionLogs == nil {
 		options.InjectionLogs = ocxlib.NewDebugLogBuffer()
 	}
-	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, restart: options.Restart, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
+	changelogPath := options.ChangelogPath
+	if changelogPath == "" && options.ConfigPath != "" {
+		changelogPath = filepath.Join(filepath.Dir(options.ConfigPath), "CHANGELOG.md")
+	}
+	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, restart: options.Restart, changelogPath: changelogPath, drain: options.Drain, loopback: options.Loopback, terminalSessions: make(map[string]*nativeTerminalSession), refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
 	if api.configPersistence != nil {
 		api.configPersistence.BindConfigMutex(&api.mu)
 	}
@@ -155,6 +175,10 @@ func New(options Options) (*API, error) {
 // New for existing callers.
 func NewAPI(options Options) (*API, error) { return New(options) }
 
+// Close terminates fixed terminal children before the owning HTTP server is
+// torn down, preventing a shell or its descendants from surviving shutdown.
+func (a *API) Close() { a.killAllTerminalSessions() }
+
 var routes = []string{
 	"GET /api/config", "PUT /api/config", "GET /api/settings", "PUT /api/settings", "GET /api/diagnostics/project-config", "GET /api/sidecar-settings", "PUT /api/sidecar-settings",
 	"GET /api/providers", "POST /api/providers", "PATCH /api/providers", "DELETE /api/providers", "POST /api/providers/test", "GET /api/provider-presets",
@@ -163,13 +187,16 @@ var routes = []string{
 	"GET /api/codex-auth/accounts", "POST /api/codex-auth/accounts", "DELETE /api/codex-auth/accounts", "PUT /api/codex-auth/accounts/alias", "PUT /api/codex-auth/accounts/pause", "PUT /api/codex-auth/accounts/pause-exhausted", "GET /api/codex-auth/active", "PUT /api/codex-auth/active", "PUT /api/codex-auth/auto-switch", "PUT /api/codex-auth/failover", "GET /api/codex-auth/reset-credits", "POST /api/codex-auth/reset-credits/consume", "POST /api/codex-auth/login", "POST /api/codex-auth/login/code", "POST /api/codex-auth/login/cancel", "GET /api/codex-auth/login-status",
 	"GET /api/key-providers", "GET /api/providers/keys", "POST /api/providers/keys", "DELETE /api/providers/keys", "PUT /api/providers/keys/active", "PUT /api/providers/keys/alias", "GET /api/keys", "POST /api/keys", "DELETE /api/keys",
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
-	"GET /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "GET /api/usage", "GET /api/storage", "POST /api/storage/cleanup/preview", "GET /api/storage/trash", "POST /api/storage/trash/restore", "GET /api/storage/cleanup-policy", "PUT /api/storage/cleanup-policy", "GET /api/storage/cleanup-policy/test-stream", "GET /api/storage/trash/restore/test-stream",
+	"GET /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "GET /api/usage", "GET /api/storage", "POST /api/storage/cleanup/preview", "POST /api/storage/cleanup", "GET /api/storage/trash", "POST /api/storage/trash/restore", "GET /api/storage/cleanup-policy", "PUT /api/storage/cleanup-policy", "POST /api/storage/cleanup-policy/run", "GET /api/storage/cleanup-policy/test-stream", "GET /api/storage/trash/restore/test-stream",
 	"GET /api/debug/logs", "GET /api/claude/inbound-debug", "GET /api/debug/injection-logs",
 	"GET /api/system/memory", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
 	"GET /api/subagent-model-fallback", "PUT /api/subagent-model-fallback", "GET /api/claude-code", "PUT /api/claude-code", "GET /api/shadow-call-settings", "PUT /api/shadow-call-settings", "GET /api/provider-quotas",
 	"GET /api/claude-desktop", "PUT /api/claude-desktop", "POST /api/claude-desktop/apply", "GET /api/claude-desktop/status",
 	"GET /api/grok", "PUT /api/grok/selection", "POST /api/grok/apply",
 	"GET /api/startup-health", "POST /api/startup-action", "GET /api/windows-tray", "POST /api/windows-tray", "POST /api/sync", "GET /api/update/check", "POST /api/update/run", "GET /api/update/status",
+	"GET /api/changelog", "GET /api/export/capabilities", "POST /api/export",
+	"GET /api/host", "PUT /api/host", "POST /api/host/pair", "DELETE /api/host/pair", "POST /api/host/pair/claim", "GET /api/host/export", "GET /api/host/history", "POST /api/host/restore", "POST /api/host/exit", "GET /api/host/discover", "POST /api/host/discover",
+	"GET /api/launch", "POST /api/launch", "GET /api/launch/install", "POST /api/launch/install", "GET /api/launch/install/{jobId}", "GET /api/terminal", "POST /api/terminal", "GET /api/terminal/{id}", "POST /api/terminal/{id}/input", "DELETE /api/terminal/{id}", "GET /api/system/restart", "POST /api/system/restart",
 }
 
 func RegisteredRoutes() []string { return append([]string(nil), routes...) }
@@ -223,7 +250,7 @@ func (a *API) serializesConfigMutation(r *http.Request) bool {
 }
 
 func (a *API) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	if a.authorize != nil && !a.authorize(r) {
+	if a.authorize != nil && !isUnauthenticatedPairingClaim(r.Method, r.URL.Path) && !a.authorize(r) {
 		writeError(w, http.StatusUnauthorized, "opencodex API key required")
 		return
 	}
@@ -231,7 +258,7 @@ func (a *API) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
-	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleClaudeDesktop, a.handleGrok, a.handleRuntimeSettings, a.handleRuntimeControl, a.handleModels, a.handleCombos, a.handleLogs, a.handleStorageRoutes, a.handleSystem, a.handleAgents} {
+	for _, handler := range []func(http.ResponseWriter, *http.Request) bool{a.handleConfig, a.handleProviders, a.handleAPIKeys, a.handleOAuth, a.handleCodexAuth, a.handleClaudeDesktop, a.handleGrok, a.handleRuntimeSettings, a.handleRuntimeControl, a.handleModels, a.handleCombos, a.handleLogs, a.handleStorageRoutes, a.handleParityRoutes, a.handleSystem, a.handleAgents} {
 		if handler(w, r) {
 			return
 		}

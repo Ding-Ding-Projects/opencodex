@@ -50,6 +50,9 @@ func runService(args []string, streams IO) error {
 		if err := prepareServiceToken(*cfg); err != nil {
 			return err
 		}
+		if readServiceInstallState() != nil && installedBackend == backend {
+			if _, err := service.RequireKnownStatus(manager, "install"); err != nil { return err }
+		}
 		if serviceRuntimeGOOS == "windows" && readServiceInstallState() != nil && installedBackend != backend {
 			current, managerErr := serviceManagerForBackend(*cfg, installedBackend)
 			if managerErr != nil {
@@ -66,11 +69,13 @@ func runService(args []string, streams IO) error {
 		}
 		fmt.Fprintf(streams.Out, "Service installed and started: %s\n", manager.ArtifactPath())
 	case "start":
+		if _, err := service.RequireKnownStatus(manager, "start"); err != nil { return err }
 		return manager.Start()
 	case "restart":
 		if err := assertServiceEnvironmentOwnedHere(); err != nil {
 			return err
 		}
+		if _, err := service.RequireKnownStatus(manager, "restart"); err != nil { return err }
 		_, port := readRuntime()
 		if port <= 0 {
 			port = cfg.Port
@@ -80,6 +85,7 @@ func runService(args []string, streams IO) error {
 		if err := assertServiceEnvironmentOwnedHere(); err != nil {
 			return err
 		}
+		if _, err := service.RequireKnownStatus(manager, "stop"); err != nil { return err }
 		if err := manager.Stop(); err != nil {
 			return err
 		}
@@ -92,6 +98,7 @@ func runService(args []string, streams IO) error {
 		if err := assertServiceEnvironmentOwnedHere(); err != nil {
 			return err
 		}
+		if _, err := service.RequireKnownStatus(manager, "uninstall"); err != nil { return err }
 		if err := manager.Uninstall(); err != nil {
 			return err
 		}
@@ -108,7 +115,13 @@ func runService(args []string, streams IO) error {
 		if statusErr != nil {
 			return statusErr
 		}
-		fmt.Fprintf(streams.Out, "installed=%t running=%t artifact=%s\n", status.Installed, status.Running, manager.ArtifactPath())
+		state := "absent"
+		if status.Unknown {
+			state = "unknown"
+		} else if status.Installed {
+			state = "installed"
+		}
+		fmt.Fprintf(streams.Out, "state=%s installed=%t enabled=%t running=%t artifact=%s\n", state, status.Installed, status.Enabled, status.Running, manager.ArtifactPath())
 		if status.Detail != "" {
 			fmt.Fprintln(streams.Out, status.Detail)
 		}

@@ -509,7 +509,15 @@ func New(config Config) *Server {
 		if storageHome == "" {
 			storageHome = codex.ResolveCodexHome(codex.HomeOptions{})
 		}
-		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, ConfigPersistence: config.ConfigPersistence, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, CodexRouter: config.CodexRouter, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: storageHome, Version: config.Version, Stop: config.Stop, Restart: config.Restart, RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
+		api, err := management.NewAPI(management.Options{Config: config.ManagementConfig, ConfigPath: config.ConfigPath, ConfigPersistence: config.ConfigPersistence, Registry: config.Registry, UsageLog: usageLog, DebugLog: config.DebugLog, RequestLogs: requestLogs, AdvancedRequestLogs: advancedRequestLogs, MemoryWatchdog: func() any { return watchdog.Snapshot() }, ResponseState: func() any { return responseState.Metrics() }, OAuth: config.OAuthManagement, CodexAuth: config.CodexAuthManagement, CodexRouter: config.CodexRouter, DebugLogs: ocxlib.DefaultDebugLogBuffer, InjectionLogs: injectionDebug, ClaudeDebug: claudeDebug, ProviderQuotas: config.ProviderQuotas, ClaudeRuntime: config.ClaudeRuntime, RuntimeControl: config.RuntimeControl, GrokPort: grokPort, GrokHostname: s.config.Hostname, StorageHome: storageHome, Version: config.Version, Stop: config.Stop, Restart: config.Restart, Drain: func(timeout time.Duration) (bool, int) {
+			if s.lifecycle == nil {
+				return true, 0
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			err := s.lifecycle.Drain(ctx)
+			return err == nil, s.lifecycle.Active()
+		}, Loopback: func() bool { return isLoopbackBind(s.config.Hostname) }, ChangelogPath: changelogPathFor(config.ConfigPath), RefreshCatalog: refreshCatalog, OnAPIKeysChanged: admissionKeys.Set, ModelCache: config.ModelCache})
 		if err == nil {
 			managementRouter = api
 		} else if config.Logger != nil {
@@ -629,6 +637,11 @@ func (s *Server) MemoryWatchdog() *MemoryWatchdog {
 }
 
 func (s *Server) Close() {
+	if s != nil {
+		if closer, ok := s.config.Management.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
 	if s != nil && s.watchdog != nil {
 		s.watchdog.Stop()
 	}
@@ -711,6 +724,18 @@ func (s *Server) HTTPServer(address string) *http.Server {
 	// running is harmless.
 	server.RegisterOnShutdown(s.Close)
 	return server
+}
+
+func changelogPathFor(configPath string) string {
+	if strings.TrimSpace(configPath) == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(configPath), "CHANGELOG.md")
+}
+
+func isLoopbackBind(host string) bool {
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
+	return host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 const publicHeaderLimit = 1 << 20

@@ -54,7 +54,7 @@ func (m *launchdManager) Status() (Status, error) {
 	_, statErr := os.Stat(m.ArtifactPath())
 	detail, err := run("launchctl", "list", LaunchdLabel)
 	installed, running := statErr == nil, err == nil
-	return Status{Installed: installed, Enabled: installed, Running: running, Viable: installed && running, Backend: "launchd", Detail: detail}, nil
+	return Status{Installed: installed, Enabled: installed, Running: running, Viable: installed && running, Unknown: err != nil && installed, Backend: "launchd", Detail: detail}, nil
 }
 
 func (m *systemdManager) Install() error {
@@ -92,7 +92,7 @@ func (m *systemdManager) Status() (Status, error) {
 	installed := statErr == nil
 	running := activeErr == nil && strings.TrimSpace(activeDetail) == "active"
 	enabled := enabledErr == nil && strings.TrimSpace(enabledDetail) == "enabled"
-	return Status{Installed: installed, Enabled: enabled, Running: running, Viable: installed && enabled && running, Backend: "systemd", Detail: strings.TrimSpace(activeDetail + " " + enabledDetail)}, nil
+	return Status{Installed: installed, Enabled: enabled, Running: running, Viable: installed && enabled && running, Unknown: (activeErr != nil || enabledErr != nil) && installed, Backend: "systemd", Detail: strings.TrimSpace(activeDetail + " " + enabledDetail)}, nil
 }
 
 func (m *taskManager) Install() error {
@@ -133,7 +133,7 @@ func (m *taskManager) Uninstall() error {
 func (m *taskManager) Status() (Status, error) {
 	xml, err := run("schtasks.exe", "/query", "/tn", ServiceName, "/xml")
 	if err != nil {
-		return Status{Backend: "scheduler", Detail: xml}, nil
+		return Status{Backend: "scheduler", Unknown: true, Detail: xml}, nil
 	}
 	state := ReadWindowsSchedulerXmlState(xml, `C:\Windows\System32\wscript.exe`, taskLauncherPath(m.config))
 	detail, queryErr := run("schtasks.exe", "/query", "/tn", ServiceName, "/fo", "LIST", "/v")

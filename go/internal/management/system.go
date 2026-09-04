@@ -15,6 +15,14 @@ func (a *API) handleSystem(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.Path == "/api/system/restart" && r.Method == http.MethodPost {
 		return a.handleSystemRestart(w, r)
 	}
+	if r.URL.Path == "/api/system/restart" && r.Method == http.MethodGet {
+		active := 0
+		if a.restart != nil && a.restart.ActiveTurns != nil {
+			active = a.restart.ActiveTurns()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"available": a.restart != nil && a.restart.Restart != nil, "alreadyDraining": a.restart != nil && a.restart.IsDraining != nil && a.restart.IsDraining(), "activeTurnCount": active})
+		return true
+	}
 	if r.Method != http.MethodGet {
 		return false
 	}

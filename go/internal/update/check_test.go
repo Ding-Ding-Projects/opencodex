@@ -43,11 +43,11 @@ func TestValidateNativeTransition(t *testing.T) {
 		{"stable newer", "2.7.0", "2.8.0", ChannelLatest, true, false},
 		{"preview newer", "2.7.0-preview.1", "2.7.0-preview.2", ChannelPreview, true, false},
 		{"equal", "2.7.0", "2.7.0", ChannelLatest, false, false},
-		{"downgrade", "2.8.0", "2.7.9", ChannelLatest, false, true},
-		{"stable to preview", "2.7.0", "2.8.0-preview.1", ChannelLatest, false, true},
-		{"preview to stable", "2.7.0-preview.1", "2.8.0", ChannelPreview, false, true},
-		{"cross major", "2.7.0", "3.0.0", ChannelLatest, false, true},
-		{"malformed current", "dev", "2.8.0", ChannelLatest, false, true},
+		{"downgrade follows registry result", "2.8.0", "2.7.9", ChannelLatest, true, false},
+		{"stable to preview follows registry result", "2.7.0", "2.8.0-preview.1", ChannelLatest, true, false},
+		{"preview to stable follows registry result", "2.7.0-preview.1", "2.8.0", ChannelPreview, true, false},
+		{"cross major follows registry result", "2.7.0", "3.0.0", ChannelLatest, true, false},
+		{"malformed current is not a native policy gate", "dev", "2.8.0", ChannelLatest, true, false},
 		{"malformed latest", "2.7.0", "wat", ChannelLatest, false, true},
 	}
 	for _, test := range tests {

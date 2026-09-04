@@ -158,11 +158,18 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	preferredPort := cfg.Port
 	selectedPort := preferredPort
 	if preferredPort > 0 {
-		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, preferredPort, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
+		explicitPort := *portOverride >= 0
+		selectedPort, err = selectServePort(cfg.Host, preferredPort, explicitPort, server.FindAvailablePortWithOptions)
 		if err != nil {
 			return err
 		}
 	}
+	lockPath := filepath.Join(configHome, "startup.lock")
+	startupLock, lockErr := acquireStartupLock(lockPath, os.Getpid(), time.Now(), nil)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer func() { _ = releaseStartupLock(lockPath, startupLock) }()
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
 	if err != nil {
 		return err
@@ -180,7 +187,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	// Buffered by one: the management handler must never block on a restart
 	// signal, and a second signal while one is in flight is redundant.
 	restartRequests := make(chan restartRequest, 1)
-	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolverWithPersistence(cfg, configPersistence, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, CodexRouter: codexRouting.Router(), AnthropicPool: auth.Anthropic, AnthropicPoolConfig: liveAuth.anthropicPoolConfig, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore, configPersistence), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), ImageBridge: configuredImageBridge(runtimeCfg, providerClient), ImageMaxRounds: images.ResolveMaxRounds(runtimeCfg.Images), StorageHome: os.Getenv("CODEX_HOME"), Lifecycle: proxyLifecycle, Stop: apiStop, Restart: configuredRestart(proxyLifecycle, restartRequests), ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolverWithPersistence(cfg, configPersistence, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, CodexRouter: codexRouting.Router(), AnthropicPool: auth.Anthropic, AnthropicPoolConfig: liveAuth.anthropicPoolConfig, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore, configPersistence), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), ImageBridge: configuredImageBridge(runtimeCfg, providerClient), ImageMaxRounds: images.ResolveMaxRounds(runtimeCfg.Images), StorageHome: os.Getenv("CODEX_HOME"), Hostname: cfg.Host, Lifecycle: proxyLifecycle, Stop: apiStop, Restart: configuredRestart(proxyLifecycle, restartRequests), ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
 		if err := configPersistence.Update(func(live *config.Config) { live.Port = port }); err != nil {
 			return fmt.Errorf("persist selected port: %w", err)
 		}
@@ -224,6 +231,29 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 		go func() { _ = applyGrokFence(ctx, cfg, actualPort, cfg.Host, false, streams) }()
 	}
 	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart, proxy.Close, restartRequests, newRestartControl(streams), actualPort)
+}
+
+type servePortChooser func(string, int, server.FindAvailablePortOptions) (int, error)
+
+// selectServePort distinguishes an automatic preference from an explicit pin.
+// Automatic launchers may hop to an ephemeral port when the preference is
+// occupied; a caller that typed --port must receive the requested port or an
+// error, never a silently changed endpoint.
+func selectServePort(host string, preferred int, explicit bool, choose servePortChooser) (int, error) {
+	if choose == nil {
+		choose = server.FindAvailablePortWithOptions
+	}
+	selected, err := choose(host, preferred, server.FindAvailablePortOptions{
+		PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond,
+		AllowEphemeralFallback: !explicit,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if explicit && selected != preferred {
+		return 0, fmt.Errorf("explicit port %d is unavailable", preferred)
+	}
+	return selected, nil
 }
 
 func validateServeAuth(cfg config.Config, token string) error {
