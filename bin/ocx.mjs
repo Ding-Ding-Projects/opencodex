@@ -31,6 +31,7 @@ const NPM_INSTALL_TIMEOUT_MS = 180_000;
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 const cliPath = join(here, "..", "src", "cli", "index.ts");
+const INTERNAL_GUI_UPDATE_MARKER = "OCX_INTERNAL_GUI_UPDATE_WORKER";
 
 function isNodeModulesInstall() {
   return here.split(/[\\/]/).includes("node_modules");
@@ -48,6 +49,19 @@ function currentPackageVersion() {
   }
 }
 
+function failGo(message) {
+  console.error(`opencodex: Go runtime ${message}`);
+  process.exit(1);
+}
+
+function resolveGoBinary(strictPackaged = false) {
+  try {
+    return resolveNativeGoBinary({ here, version: currentPackageVersion(), strictPackaged });
+  } catch (error) {
+    failGo(error instanceof Error ? error.message : String(error));
+  }
+}
+
 function updateTag(currentVersion) {
   // Allowlist the tag: the value is argv-controlled and (on Windows) still ends up in a
   // cmd.exe command line built by npmInvocation — never forward arbitrary strings.
@@ -55,6 +69,94 @@ function updateTag(currentVersion) {
   const explicit = tagIndex !== -1 ? process.argv[tagIndex + 1] : undefined;
   if (explicit === "preview" || explicit === "latest") return explicit;
   return String(currentVersion).includes("-preview.") ? "preview" : "latest";
+}
+
+/**
+ * Classify an `ocx update ...` invocation before ANY side effect runs.
+ *
+ * `--dry-run` is a planning flag in the Go CLI (go/internal/cli/update.go): it prints the
+ * plan and touches nothing. The launcher previously forwarded every non-help `update` to
+ * the real npm self-update, so a user asking for a plan got a live package replacement.
+ * Classification therefore has to happen before runtime selection AND before the legacy
+ * shim refresh, which is itself a mutation.
+ *
+ * Returns { kind: "help" | "dry-run" | "execute", tag } or { kind: "invalid", message }.
+ */
+export function parseLauncherUpdateArgs(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  let tag;
+  let dryRun = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--help" || arg === "-h" || arg === "help") return { kind: "help" };
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg.startsWith("--dry-run=")) {
+      // A value form is never accepted: silently treating `--dry-run=false` as "execute"
+      // is exactly the surprise this classifier exists to prevent.
+      return { kind: "invalid", message: `unsupported flag '${arg}' — use bare --dry-run` };
+    }
+    if (arg === "--tag") {
+      const value = args[index + 1];
+      if (value !== "latest" && value !== "preview") {
+        return { kind: "invalid", message: `--tag must be 'latest' or 'preview' (got ${value ?? "nothing"})` };
+      }
+      tag = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--tag=")) {
+      const value = arg.slice("--tag=".length);
+      if (value !== "latest" && value !== "preview") {
+        return { kind: "invalid", message: `--tag must be 'latest' or 'preview' (got ${value})` };
+      }
+      tag = value;
+      continue;
+    }
+    return { kind: "invalid", message: `unknown update argument '${arg}'` };
+  }
+  return { kind: dryRun ? "dry-run" : "execute", tag };
+}
+
+/** Describe the install layout so the dry-run plan names the command that would actually run. */
+function updateTopology() {
+  if (isNodeModulesInstall() && !isBunGlobalInstall()) return "npm";
+  if (isBunGlobalInstall()) return "bun";
+  if (isNodeModulesInstall()) return "npm";
+  return "source";
+}
+
+function printUpdatePlan(tag) {
+  const current = currentPackageVersion();
+  const topology = updateTopology();
+  if (topology === "source") {
+    console.log(`opencodex v${current} (source checkout)`);
+    console.log("Dry run: no update would be performed.");
+    console.log("Update a source checkout with:  git pull && bun install");
+    return;
+  }
+  const resolvedTag = tag ?? (String(current).includes("-preview.") ? "preview" : "latest");
+  const bin = topology === "bun" ? (process.platform === "win32" ? "bun.exe" : "bun") : npmBin();
+  const args = topology === "bun"
+    ? ["add", "-g", `${PKG}@${resolvedTag}`]
+    : ["install", "-g", `${PKG}@${resolvedTag}`];
+  console.log(`opencodex v${current} (installed via ${topology === "bun" ? "bun" : "npm"}, tag ${resolvedTag})`);
+  // Read-only registry probe. This is the only subprocess a dry run may start.
+  const probe = spawnSync(npmBin(), ["view", `${PKG}@${resolvedTag}`, "version"], {
+    encoding: "utf8",
+    timeout: 12000,
+    windowsHide: true,
+    shell: process.platform === "win32",
+  });
+  const latest = probe.status === 0 ? probe.stdout.trim() : "";
+  console.log("Update plan (dry run — nothing was changed):");
+  console.log(`  Current version: ${current}`);
+  console.log(`  Channel:         ${resolvedTag}`);
+  console.log(`  Latest version:  ${latest || "unresolved"}`);
+  console.log(`  Command:         ${bin} ${args.join(" ")}`);
+  if (latest && latest === current) console.log(`Already on the latest ${resolvedTag} version.`);
 }
 
 function expandUserPath(raw) {
@@ -70,8 +172,147 @@ function configDir() {
   return resolve(raw ? expandUserPath(raw) : join(homedir(), ".opencodex"));
 }
 
+function terminalizeActiveGuiUpdateJob(jobId, message) {
+  const path = join(configDir(), "update-job.json");
+  try {
+    const job = JSON.parse(readFileSync(path, "utf8"));
+    if (job?.id !== jobId || (job.status !== "running" && job.status !== "restarting")) return false;
+    const detail = `GUI update worker failed: ${message}`;
+    const next = {
+      ...job,
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      restarted: false,
+      error: detail,
+      log: [...(Array.isArray(job.log) ? job.log : []), detail],
+    };
+    const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    renameSync(temporary, path);
+    return true;
+  } catch (error) {
+    console.error(`opencodex: could not terminalize GUI update job ${jobId}: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+function activeGuiUpdateJobExists(jobId) {
+  try {
+    const job = JSON.parse(readFileSync(join(configDir(), "update-job.json"), "utf8"));
+    return job?.id === jobId && (job.status === "running" || job.status === "restarting");
+  } catch {
+    return false;
+  }
+}
+
+async function runInternalGuiUpdateWorker() {
+  const jobId = process.argv[3] ?? "";
+  if (process.env[INTERNAL_GUI_UPDATE_MARKER] !== "1" || !/^\d+$/.test(jobId)) {
+    console.error("opencodex: unauthorized GUI update worker invocation");
+    process.exit(1);
+  }
+  delete process.env[INTERNAL_GUI_UPDATE_MARKER];
+  if (!activeGuiUpdateJobExists(jobId)) {
+    console.error(`opencodex: GUI update job is not active: ${jobId}`);
+    process.exit(1);
+  }
+  const bun = resolveBun(false);
+  if (!bun) {
+    terminalizeActiveGuiUpdateJob(jobId, "retained Bun runtime is unavailable");
+    process.exit(1);
+  }
+  let runtimeRoot;
+  let workerRuntime;
+  try {
+    const before = lstatSync(bun);
+    if (before.isSymbolicLink() || !before.isFile() || before.size < REAL_BUN_MIN_BYTES || before.size > 200_000_000) {
+      throw new Error("retained Bun runtime is not a bounded regular file");
+    }
+    runtimeRoot = mkdtempSync(join(tmpdir(), "ocx-gui-update-worker-"));
+    workerRuntime = join(runtimeRoot, process.platform === "win32" ? "bun.exe" : "bun");
+    copyFileSync(bun, workerRuntime);
+    chmodSync(workerRuntime, 0o700);
+    const after = lstatSync(bun);
+    const copied = lstatSync(workerRuntime);
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs
+      || !copied.isFile() || copied.isSymbolicLink() || copied.size !== before.size) {
+      throw new Error("retained Bun runtime changed during worker isolation");
+    }
+  } catch (error) {
+    if (runtimeRoot) rmSync(runtimeRoot, { recursive: true, force: true });
+    terminalizeActiveGuiUpdateJob(jobId, error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  const child = spawn(workerRuntime, [cliPath, ...process.argv.slice(2)], {
+    stdio: "ignore",
+    windowsHide: true,
+    env: process.env,
+  });
+  const outcome = await new Promise(resolve => {
+    child.once("error", error => resolve({ error }));
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+  rmSync(runtimeRoot, { recursive: true, force: true });
+  const detail = outcome.error
+    ? `could not launch retained worker: ${outcome.error.message}`
+    : outcome.signal
+      ? `retained worker exited on ${outcome.signal}`
+      : outcome.code === 0
+        ? "retained worker exited without a terminal job state"
+        : `retained worker exited ${outcome.code ?? "without status"}`;
+  const terminalized = terminalizeActiveGuiUpdateJob(jobId, detail);
+  process.exit(outcome.code === 0 && !terminalized ? 0 : 1);
+}
+
 function shouldRepairCodexShim() {
   return existsSync(join(configDir(), "codex-shim.json"));
+}
+
+const SHIM_RUNTIME_MARKER = "opencodex shim runtime convergence v1";
+const SHIM_REFRESH_GUARD = "OCX_SHIM_RUNTIME_REFRESH_GUARD";
+
+function hasLegacyTsCodexShim() {
+  if (process.env[SHIM_REFRESH_GUARD] === "1") return false;
+  const statePath = join(configDir(), "codex-shim.json");
+  try {
+    const stateStat = lstatSync(statePath);
+    if (!stateStat.isFile() || stateStat.isSymbolicLink() || stateStat.size > 1024 * 1024) return false;
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    if (state.platform !== process.platform) return false;
+    const wrappers = Array.isArray(state.wrappers) ? state.wrappers : [state];
+    return wrappers.some(file => {
+      if (!file || file.preserveOnly || typeof file.wrapperPath !== "string") return false;
+      const wrapperStat = lstatSync(file.wrapperPath);
+      if (!wrapperStat.isFile() || wrapperStat.isSymbolicLink() || wrapperStat.size > 64 * 1024) return false;
+      const content = readFileSync(file.wrapperPath, "utf8");
+      return /src[\\/]cli[\\/]index\.ts/.test(content) && !content.includes(SHIM_RUNTIME_MARKER);
+    });
+  } catch {
+    return false;
+  }
+}
+
+function refreshLegacyCodexShimRuntime() {
+  if (!hasLegacyTsCodexShim()) return;
+  const bun = resolveBun(false);
+  if (!bun) {
+    console.warn(
+      "opencodex: legacy Codex shim runtime refresh skipped because the retained Bun runtime is unavailable; " +
+      "continuing with the packaged Go runtime. Retry after reinstalling with: ocx codex-shim refresh-runtime",
+    );
+    return;
+  }
+  const result = spawnSync(bun, [cliPath, "codex-shim", "refresh-runtime"], {
+    stdio: "inherit",
+    windowsHide: true,
+    env: { ...process.env, [SHIM_REFRESH_GUARD]: "1" },
+  });
+  if (result.status !== 0) {
+    console.warn(
+      `opencodex: legacy Codex shim runtime refresh failed (${result.status ?? "spawn error"}); ` +
+      "continuing with the packaged Go runtime. Retry with: ocx codex-shim refresh-runtime",
+    );
+  }
 }
 
 function historyRestoreIncomplete() {
@@ -411,6 +652,7 @@ function resolveBun() {
   try {
     bunDir = bunBinDir();
   } catch {
+    if (!required) return null;
     fail("the `bun` dependency is not installed.");
   }
 
@@ -424,20 +666,15 @@ function resolveBun() {
     const r = spawnSync(process.execPath, [installJs], { stdio: "inherit", windowsHide: true });
     if (r.status === 0) bin = findBunBinary(bunDir);
   }
-  if (!bin) fail("Bun binary missing after install attempt.");
+  if (!bin) {
+    if (!required) return null;
+    fail("Bun binary missing after install attempt.");
+  }
   return bin;
 }
 
-// `ocx update --help` prints usage and exits WITHOUT side effects. The npm launcher
-// intercepts `update` before the Bun CLI starts, so the help short-circuit must live
-// here too — otherwise --help runs the real self-update, stops the proxy, and drops
-// in-flight routed streams (issue #168).
-const updateHelpRequested = process.argv[2] === "update" &&
-  process.argv.slice(3).some(a => a === "--help" || a === "-h" || a === "help");
-if (updateHelpRequested) {
-  console.log("Usage: ocx update [--tag latest|preview]\n\nUpdate opencodex. Preview installs stay on the preview tag unless overridden.");
-  process.exit(0);
-}
+const launcherCommand = process.argv[2];
+if (launcherCommand === "__gui-update-worker") await runInternalGuiUpdateWorker();
 
 if (process.argv[2] === "update" && isNodeModulesInstall() && !isBunGlobalInstall()) {
   await runNpmSelfUpdate();

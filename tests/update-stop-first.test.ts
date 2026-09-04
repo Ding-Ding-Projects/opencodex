@@ -188,7 +188,7 @@ describe("ocx update --help has no side effects (#168)", () => {
   test("the Bun CLI short-circuits help before importing the update runner", () => {
     const caseAt = cliSource.indexOf('case "update"');
     const helpAt = cliSource.indexOf('printSubcommandUsage("update")');
-    const runAt = cliSource.indexOf("await runUpdate()");
+    const runAt = cliSource.indexOf("await runUpdate(");
     expect(caseAt).toBeGreaterThan(-1);
     expect(helpAt).toBeGreaterThan(caseAt);
     expect(helpAt).toBeLessThan(runAt);

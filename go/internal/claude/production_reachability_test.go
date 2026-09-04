@@ -1,0 +1,334 @@
+package claude_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/chat"
+	"github.com/lidge-jun/opencodex-go/internal/claude"
+	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/server"
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+type reachabilityAdapter struct {
+	endpoint string
+	request  **types.NormalizedRequest
+	events   []types.AdapterEvent
+}
+
+func (adapter reachabilityAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	if adapter.request != nil {
+		*adapter.request = request
+	}
+	return http.NewRequestWithContext(ctx, http.MethodPost, adapter.endpoint, strings.NewReader(`{}`))
+}
+
+func (adapter reachabilityAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
+	events := make(chan types.AdapterEvent, len(adapter.events))
+	for _, event := range adapter.events {
+		events <- event
+	}
+	close(events)
+	return events
+}
+
+func (adapter reachabilityAdapter) ParseUnary(context.Context, []byte) ([]types.AdapterEvent, error) {
+	return adapter.events, nil
+}
+
+func TestProductionMessagesUsesClaudeIngressForAliasesAndRouteDirective(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		model  string
+		system string
+	}{
+		{name: "readable alias", model: claude.ClaudeCodeAlias("acme", "wire")},
+		{name: "route directive", model: "acme/fallback", system: "<!-- ocx-route: acme/wire -->"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var captured *types.NormalizedRequest
+			handler, upstream := productionMessagesHandler(t, &captured, []types.AdapterEvent{
+				{Type: types.EventTextDelta, Text: "ok"},
+				{Type: types.EventDone},
+			})
+			defer upstream.Close()
+			body := map[string]any{
+				"model": test.model, "max_tokens": 32,
+				"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+			}
+			if test.system != "" {
+				body["system"] = test.system
+			}
+			response := invokeMessages(t, handler, body)
+			if response.Code != http.StatusOK {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+			if captured == nil || captured.ModelID != "wire" {
+				t.Fatalf("production normalized model = %#v", captured)
+			}
+		})
+	}
+}
+
+func TestProductionMessagesActivatesClaudeInboundPolicies(t *testing.T) {
+	var captured *types.NormalizedRequest
+	handler, upstream := productionMessagesHandler(t, &captured, []types.AdapterEvent{{Type: types.EventDone}})
+	defer upstream.Close()
+	response := invokeMessages(t, handler, map[string]any{
+		"model": "acme/wire", "max_tokens": 32, "system": "stable cache cohort",
+		"tools": []any{map[string]any{"type": "web_search_20250305"}},
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": "skill-call", "name": "Skill", "input": map[string]any{"skill": "claude-api"}},
+				map[string]any{"type": "tool_use", "id": "other-call", "name": "lookup", "input": map[string]any{}},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "skill-call", "content": "large reference bundle"},
+				map[string]any{"type": "tool_result", "tool_use_id": "other-call", "is_error": true, "content": []any{
+					map[string]any{"type": "text", "text": "failed"},
+					map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+				}},
+			}},
+		},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	if captured == nil {
+		t.Fatal("production adapter did not receive a normalized request")
+	}
+	if captured.Options.PromptCacheKey == "" {
+		t.Fatal("production request did not receive Claude prompt-cache affinity")
+	}
+	if captured.WebSearch == nil || captured.WebSearch["type"] != "web_search" {
+		t.Fatalf("production WebSearch = %#v", captured.WebSearch)
+	}
+	wire, err := json.Marshal(captured.Context.Messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(wire)
+	for _, want := range []string{"Skill document bundle elided", "[tool error]", "data:image/png;base64,AAAA"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("production normalized messages missing %q: %s", want, text)
+		}
+	}
+}
+
+func TestProductionBufferedMessagesUsesClaudeOutboundStateMachine(t *testing.T) {
+	events := []types.AdapterEvent{
+		{Type: types.EventReasoningRawDelta, Text: "private thought"},
+		{Type: types.EventThinkingSignature, Signature: "signed-thinking"},
+		{Type: types.EventRedactedThinking, Data: "redacted-payload"},
+		{Type: types.EventWebSearchCallBegin, ID: "search-1", Queries: []string{"query"}},
+		{Type: types.EventWebSearchCallEnd, ID: "search-1", Sources: []types.URLCitation{{URL: "https://example.com", Title: "Example"}}},
+		{Type: types.EventDone, Usage: &types.Usage{InputTokens: 10, OutputTokens: 2}},
+	}
+	handler, upstream := productionMessagesHandler(t, nil, events)
+	defer upstream.Close()
+	response := invokeMessages(t, handler, map[string]any{
+		"model": "acme/wire", "max_tokens": 32,
+		"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	wire := response.Body.String()
+	for _, want := range []string{"private thought", "signed-thinking", "redacted-payload", "server_tool_use", "web_search_result", "https://example.com", "web_search_requests"} {
+		if !strings.Contains(wire, want) {
+			t.Fatalf("production buffered Anthropic message missing %q: %s", want, wire)
+		}
+	}
+}
+
+func TestProductionStreamingMessagesSanitizesWebSearchFunctionDomains(t *testing.T) {
+	events := []types.AdapterEvent{
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"go","allowed_domains":[" docs.go.dev "],"blocked_domains":["example.com"]}`)}},
+		{Type: types.EventDone},
+	}
+	handler, upstream := productionMessagesHandler(t, nil, events)
+	defer upstream.Close()
+	response := invokeMessages(t, handler, map[string]any{
+		"model": "acme/wire", "max_tokens": 32, "stream": true,
+		"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	wire := response.Body.String()
+	if !strings.Contains(wire, `docs.go.dev`) || strings.Contains(wire, `blocked_domains`) || strings.Count(wire, `input_json_delta`) != 1 {
+		t.Fatalf("production WebSearch stream was not canonically sanitized: %s", wire)
+	}
+}
+
+func TestProductionDesktopAliasRecordsHealthAndRoutes(t *testing.T) {
+	models := []claude.Desktop3pRoutedModel{{Provider: "acme", ID: "wire"}}
+	claude.BuildDesktop3pRegistry(nil, models)
+	alias := claude.Desktop3pAlias("acme", "wire")
+	before := claude.GetDesktopHealth()
+	var captured *types.NormalizedRequest
+	handler, upstream := productionMessagesHandler(t, &captured, []types.AdapterEvent{{Type: types.EventDone}})
+	defer upstream.Close()
+	response := invokeMessages(t, handler, map[string]any{
+		"model": alias, "max_tokens": 32,
+		"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	after := claude.GetDesktopHealth()
+	if captured == nil || captured.ModelID != "wire" {
+		t.Fatalf("Desktop normalized model = %#v", captured)
+	}
+	if after.RequestCount != before.RequestCount+1 || after.LastRequestAt == nil {
+		t.Fatalf("Desktop health before=%#v after=%#v", before, after)
+	}
+}
+
+func TestProductionClaudeDiscoveryAndContextComposition(t *testing.T) {
+	cfg := appconfig.Default()
+	cfg.ClaudeCode = &appconfig.ClaudeCodeConfig{Model: "acme/wide"}
+	cfg.Providers = map[string]appconfig.ProviderConfig{
+		"acme": {ModelInputModalities: map[string][]string{"wide": {"text", "image"}}},
+	}
+	reg := registry.New(registry.Provider{
+		ID: "acme", DefaultModel: "wide",
+		Models: []registry.ModelDefinition{{ID: "wide", ContextWindow: 400_000, ReasoningEfforts: []string{"low", "high"}}},
+	})
+	proxy := server.New(server.Config{Registry: reg, ManagementConfig: &cfg})
+	defer proxy.Close()
+
+	discovery := httptest.NewRecorder()
+	discoveryRequest := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=cli", nil)
+	discoveryRequest.Host = "127.0.0.1:10100"
+	discoveryRequest.Header.Set("anthropic-version", "2023-06-01")
+	proxy.Handler().ServeHTTP(discovery, discoveryRequest)
+	if discovery.Code != http.StatusOK {
+		t.Fatalf("discovery=%d %s", discovery.Code, discovery.Body.String())
+	}
+	for _, want := range []string{"claude-ocx-acme--wide", `"max_input_tokens":400000`, `"image_input":{"supported":true}`, `"high":{"supported":true}`} {
+		if !strings.Contains(discovery.Body.String(), want) {
+			t.Fatalf("production discovery missing %q: %s", want, discovery.Body.String())
+		}
+	}
+
+	settings := httptest.NewRecorder()
+	settingsRequest := httptest.NewRequest(http.MethodGet, "/api/claude-code", nil)
+	settingsRequest.Host = "127.0.0.1:10100"
+	proxy.Handler().ServeHTTP(settings, settingsRequest)
+	if settings.Code != http.StatusOK {
+		t.Fatalf("settings=%d %s", settings.Code, settings.Body.String())
+	}
+	for _, want := range []string{`"contextWindows"`, `"claude-ocx-acme--wide":400000`, `"effectiveModelEnv"`, `"ANTHROPIC_MODEL":"acme/wide[1m]"`} {
+		if !strings.Contains(settings.Body.String(), want) {
+			t.Fatalf("production Claude settings missing %q: %s", want, settings.Body.String())
+		}
+	}
+}
+
+func TestProductionClaudeDiscoveryUsesNativeEffectiveLadder(t *testing.T) {
+	cfg := appconfig.Default()
+	reg := registry.New(registry.Provider{
+		ID: "openai", DefaultModel: "gpt-5.5",
+		Models: []registry.ModelDefinition{{ID: "gpt-5.5", ContextWindow: 272_000}},
+	})
+	proxy := server.New(server.Config{Registry: reg, ManagementConfig: &cfg})
+	defer proxy.Close()
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=cli", nil)
+	request.Host = "127.0.0.1:10100"
+	proxy.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery=%d %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data []claude.ModelInfo `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	var effort *claude.EffortCapability
+	for index := range payload.Data {
+		if payload.Data[index].ID == claude.ClaudeCodeNativeAlias("gpt-5.5") {
+			effort = &payload.Data[index].Capabilities.Effort
+			break
+		}
+	}
+	if effort == nil {
+		t.Fatalf("gpt-5.5 missing from native discovery: %#v", payload.Data)
+	}
+	if !effort.Supported || !effort.Low.Supported || effort.XHigh == nil || !effort.XHigh.Supported || effort.Max.Supported {
+		t.Fatalf("gpt-5.5 effective ladder = %#v", effort)
+	}
+}
+
+func TestProductionDesktopDiscoveryRebuildsProfileAliasRegistry(t *testing.T) {
+	// Seed the process-global registry with the fallback alias. The production
+	// discovery request must replace it from the configured profile, as TS does.
+	claude.BuildDesktop3pRegistry(nil, []claude.Desktop3pRoutedModel{{Provider: "acme", ID: "wide"}})
+	profile := claude.EmptyDesktopProfile()
+	route := "acme/wide"
+	profile.Assignments[route] = claude.DesktopAssignment{Family: claude.DesktopFamilyOpus, Alias: "claude-opus-4-8-20260726"}
+	profile.Defaults[claude.DesktopFamilyOpus] = &route
+	cfg := appconfig.Default()
+	cfg.ClaudeCode = &appconfig.ClaudeCodeConfig{DesktopProfile: &profile}
+	cfg.Providers["acme"] = appconfig.ProviderConfig{Models: []string{"wide"}}
+	reg := registry.New(registry.Provider{
+		ID: "acme", DefaultModel: "wide",
+		Models: []registry.ModelDefinition{{ID: "wide", ContextWindow: 400_000}},
+	})
+	proxy := server.New(server.Config{Registry: reg, ManagementConfig: &cfg})
+	defer proxy.Close()
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/models?flavor=anthropic&ids=desktop", nil)
+	request.Host = "127.0.0.1:10100"
+	proxy.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery=%d %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"id":"claude-opus-4-8-20260726"`) {
+		t.Fatalf("Desktop discovery did not activate configured profile alias: %s", response.Body.String())
+	}
+}
+
+func productionMessagesHandler(t *testing.T, captured **types.NormalizedRequest, events []types.AdapterEvent) (*chat.MessagesHandler, *httptest.Server) {
+	t.Helper()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	providers := []registry.Provider{
+		{ID: "acme", BaseURL: upstream.URL, DefaultModel: "fallback", Models: []registry.ModelDefinition{{ID: "fallback"}, {ID: "wire"}}},
+	}
+	reg := registry.New(providers...)
+	adapter := reachabilityAdapter{endpoint: upstream.URL, request: captured, events: events}
+	handler := chat.NewMessagesHandler(chat.HandlerConfig{
+		Registry: reg,
+		ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+			return adapter, nil
+		},
+	})
+	return handler, upstream
+}
+
+func invokeMessages(t *testing.T, handler *chat.MessagesHandler, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(payload)))
+	request.Host = "127.0.0.1:10100"
+	response := httptest.NewRecorder()
+	handler.Handle(response, request)
+	return response
+}

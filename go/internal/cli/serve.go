@@ -1,0 +1,739 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
+	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
+	"github.com/lidge-jun/opencodex-go/internal/adapter/google"
+	"github.com/lidge-jun/opencodex-go/internal/adapter/kiro"
+	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
+	"github.com/lidge-jun/opencodex-go/internal/combos"
+	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/images"
+	"github.com/lidge-jun/opencodex-go/internal/management"
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
+	providerpolicy "github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/server"
+	"github.com/lidge-jun/opencodex-go/internal/types"
+	"github.com/lidge-jun/opencodex-go/internal/update"
+	"github.com/lidge-jun/opencodex-go/internal/usage"
+	"github.com/lidge-jun/opencodex-go/internal/vision"
+)
+
+func runServe(ctx context.Context, args []string, streams IO) error {
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(streams.Err)
+	hostOverride := flags.String("host", "", "listen host")
+	portOverride := flags.Int("port", -1, "listen port")
+	configFile := flags.String("config", "", "configuration file")
+	tokenFile := flags.String("token-file", "", "service token file")
+	codexHome := flags.String("codex-home", "", "Codex home for service mode")
+	serviceMode := flags.Bool("service", false, "run under a service manager")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected serve arguments: %v", flags.Args())
+	}
+	if *configFile != "" {
+		_ = os.Setenv("OPENCODEX_HOME", filepath.Dir(*configFile))
+	}
+	if *codexHome != "" {
+		_ = os.Setenv("CODEX_HOME", *codexHome)
+	}
+	if *serviceMode {
+		_ = os.Setenv("OCX_SERVICE", "1")
+	}
+	var cfg *config.Config
+	var loadedConfigPath string
+	var err error
+	if *configFile != "" {
+		cfg, err = loadConfigFile(*configFile, streams.Err)
+		loadedConfigPath, _ = filepath.Abs(*configFile)
+	} else {
+		cfg, loadedConfigPath, err = loadConfig()
+	}
+	if err != nil {
+		return err
+	}
+	configuredPort := cfg.Port
+	if *hostOverride != "" {
+		cfg.Host = *hostOverride
+	}
+	if *portOverride >= 0 {
+		cfg.Port = *portOverride
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	config.ApplyProxyEnv(*cfg)
+	runtimeCfg, err := config.ResolveEnvironment(*cfg)
+	if err != nil {
+		return fmt.Errorf("resolve configuration environment: %w", err)
+	}
+	serviceTokenFile := *tokenFile
+	if serviceTokenFile == "" {
+		serviceTokenFile = os.Getenv("OCX_API_TOKEN_FILE")
+	}
+	token, err := platform.LoadServiceToken(os.Getenv("OPENCODEX_API_AUTH_TOKEN"), serviceTokenFile)
+	if err != nil {
+		return err
+	}
+	if token == "" {
+		token = runtimeCfg.AuthToken
+	}
+	if err := validateServeAuth(runtimeCfg, token); err != nil {
+		return err
+	}
+	configHome, err := configDir()
+	if err != nil {
+		return err
+	}
+	credentialStore := oauth.NewCredentialStore(filepath.Join(configHome, "auth.json"))
+	oauthManagement := newOAuthManagement(credentialStore)
+	providerClient := newAdapterAwareClient(server.NewProviderClient(providerFetchTimeouts(runtimeCfg)))
+	sharedModelCache := codex.NewModelCache()
+	sharedQuotaStore := codex.NewQuotaStore()
+	runtimeCfg = discoverConfiguredProviderModels(ctx, runtimeCfg, credentialStore, sharedModelCache, providerClient)
+	cursorModels, discoveryErr := discoverConfiguredCursorModels(ctx, runtimeCfg, credentialStore, nil)
+	if discoveryErr != nil && streams.Err != nil {
+		fmt.Fprintf(streams.Err, "Warning: Cursor model discovery failed; using configured catalog: %v\n", discoveryErr)
+	}
+	configPersistence := config.NewLivePersistence(loadedConfigPath, cfg)
+	if err := reconcileCodexRoutingAccounts(cfg, configPersistence, credentialStore); err != nil {
+		return fmt.Errorf("reconcile Codex routing accounts: %w", err)
+	}
+	reg := configuredRegistryWithCursorModels(runtimeCfg, cursorModels)
+	liveRegistry := &configBackedRegistry{config: cfg, persistence: configPersistence, cursorModels: cursorModels}
+	comboResolver, err := combos.New(runtimeCfg.Combos, configuredComboProviders(reg, runtimeCfg))
+	if err != nil {
+		return err
+	}
+	auth, err := configuredAuthWithStore(runtimeCfg, credentialStore, providerClient)
+	if err != nil {
+		return err
+	}
+	stopGuardian, err := activateTokenGuardian(ctx, runtimeCfg, credentialStore, providerClient)
+	if err != nil {
+		return fmt.Errorf("start OAuth token guardian: %w", err)
+	}
+	defer stopGuardian()
+	usageLog := usage.NewLog(filepath.Join(configHome, "usage.jsonl"))
+	debugLog := usage.NewDebugLog(filepath.Join(configHome, "usage-debug.jsonl"))
+	requestLogs := management.NewRequestLog(200)
+	stop := &stopRouter{channel: make(chan struct{})}
+	codexAuthManagement := newCodexAuthManagement(cfg, loadedConfigPath, credentialStore, sharedQuotaStore, providerClient, configPersistence)
+	refreshers := configuredOAuthRefreshers(runtimeCfg, providerClient, false)
+	codexRouting := newCodexRoutingRuntime(
+		cfg, configPersistence, credentialStore, sharedQuotaStore,
+		codexAuthManagement.mainToken, refreshers["openai"], providerClient,
+	)
+	liveAuth := &configBackedAuth{config: cfg, persistence: configPersistence, store: credentialStore, resolver: auth, codex: codexRouting, refreshers: refreshers}
+	providerQuotas := newProviderQuotaBackend(cfg, sharedQuotaStore, codexAuthManagement, registry.NewQuotaFetcher(), liveAuth, time.Now, configPersistence)
+	claudeRuntime := newClaudeRuntime(cfg, configHome, liveRegistry, providerClient, configPersistence)
+	// Interactive-only update prompt. It runs BEFORE port selection and the
+	// net.Listen below, because choosing "Update now" installs globally and
+	// exits: a process that already holds the port would be overwriting its own
+	// binary while listening (oracle: src/cli/index.ts:183 calls this ahead of
+	// chooseListenPort for the same reason).
+	maybePromptForUpdate(streams, *serviceMode)
+	preferredPort := cfg.Port
+	selectedPort := preferredPort
+	if preferredPort > 0 {
+		selectedPort, err = server.FindAvailablePortWithOptions(cfg.Host, preferredPort, server.FindAvailablePortOptions{PreferRetry: time.Second, PreferRetryInterval: 25 * time.Millisecond})
+		if err != nil {
+			return err
+		}
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
+	if err != nil {
+		return err
+	}
+	selectedPort = listener.Addr().(*net.TCPAddr).Port
+	runtimeControl := newRuntimeControl(cfg, runtimeTarget{Host: cfg.Host, Port: selectedPort})
+	apiStop := func() {
+		teardownOwnedGrokFence(streams)
+		stop.Stop()
+	}
+	// Created here rather than inside server.New so the restart backend and the
+	// server share one lifecycle: a drain started by the management route has
+	// to see the same in-flight turns the data plane is tracking.
+	proxyLifecycle := server.NewLifecycle()
+	// Buffered by one: the management handler must never block on a restart
+	// signal, and a second signal while one is in flight is redundant.
+	restartRequests := make(chan restartRequest, 1)
+	proxy := server.New(server.Config{Registry: liveRegistry, Combos: comboResolver, Auth: liveAuth, ResolveAdapter: configBackedAdapterResolverWithPersistence(cfg, configPersistence, cursorModels, providerClient, credentialStore), Client: providerClient, Token: token, Version: Version, UsageRecorder: usageLog, RequestLogs: requestLogs, ManagementConfig: cfg, ConfigPath: loadedConfigPath, ConfigPersistence: configPersistence, DebugLog: debugLog, OAuthManagement: oauthManagement, CodexAuthManagement: codexAuthManagement, CodexRouter: codexRouting.Router(), AnthropicPool: auth.Anthropic, AnthropicPoolConfig: liveAuth.anthropicPoolConfig, ProviderQuotas: providerQuotas, ClaudeRuntime: claudeRuntime, RuntimeControl: runtimeControl, CodexQuota: sharedQuotaStore, ModelCache: sharedModelCache, LiveResolver: configuredLiveResolver(cfg, credentialStore, configPersistence), StallTimeoutSec: configuredStallTimeout(runtimeCfg), SearchLoop: configuredSearchLoop(runtimeCfg, liveRegistry, liveAuth, providerClient), ImageBridge: configuredImageBridge(runtimeCfg, providerClient), ImageMaxRounds: images.ResolveMaxRounds(runtimeCfg.Images), StorageHome: os.Getenv("CODEX_HOME"), Lifecycle: proxyLifecycle, Stop: apiStop, Restart: configuredRestart(proxyLifecycle, restartRequests), ConfiguredPort: configuredPort, SelectedPort: selectedPort, PreferredPort: preferredPort, PersistSelectedPort: func(port int) error {
+		if err := configPersistence.Update(func(live *config.Config) { live.Port = port }); err != nil {
+			return fmt.Errorf("persist selected port: %w", err)
+		}
+		return nil
+	}})
+	httpServer := proxy.HTTPServer(net.JoinHostPort(cfg.Host, strconv.Itoa(selectedPort)))
+	actualPort := selectedPort
+	if err := writeRuntimeFiles(actualPort); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	defer removeRuntimeFiles()
+	systemEnvInstalled, err := installSystemEnv(ctx, *cfg, actualPort)
+	if err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("install system environment: %w", err)
+	}
+	if systemEnvInstalled {
+		// Preserved on a recycle for the same reason as the Grok fence: the
+		// replacement process expects the system environment to still point at
+		// the proxy. Measured against the oracle, which skips revertSystemEnv
+		// when recycling but still removes the pid/port files.
+		defer func() {
+			if !IsRecycling() {
+				_ = uninstallSystemEnv(context.Background())
+			}
+		}()
+	}
+	fmt.Fprintf(streams.Out, "OpenCodex proxy listening on %s\n", listener.Addr())
+	if os.Getenv("OCX_SERVICE") == "" {
+		// Skipped on a recycle: the replacement process inherits the fence, and
+		// tearing it down here would point Codex away from a proxy that is
+		// about to serve again.
+		defer func() {
+			if !IsRecycling() {
+				teardownOwnedGrokFence(streams)
+			}
+		}()
+	}
+	afterStart := func() {
+		go func() { _ = applyGrokFence(ctx, cfg, actualPort, cfg.Host, false, streams) }()
+	}
+	return serveListener(httpServer, proxy.Lifecycle(), listener, stop.channel, afterStart, proxy.Close, restartRequests, newRestartControl(streams), actualPort)
+}
+
+func validateServeAuth(cfg config.Config, token string) error {
+	keys := make([]string, 0, len(cfg.APIKeys))
+	for _, key := range cfg.APIKeys {
+		keys = append(keys, key.Key)
+	}
+	return server.AssertServerAuthConfig(server.MiddlewareConfig{Hostname: cfg.Host, Token: token, APIKeys: keys})
+}
+
+func configuredComboProviders(reg *registry.ProviderRegistry, cfg config.Config) map[string]combos.Provider {
+	providers := make(map[string]combos.Provider)
+	for _, entry := range reg.Entries() {
+		provider := combos.Provider{}
+		if configured, ok := cfg.Providers[entry.ID]; ok {
+			provider.Disabled = configured.Disabled
+		}
+		providers[entry.ID] = provider
+	}
+	return providers
+}
+
+type stopRouter struct {
+	once    sync.Once
+	channel chan struct{}
+}
+
+func (s *stopRouter) Stop() { s.once.Do(func() { close(s.channel) }) }
+
+func (s *stopRouter) Register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/stop", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"stopping"}`))
+		s.Stop()
+	})
+}
+
+// `closeServer` is the owning proxy's cleanup. It is threaded in rather than
+// left to the http.Server's RegisterOnShutdown callback, which net/http starts
+// as `go f()` and does not wait for -- so shutdown returned while the memory
+// watchdog was still sampling and response state was still unflushed.
+func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listener net.Listener, stop <-chan struct{}, afterStart func(), closeServer func(), restarts <-chan restartRequest, restart restartControl, port int) error {
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpServer.Serve(listener) }()
+	if afterStart != nil {
+		afterStart()
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	// A drain-and-restart uses a longer window than an ordinary stop and ends
+	// by spawning a replacement. It has to come through here rather than
+	// finishing inside the management handler: only this function closes the
+	// listener, and only returning from it runs runServe's deferred cleanup.
+	drainTimeout := 8 * time.Second
+	recycle := false
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-signals:
+	case <-stop:
+	case request := <-restarts:
+		drainTimeout, recycle = request.timeout, true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+	defer cancel()
+	// Cleanup is passed to the drain rather than left to the server's
+	// RegisterOnShutdown callback, which net/http starts as `go f()` and does
+	// not wait for. Without this, `ocx start` returned from shutdown while the
+	// memory watchdog was still sampling and response state was still
+	// unflushed.
+	drainErr := server.DrainHTTPServer(ctx, httpServer, lifecycle, nil, closeServer)
+	if !recycle {
+		return drainErr
+	}
+	// The port is free now, so the replacement can bind it. The exit code
+	// travels back as an ERROR rather than a package variable: an error is
+	// something Run already has to handle, so it cannot be silently dropped
+	// the way an unread global can.
+	code := restart.run(port)
+	// A drain that hit its deadline is a COMPLETED forced drain, not a failed
+	// one: DrainHTTPServer aborted what was left and closed the listener
+	// either way, and the replacement has already started. Reporting the
+	// deadline would turn a successful recycle into exit 1.
+	if drainErr != nil && !errors.Is(drainErr, context.DeadlineExceeded) {
+		return drainErr
+	}
+	if code != 0 {
+		return &restartExitError{code: code}
+	}
+	return nil
+}
+
+// restartExitError carries the exit code a completed drain-and-restart wants.
+//
+// Returned instead of calling os.Exit so every deferred cleanup in runServe
+// runs first — on a failed spawn those defers are exactly what restore Codex
+// and the Grok fence.
+type restartExitError struct{ code int }
+
+func (e *restartExitError) Error() string {
+	return "proxy exited for a drain-and-restart with code " + strconv.Itoa(e.code)
+}
+
+func configuredRegistry(cfg config.Config) *registry.ProviderRegistry {
+	base := registry.New().Entries()
+	index := make(map[string]int, len(base))
+	for position, entry := range base {
+		index[entry.ID] = position
+	}
+	for name, provider := range cfg.Providers {
+		entry := registry.Provider{ID: name, Label: name, Adapter: provider.Adapter, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel, StaticHeaders: provider.Headers}
+		for _, model := range provider.Models {
+			entry.Models = append(entry.Models, registry.ModelDefinition{ID: model})
+		}
+		if position, ok := index[name]; ok {
+			preset := base[position]
+			preset.Adapter, preset.BaseURL, preset.StaticHeaders = entry.Adapter, entry.BaseURL, entry.StaticHeaders
+			if entry.DefaultModel != "" {
+				preset.DefaultModel = entry.DefaultModel
+			}
+			if len(entry.Models) > 0 {
+				preset.Models = entry.Models
+			}
+			base[position] = preset
+		} else {
+			base = append(base, entry)
+		}
+	}
+	configured := registry.New(base...)
+	_ = configured.SetDefaultProvider(cfg.DefaultProvider)
+	return configured
+}
+
+func configuredAuth(cfg config.Config) (*oauth.AuthResolver, error) {
+	dir, err := configDir()
+	if err != nil {
+		return nil, err
+	}
+	return configuredAuthWithStore(cfg, oauth.NewCredentialStore(filepath.Join(dir, "auth.json")))
+}
+
+func configuredAuthWithStore(cfg config.Config, store *oauth.CredentialStore, clients ...oauth.HTTPDoer) (*oauth.AuthResolver, error) {
+	configs := map[string]oauth.ProviderAuthConfig{"openai": {Mode: oauth.AuthModeForward}}
+	for name, provider := range cfg.Providers {
+		resolved, err := configuredProviderAuth(name, provider, store)
+		if err != nil {
+			return nil, err
+		}
+		configs[name] = resolved
+	}
+	var client oauth.HTTPDoer
+	if len(clients) > 0 {
+		client = clients[0]
+	}
+	resolver := oauth.NewAuthResolver(store, configs, configuredOAuthRefreshers(cfg, client, false))
+	resolver.Pool = oauth.NewAccountPool(store, "openai")
+	// The Anthropic pool is always constructed; its own config decides whether
+	// it participates, so a disabled pool costs nothing and an enabled one does
+	// not need a restart to become reachable.
+	resolver.Anthropic = oauth.NewAnthropicPool(store)
+	resolver.SetAnthropicPoolConfig(config.NormalizeAnthropicPool(cfg.AnthropicAccountPool))
+	return resolver, nil
+}
+
+func configuredProviderAuth(name string, provider config.ProviderConfig, store *oauth.CredentialStore) (oauth.ProviderAuthConfig, error) {
+	mode := oauth.AuthModeOAuth
+	keyOptional := provider.KeyOptional != nil && *provider.KeyOptional
+	preset, registered := registry.New().Lookup(name)
+	if registered {
+		keyOptional = keyOptional || preset.KeyOptional
+	}
+	if provider.APIKey != "" || provider.AuthMode == "key" || provider.AuthMode == "api-key" {
+		mode = oauth.AuthModeAPIKey
+	} else if registered {
+		switch preset.AuthKind {
+		case registry.AuthForward:
+			mode = oauth.AuthModeForward
+		case registry.AuthKey, registry.AuthLocal:
+			mode = oauth.AuthModeAPIKey
+		}
+	}
+	usePool := false
+	if name == "openai" && provider.CodexAccountMode != "direct" {
+		if set, found, err := store.GetAccountSet("openai"); err != nil {
+			return oauth.ProviderAuthConfig{}, err
+		} else if found && len(set.Accounts) > 0 {
+			mode, usePool = oauth.AuthModeOAuth, true
+		}
+	}
+	return oauth.ProviderAuthConfig{Mode: mode, APIKey: provider.APIKey, KeyOptional: keyOptional, UsePool: usePool}, nil
+}
+
+func providerFetchTimeouts(cfg config.Config) server.FetchTimeouts {
+	timeouts := server.FetchTimeouts{Overall: 10 * time.Minute}
+	if cfg.ConnectTimeoutMS > 0 {
+		configured := time.Duration(cfg.ConnectTimeoutMS) * time.Millisecond
+		timeouts.Connect, timeouts.TLSHandshake, timeouts.ResponseHeader = configured, configured, configured
+	}
+	return timeouts
+}
+
+func configuredStallTimeout(cfg config.Config) *float64 {
+	if cfg.StallTimeoutSec <= 0 {
+		return nil
+	}
+	seconds := float64(cfg.StallTimeoutSec)
+	return &seconds
+}
+
+func adapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.AdapterResolver {
+	return adapterResolverWithVisionClient(reg, cfg, http.DefaultClient)
+}
+
+func adapterResolverWithVisionClient(reg *registry.ProviderRegistry, cfg config.Config, client *http.Client, stores ...*oauth.CredentialStore) server.AdapterResolver {
+	base := baseAdapterResolver(reg, cfg)
+	preprocessor := configuredVisionPreprocessor(cfg, client, stores...)
+	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
+		adapter, err := base(model, transport, auth, incoming)
+		if err != nil || preprocessor == nil {
+			return adapter, err
+		}
+		provider := cfg.Providers[model.Provider]
+		return bindAdapterVision(adapter, preprocessor, !modelInList(provider.NoVisionModels, model.Model)), nil
+	}
+}
+
+func configuredVisionPreprocessor(cfg config.Config, client *http.Client, stores ...*oauth.CredentialStore) *vision.VisionPreprocessor {
+	preprocessor, enabled := configuredVisionPlan(cfg, client, stores...)
+	if !enabled {
+		return nil
+	}
+	return vision.NewVisionPreprocessor(preprocessor)
+}
+
+func configuredVisionPlan(cfg config.Config, client *http.Client, stores ...*oauth.CredentialStore) (vision.PreprocessorConfig, bool) {
+	sidecar := cfg.VisionSidecar
+	if sidecar != nil && sidecar.Enabled != nil && !*sidecar.Enabled {
+		return vision.PreprocessorConfig{}, false
+	}
+	if sidecar == nil {
+		sidecar = &config.VisionSidecarConfig{}
+	}
+	preprocessor := vision.PreprocessorConfig{
+		Backend:                   vision.Backend(sidecar.Backend),
+		MaxDescriptionsPerTurn:    sidecar.MaxDescriptionsPerTurn,
+		MaxDescriptionsPerTurnSet: sidecar.MaxDescriptionsPerTurnSet || sidecar.MaxDescriptionsPerTurn != 0,
+	}
+	timeout := time.Duration(sidecar.TimeoutMS) * time.Millisecond
+	var store *oauth.CredentialStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
+	if name, provider, ok := eligibleAnthropicVisionProvider(cfg, store); ok {
+		preprocessor.Anthropic = &vision.AnthropicConfig{
+			BaseURL: provider.BaseURL, Model: sidecar.Model, Headers: provider.Headers, Client: client, Timeout: timeout,
+			TokenSource: vision.OAuthTokenSourceFunc(func(context.Context) (string, error) {
+				credential, usable := activeUsableOAuthCredential(store, name)
+				if !usable {
+					return "", fmt.Errorf("Anthropic OAuth access token is unavailable")
+				}
+				return credential.Access, nil
+			}),
+		}
+	}
+	if _, provider, credential, ok := eligibleOpenAIForwardVisionProvider(cfg, store); ok {
+		headers := make(map[string]string, len(provider.Headers)+2)
+		for key, value := range provider.Headers {
+			headers[key] = value
+		}
+		headers["Authorization"] = "Bearer " + credential.Access
+		if credential.AccountID != "" {
+			headers["chatgpt-account-id"] = credential.AccountID
+		}
+		preprocessor.OpenAI = &vision.OpenAIConfig{BaseURL: provider.BaseURL, Model: sidecar.Model, Headers: headers, Client: client, Timeout: timeout}
+	}
+	return preprocessor, true
+}
+
+func eligibleAnthropicVisionProvider(cfg config.Config, store *oauth.CredentialStore) (string, config.ProviderConfig, bool) {
+	for _, name := range sortedVisionProviderNames(cfg, "") {
+		provider := cfg.Providers[name]
+		if provider.Disabled || provider.Adapter != "anthropic" || provider.AuthMode != "oauth" {
+			continue
+		}
+		if _, ok := activeUsableOAuthCredential(store, name); ok {
+			return name, provider, true
+		}
+	}
+	return "", config.ProviderConfig{}, false
+}
+
+func eligibleOpenAIForwardVisionProvider(cfg config.Config, store *oauth.CredentialStore) (string, config.ProviderConfig, oauth.OAuthCredentials, bool) {
+	for _, name := range sortedVisionProviderNames(cfg, "openai") {
+		provider := cfg.Providers[name]
+		if provider.Disabled || provider.Adapter != "openai-responses" || provider.AuthMode != "forward" {
+			continue
+		}
+		if credential, ok := activeUsableOAuthCredential(store, name); ok {
+			return name, provider, credential, true
+		}
+	}
+	return "", config.ProviderConfig{}, oauth.OAuthCredentials{}, false
+}
+
+func activeUsableOAuthCredential(store *oauth.CredentialStore, provider string) (oauth.OAuthCredentials, bool) {
+	if store == nil {
+		return oauth.OAuthCredentials{}, false
+	}
+	set, found, err := store.GetAccountSet(provider)
+	if err != nil || !found || strings.TrimSpace(set.ActiveAccountID) == "" {
+		return oauth.OAuthCredentials{}, false
+	}
+	for _, account := range set.Accounts {
+		if account.ID == set.ActiveAccountID && !account.NeedsReauth && strings.TrimSpace(account.Credential.Access) != "" && !account.Credential.Expired(time.Now(), time.Minute) {
+			return account.Credential, true
+		}
+	}
+	return oauth.OAuthCredentials{}, false
+}
+
+func sortedVisionProviderNames(cfg config.Config, preferred string) []string {
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		if name != preferred {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if _, ok := cfg.Providers[preferred]; ok && preferred != "" {
+		names = append([]string{preferred}, names...)
+	}
+	return names
+}
+
+func modelInList(models []string, model string) bool {
+	for _, candidate := range models {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(model)) {
+			return true
+		}
+	}
+	return false
+}
+
+func baseAdapterResolver(reg *registry.ProviderRegistry, cfg config.Config) server.AdapterResolver {
+	cursorExecutors := make(map[string]*cursoradapter.NativeExecutor)
+	cursorExecutorErrors := make(map[string]error)
+	for name, provider := range cfg.Providers {
+		if provider.Adapter != "cursor" {
+			continue
+		}
+		cursorExecutors[name], cursorExecutorErrors[name] = newCursorNativeExecutor(provider)
+	}
+	return func(model *types.ResolvedModel, transport *types.Transport, auth *types.AuthContext, incoming http.Header) (types.Adapter, error) {
+		entry, ok := reg.Lookup(model.Provider)
+		if !ok {
+			return nil, fmt.Errorf("unknown provider %q", model.Provider)
+		}
+		provider := cfg.Providers[model.Provider]
+		adapterKind := configuredModelAdapter(model.Provider, model.Model, entry.Adapter, provider)
+		secret := provider.APIKey
+		if auth != nil {
+			if auth.APIKey != "" {
+				secret = auth.APIKey
+			} else if auth.AccessToken != "" {
+				secret = auth.AccessToken
+			}
+		}
+		headers := transport.Headers
+		provider.BaseURL = transport.BaseURL
+		switch adapterKind {
+		case "openai-chat":
+			adapter := openaiadapter.NewChatAdapter(provider, secret, headers)
+			adapter.OpenRouterRouting = provider.OpenRouterRouting
+			adapter.ModelOpenRouterRouting = provider.ModelOpenRouterRouting
+			if model.Provider == "xai" {
+				return bindXAIRequestID(adapter, provider.Headers), nil
+			}
+			return adapter, nil
+		case "mimo-free":
+			adapter := openaiadapter.NewMimoAdapter()
+			adapter.Chat = *openaiadapter.NewChatAdapter(provider, secret, headers)
+			return bindAdapterFetch(adapter, adapter.Do), nil
+		case "cursor":
+			executor := cursorExecutors[model.Provider]
+			if err := cursorExecutorErrors[model.Provider]; err != nil {
+				return nil, fmt.Errorf("configure Cursor native executor: %w", err)
+			}
+			if executor == nil {
+				executor, _ = newCursorNativeExecutor(provider)
+			}
+			return cursoradapter.NewAdapter(cursoradapter.AdapterConfig{
+				BaseURL:        transport.BaseURL,
+				Token:          secret,
+				Headers:        headers,
+				NativeExecutor: executor,
+			})
+		case "openai-responses":
+			if entry.AuthKind == registry.AuthForward {
+				provider.AuthMode = "forward"
+			}
+			adapter := openaiadapter.NewResponsesAdapter(provider, secret, headers)
+			adapter.IncomingHeaders = incoming
+			return adapter, nil
+		case "anthropic":
+			return anthropic.NewAdapter(provider, secret, headers, cfg.CacheRetention), nil
+		case "azure-openai":
+			return &openaiadapter.AzureAdapter{BaseURL: transport.BaseURL, APIKey: secret, Headers: headers}, nil
+		case "google":
+			mode := google.ModeAIStudio
+			if model.Provider == "google-vertex" || provider.GoogleMode == string(google.ModeVertex) {
+				mode = google.ModeVertex
+			}
+			if model.Provider == "google-antigravity" || provider.GoogleMode == string(google.ModeCloudCodeAssist) {
+				mode = google.ModeCloudCodeAssist
+			}
+			adapter := google.NewAdapter(mode, transport, auth)
+			adapter.Project = provider.Project
+			if adapter.Project == "" && auth != nil {
+				// Cloud Code Assist discovers the project during login and stores it on the
+				// credential; without this the antigravity path rejects every request.
+				adapter.Project = auth.ProjectID
+			}
+			adapter.Location = provider.Location
+			bound := bindVertexADC(adapter)
+			return bindAdapterFetch(bound, func(ctx context.Context, request *http.Request) (*http.Response, error) {
+				return adapter.Do(ctx, request, google.RetryOptions{})
+			}), nil
+		case "kiro":
+			return kiro.NewAdapter(transport.BaseURL, secret), nil
+		default:
+			return nil, fmt.Errorf("adapter %q is not supported", adapterKind)
+		}
+	}
+}
+
+// configuredModelAdapter mirrors TS resolveWireProtocolOverride: immutable wire
+// pins win, then a validated per-model override, then the provider default.
+// Re-checking policy here protects live/in-memory config written by older builds.
+func configuredModelAdapter(providerName, modelID, fallback string, provider config.ProviderConfig) string {
+	if pinned := types.PinnedWireAdapter(providerName, modelID); pinned != "" {
+		return pinned
+	}
+	requested := provider.ModelAdapters[modelID]
+	if requested == "" || !types.ModelAdapterOverrideAllowed[requested] {
+		return fallback
+	}
+	if providerpolicy.IsCanonicalOpenAiForwardProvider(provider.Adapter, provider.AuthMode, provider.BaseURL) {
+		return fallback
+	}
+	return requested
+}
+
+func runtimePaths() (string, string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(dir, "ocx.pid"), filepath.Join(dir, "runtime-port"), nil
+}
+
+// maybePromptForUpdate assembles what the update package cannot resolve on its
+// own -- the config-dir cache path, the terminal check, and the service marker
+// -- and then hands off. Any failure here is silent by design: a start must
+// never fail because an update check could not run.
+func maybePromptForUpdate(streams IO, serviceFlag bool) {
+	dir, err := configDir()
+	if err != nil {
+		return
+	}
+	stdin, _ := streams.In.(*os.File)
+	stdout, _ := streams.Out.(*os.File)
+	update.MaybeShowUpdatePrompt(update.PromptDeps{
+		In:        streams.In,
+		Out:       streams.Out,
+		CachePath: filepath.Join(dir, "version.json"),
+		Current:   Version,
+		// Both ends must be a terminal, and a service run never prompts even if
+		// its supervisor attached one.
+		Interactive: update.TerminalInteractive(stdin, stdout),
+		Service:     serviceFlag || os.Getenv("OCX_SERVICE") == "1",
+		Installer:   update.DetectInstaller(""),
+		Now:         time.Now,
+	})
+}
+
+func writeRuntimeFiles(port int) error {
+	pidPath, portPath, err := runtimePaths()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0o700); err != nil {
+		return err
+	}
+	if data, readErr := os.ReadFile(pidPath); readErr == nil {
+		if pid, parseErr := strconv.Atoi(string(data)); parseErr == nil && platform.ProcessAlive(pid) {
+			return fmt.Errorf("proxy already running with PID %d", pid)
+		}
+	}
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(portPath, []byte(strconv.Itoa(port)), 0o600)
+}
+
+func removeRuntimeFiles() {
+	pidPath, portPath, _ := runtimePaths()
+	_ = os.Remove(pidPath)
+	_ = os.Remove(portPath)
+}

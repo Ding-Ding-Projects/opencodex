@@ -1,0 +1,359 @@
+package cursor
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+func TestConnectFrameRoundTrip(t *testing.T) {
+	want := ConnectFrame{Flags: ConnectFlagEndStream, Payload: []byte(`{"ok":true}`)}
+	encoded, err := EncodeFrame(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadFrame(bytes.NewReader(encoded), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Flags != want.Flags || !bytes.Equal(got.Payload, want.Payload) {
+		t.Fatalf("frame = %#v, want %#v", got, want)
+	}
+	if !got.EndStream() || got.Compressed() {
+		t.Fatalf("flags not decoded: %#v", got)
+	}
+	if _, err := ReadFrame(bytes.NewReader(encoded[:4]), 1024); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("short header error = %v", err)
+	}
+}
+
+func TestConnectEndStreamTrailer(t *testing.T) {
+	if err := ParseEndStreamTrailer([]byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	err := ParseEndStreamTrailer([]byte(`{"error":{"code":"resource_exhausted","message":"quota"}}`))
+	var connectErr *ConnectEndStreamError
+	if !errors.As(err, &connectErr) || connectErr.Code != "resource_exhausted" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+func TestEventParsingTextUsageAndTerminal(t *testing.T) {
+	parser := NewEventParser()
+	textUpdate := appendMessage(nil, 1, appendString(nil, 1, "hello"))
+	events, err := parser.Parse(appendMessage(nil, 1, textUpdate))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != types.EventTextDelta || events[0].Text != "hello" {
+		t.Fatalf("text events = %#v", events)
+	}
+	checkpoint := appendMessage(nil, 5, appendVarintField(nil, 1, 120))
+	events, err = parser.Parse(appendMessage(nil, 3, checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Usage == nil || events[0].Usage.TotalTokens != 120 {
+		t.Fatalf("usage events = %#v", events)
+	}
+	tokenAndEnd := appendMessage(nil, 8, appendVarintField(nil, 1, 20))
+	tokenAndEnd = appendMessage(tokenAndEnd, 14, nil)
+	events, err = parser.Parse(appendMessage(nil, 1, tokenAndEnd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != types.EventDone || events[0].Usage.InputTokens != 100 || events[0].Usage.OutputTokens != 20 {
+		t.Fatalf("done events = %#v", events)
+	}
+}
+
+func TestEventParsingAtomicToolCall(t *testing.T) {
+	parser := NewEventParser()
+	value, _ := MarshalValue("README.md")
+	entry := appendString(nil, 1, "path")
+	entry = appendBytes(entry, 2, value)
+	args := appendString(nil, 4, cursorToolProvider)
+	args = appendString(args, 5, "read_file")
+	args = appendMessage(args, 2, entry)
+	mcp := appendMessage(nil, 1, args)
+	tool := appendMessage(nil, 15, mcp)
+	started := appendString(nil, 1, "call-1")
+	started = appendMessage(started, 2, tool)
+	if events, err := parser.Parse(appendMessage(nil, 1, appendMessage(nil, 2, started))); err != nil || len(events) != 0 {
+		t.Fatalf("start = %#v, %v", events, err)
+	}
+	completed := appendString(nil, 1, "call-1")
+	completed = appendMessage(completed, 2, tool)
+	events, err := parser.Parse(appendMessage(nil, 1, appendMessage(nil, 3, completed)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.Name != "read_file" {
+		t.Fatalf("tool events = %#v", events)
+	}
+	var arguments map[string]any
+	if err := json.Unmarshal(events[0].ToolCall.Arguments, &arguments); err != nil {
+		t.Fatal(err)
+	}
+	if arguments["path"] != "README.md" {
+		t.Fatalf("arguments = %#v", arguments)
+	}
+}
+
+func TestEventParserResolvesShellAliasAndNormalizesArguments(t *testing.T) {
+	parser := NewEventParser(EventParserOptions{
+		ClientToolNames: []string{ShellCommandTool},
+		ToolSchemas: map[string]map[string]any{
+			ShellCommandTool: CodexShellBridgeArgNormalizeSchema,
+		},
+	})
+	value, _ := MarshalValue("pwd")
+	entry := appendString(nil, 1, "cmd")
+	entry = appendBytes(entry, 2, value)
+	args := appendString(nil, 4, cursorToolProvider)
+	args = appendString(args, 5, ExecCommandTool)
+	args = appendMessage(args, 2, entry)
+	mcp := appendMessage(nil, 1, args)
+	tool := appendMessage(nil, 15, mcp)
+	completed := appendString(nil, 1, "call-shell")
+	completed = appendMessage(completed, 2, tool)
+	events, err := parser.Parse(appendMessage(nil, 1, appendMessage(nil, 3, completed)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.Name != ShellCommandTool {
+		t.Fatalf("tool events = %#v", events)
+	}
+	var arguments map[string]any
+	if err := json.Unmarshal(events[0].ToolCall.Arguments, &arguments); err != nil {
+		t.Fatal(err)
+	}
+	if arguments["command"] != "pwd" {
+		t.Fatalf("arguments = %#v", arguments)
+	}
+	if _, exists := arguments["cmd"]; exists {
+		t.Fatalf("cmd alias was not removed: %#v", arguments)
+	}
+}
+
+func TestEventParserUsesEstimatedInputTokensWithoutCheckpoint(t *testing.T) {
+	parser := NewEventParser(EventParserOptions{EstimatedInputTokens: 77})
+	events, err := parser.Parse(appendMessage(nil, 1, appendMessage(nil, 14, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Usage == nil || events[0].Usage.InputTokens != 77 || events[0].Usage.TotalTokens != 77 {
+		t.Fatalf("done events = %#v", events)
+	}
+}
+
+func TestKVBlobReply(t *testing.T) {
+	blobID := []byte{1, 2, 3}
+	query := appendVarintField(nil, 1, 7)
+	query = appendMessage(query, 2, appendBytes(nil, 1, blobID))
+	reply, err := marshalKVReply(query, map[string][]byte{"010203": []byte("blob")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := parseFields(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client) != 1 || client[0].Number != 3 {
+		t.Fatalf("client reply = %#v", client)
+	}
+	kv, err := parseFields(client[0].Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kv) != 2 || kv[0].Varint != 7 || kv[1].Number != 2 {
+		t.Fatalf("kv reply = %#v", kv)
+	}
+}
+
+func TestDefaultInteractionReplyApprovesSearchAndSurfacesPlan(t *testing.T) {
+	for _, kind := range []int{2, 5, 6} {
+		query := appendMessage(appendVarintField(nil, 1, 9), kind, nil)
+		reply, visible, err := marshalInteractionReply(query)
+		if err != nil || visible != "" {
+			t.Fatalf("kind %d reply error=%v visible=%q", kind, err, visible)
+		}
+		outer, _ := parseFields(reply)
+		response, _ := parseFields(outer[0].Bytes)
+		if len(response) != 2 || response[1].Number != kind {
+			t.Fatalf("kind %d response=%#v", kind, response)
+		}
+		approval, _ := parseFields(response[1].Bytes)
+		if len(approval) != 1 || approval[0].Number != 1 {
+			t.Fatalf("kind %d approval=%#v", kind, approval)
+		}
+	}
+
+	args := appendString(nil, 1, "Step one\nStep two")
+	args = appendString(args, 3, "Overview")
+	args = appendString(args, 4, "Migration")
+	createPlan := appendMessage(appendVarintField(nil, 1, 10), 7, appendMessage(nil, 1, args))
+	_, visible, err := marshalInteractionReply(createPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visible != "Plan: Migration\n\nOverview\n\nStep one\nStep two\n" {
+		t.Fatalf("visible plan = %q", visible)
+	}
+}
+
+func TestDefaultInteractionReplyRejectsHeadlessQuestionsAndModeSwitch(t *testing.T) {
+	for _, kind := range []int{3, 4} {
+		query := appendMessage(appendVarintField(nil, 1, 11), kind, nil)
+		reply, _, err := marshalInteractionReply(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outer, _ := parseFields(reply)
+		response, _ := parseFields(outer[0].Bytes)
+		if len(response) != 2 || response[1].Number != kind || len(response[1].Bytes) == 0 {
+			t.Fatalf("kind %d response=%#v", kind, response)
+		}
+	}
+}
+
+func TestClassifyCursorErrors(t *testing.T) {
+	tests := []struct {
+		message string
+		kind    ErrorKind
+		status  int
+	}{
+		{"resource_exhausted: quota exceeded", ErrorQuota, 429},
+		{"resource_exhausted: tool catalog too large", ErrorSize, 400},
+		{"permission_denied", ErrorAuth, 401},
+		{"connection reset by peer", ErrorTransport, 502},
+		{"illegal tag: field no 0", ErrorProtocol, 502},
+	}
+	for _, test := range tests {
+		got := ClassifyError(errors.New(test.message))
+		if got.Kind != test.kind || got.StatusCode != test.status {
+			t.Errorf("ClassifyError(%q) = %#v", test.message, got)
+		}
+	}
+}
+
+func TestCursorEffortMapping(t *testing.T) {
+	if got := CursorEffortSuffix("claude-4.6-opus", "low"); got != "high" {
+		t.Fatalf("low clamp = %q", got)
+	}
+	if got := CursorEffortSuffix("gpt-5.6-sol", "ultra"); got != "max" {
+		t.Fatalf("ultra = %q", got)
+	}
+	if got := CursorEffortSuffix("composer-2.5", "high"); got != "" {
+		t.Fatalf("composer suffix = %q", got)
+	}
+	model, parameters := CursorWireModel("cursor/auto-balance", "high")
+	if model != "default" || parameters["optimization"] != "balance" {
+		t.Fatalf("router = %q %#v", model, parameters)
+	}
+}
+
+func TestBuildAgentRunRequest(t *testing.T) {
+	req := &types.NormalizedRequest{ModelID: "cursor/gpt-5.6-sol", Metadata: map[string]string{"cursorConversationId": "conv-1"}, Options: types.RequestOptions{Reasoning: "medium"}, Context: types.RequestContext{
+		SystemPrompt: []string{"system"}, Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}},
+		Tools: []types.Tool{{Name: "read_file", Description: "read", Parameters: map[string]any{"type": "object"}}},
+	}}
+	built, err := BuildAgentRunRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if built.Run.Model.ID != "gpt-5.6-sol-medium" || built.Run.ConversationID != "conv-1" {
+		t.Fatalf("run = %#v", built.Run)
+	}
+	if built.Run.Action.UserMessage == nil || built.Run.Action.UserMessage.Text != "hello" || len(built.Run.Tools) != 1 {
+		t.Fatalf("action/tools = %#v %#v", built.Run.Action, built.Run.Tools)
+	}
+	if len(built.Run.ConversationState.RootPromptBlobIDs) != 2 {
+		t.Fatalf("blob ids = %d, want system prompt plus tool guidance", len(built.Run.ConversationState.RootPromptBlobIDs))
+	}
+	if built.EstimatedInputTokens <= 0 || built.Run.EstimatedInputTokens != built.EstimatedInputTokens {
+		t.Fatalf("estimated input tokens = built %d run %d", built.EstimatedInputTokens, built.Run.EstimatedInputTokens)
+	}
+	for _, id := range built.Run.ConversationState.RootPromptBlobIDs {
+		if _, ok := built.Blobs[fmt.Sprintf("%x", id)]; !ok {
+			t.Fatalf("blob %x missing", id)
+		}
+	}
+	wire, err := MarshalAgentClientRun(built.Run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, err := parseFields(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 1 || fields[0].Number != 1 {
+		t.Fatalf("client wire fields = %#v", fields)
+	}
+}
+
+func TestBuildAgentRunRequestCarriesNormalizeSchemasAndCompactionUsageControls(t *testing.T) {
+	req := &types.NormalizedRequest{
+		ModelID: "cursor/gpt-5.6-sol", CompactionRequest: true,
+		Context: types.RequestContext{
+			Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"run: pwd"`)}},
+			Tools: []types.Tool{{Name: ShellCommandTool, Parameters: map[string]any{
+				"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "custom": map[string]any{"type": "boolean"}},
+				"required": []any{"command"},
+			}}},
+		},
+	}
+	built, err := BuildAgentRunRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !built.Run.ContextUsageReset || !built.Run.DisableContextUsageStore {
+		t.Fatalf("compaction controls = reset:%v disableStore:%v", built.Run.ContextUsageReset, built.Run.DisableContextUsageStore)
+	}
+	schema := built.Run.ToolSchemas[ShellCommandTool]
+	if schema == nil || schema["properties"].(map[string]any)["custom"] == nil {
+		t.Fatalf("normalize schema = %#v", schema)
+	}
+	options := eventParserOptionsForRun(built.Run)
+	if options.ToolSchemas[ShellCommandTool]["properties"].(map[string]any)["custom"] == nil {
+		t.Fatalf("event parser schema = %#v", options.ToolSchemas)
+	}
+	if built.Run.Action.UserMessage == nil || !strings.Contains(built.Run.Action.UserMessage.Text, CursorShellAliasUserHint) {
+		t.Fatalf("active prompt = %#v", built.Run.Action)
+	}
+}
+
+func TestEstimateInputTokensUsesCharsPerFour(t *testing.T) {
+	if got := EstimateInputTokens("12345"); got != 2 {
+		t.Fatalf("estimate = %d, want 2", got)
+	}
+	if got := EstimateInputTokens(""); got != 0 {
+		t.Fatalf("empty estimate = %d", got)
+	}
+}
+
+func TestPreCommitRetry(t *testing.T) {
+	attempts := 0
+	state := &testCommitState{}
+	value, err := DoPreCommitRetry(context.Background(), func(context.Context, int) (string, CommitState, error) {
+		attempts++
+		if attempts == 1 {
+			return "", state, errors.New("connection reset")
+		}
+		return "ok", state, nil
+	})
+	if err != nil || value != "ok" || attempts != 2 {
+		t.Fatalf("retry = %q %d %v", value, attempts, err)
+	}
+}
+
+type testCommitState struct{ committed bool }
+
+func (s *testCommitState) RequestCommitted() bool { return s.committed }

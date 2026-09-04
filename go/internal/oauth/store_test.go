@@ -1,0 +1,225 @@
+package oauth
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestCredentialStoreRoundTripAndPermissions(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "nested", "auth.json")
+	store := NewCredentialStore(path)
+	store.now = func() time.Time { return time.UnixMilli(1234) }
+	ctx := context.Background()
+
+	first := OAuthCredentials{Access: "access-a", Refresh: "refresh-a", Expires: 100_000, AccountID: "human-a", Source: SourceOAuth}
+	second := OAuthCredentials{Access: "access-b", Refresh: "refresh-b", Expires: 200_000, Email: "b@example.com", Source: SourceOAuth}
+	if err := store.SaveCredential(ctx, "anthropic", first); err != nil {
+		t.Fatalf("SaveCredential(first) error = %v", err)
+	}
+	if err := store.SaveCredential(ctx, "anthropic", second); err != nil {
+		t.Fatalf("SaveCredential(second) error = %v", err)
+	}
+
+	reloaded := NewCredentialStore(path)
+	set, ok, err := reloaded.GetAccountSet("anthropic")
+	if err != nil || !ok {
+		t.Fatalf("GetAccountSet() = (%v, %v, %v)", set, ok, err)
+	}
+	if len(set.Accounts) != 2 {
+		t.Fatalf("account count = %d, want 2", len(set.Accounts))
+	}
+	active, ok, err := reloaded.GetCredential("anthropic")
+	if err != nil || !ok {
+		t.Fatalf("GetCredential() = (%v, %v, %v)", active, ok, err)
+	}
+	if active.Access != second.Access || active.Refresh != second.Refresh || active.Email != second.Email {
+		t.Fatalf("active credential = %#v, want second credential", active)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("credential permissions = %o, want no group/other access", info.Mode().Perm())
+	}
+}
+
+func TestCredentialStoreLoadsLegacyCredential(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(path, []byte(`{"chatgpt":{"access":"a","refresh":"r","expires":12345}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewCredentialStore(path)
+	set, ok, err := store.GetAccountSet("chatgpt")
+	if err != nil || !ok {
+		t.Fatalf("GetAccountSet() = (%v, %v, %v)", set, ok, err)
+	}
+	if len(set.Accounts) != 1 || set.ActiveAccountID == "" || set.Accounts[0].Credential.Access != "a" {
+		t.Fatalf("legacy account set = %#v", set)
+	}
+}
+
+func TestCredentialStoreSerializesConcurrentMutations(t *testing.T) {
+	t.Parallel()
+	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, provider := range []string{"alpha", "beta", "gamma", "delta"} {
+		provider := provider
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			credential := OAuthCredentials{Access: "access-" + provider, Refresh: "refresh-" + provider, Expires: 100_000, AccountID: provider}
+			if err := store.SaveCredential(ctx, provider, credential); err != nil {
+				t.Errorf("SaveCredential(%s) error = %v", provider, err)
+			}
+		}()
+	}
+	wg.Wait()
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 4 {
+		t.Fatalf("provider count = %d, want 4", len(loaded))
+	}
+}
+
+func TestCredentialStoreRefreshSequential(t *testing.T) {
+	t.Parallel()
+	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	credential := OAuthCredentials{Access: "old", Refresh: "grant", Expires: 1, AccountID: "account"}
+	if err := store.SaveCredential(ctx, "anthropic", credential); err != nil {
+		t.Fatal(err)
+	}
+	set, _, _ := store.GetAccountSet("anthropic")
+
+	var calls atomic.Int32
+	result, err := store.RefreshAccount(ctx, "anthropic", set.ActiveAccountID, func(context.Context, string) (OAuthCredentials, error) {
+		calls.Add(1)
+		return OAuthCredentials{Access: "new", Refresh: "rotated", Expires: 999_999, AccountID: "account"}, nil
+	})
+	if err != nil {
+		t.Fatalf("RefreshAccount() error = %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("refresh calls = %d, want 1", calls.Load())
+	}
+	if !result.Refreshed || result.Superseded || result.Credential.Access != "new" {
+		t.Fatalf("RefreshAccount() result = %#v", result)
+	}
+}
+
+func TestCredentialStoreRefreshPreservesMetadataOmittedByProvider(t *testing.T) {
+	t.Parallel()
+	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	ctx := context.Background()
+	credential := OAuthCredentials{
+		Access: "old", Refresh: "durable", Expires: 1, ProjectID: "project-1",
+		APIBaseURL: "https://regional.example/v1", Email: "user@example.com",
+		AccountID: "physical-account", Source: SourceCredentialFile,
+	}
+	if err := store.SaveCredential(ctx, "google-antigravity", credential); err != nil {
+		t.Fatal(err)
+	}
+	set, _, _ := store.GetAccountSet("google-antigravity")
+	result, err := store.RefreshAccount(ctx, "google-antigravity", set.ActiveAccountID, func(context.Context, string) (OAuthCredentials, error) {
+		return OAuthCredentials{Access: "new", Expires: 999_999}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.Credential
+	if got.Refresh != credential.Refresh || got.ProjectID != credential.ProjectID || got.APIBaseURL != credential.APIBaseURL || got.Email != credential.Email || got.AccountID != credential.AccountID || got.Source != credential.Source {
+		t.Fatalf("metadata was not preserved: %#v", got)
+	}
+}
+
+func TestCredentialStoreRefreshKeepsFreshMetadataOverrides(t *testing.T) {
+	previous := OAuthCredentials{Refresh: "old-refresh", ProjectID: "old-project", APIBaseURL: "https://old.example", Email: "old@example.com", AccountID: "old-account", Source: SourceManual}
+	fresh := OAuthCredentials{Refresh: "new-refresh", ProjectID: "new-project", APIBaseURL: "https://new.example", Email: "new@example.com", AccountID: "new-account", Source: SourceOAuth}
+	if got := mergeRefreshedCredential(fresh, previous); got != fresh {
+		t.Fatalf("fresh metadata was overwritten: %#v", got)
+	}
+	previous.Source = SourceLocalCLI
+	if got := mergeRefreshedCredential(OAuthCredentials{}, previous); got.Source != SourceOAuth {
+		t.Fatalf("local CLI refresh did not detach to OAuth: %#v", got)
+	}
+}
+
+func TestCredentialStoreRefreshIfGenerationAdoptsWinner(t *testing.T) {
+	t.Parallel()
+	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	credential := OAuthCredentials{Access: "old", Refresh: "grant", Expires: 1, AccountID: "account"}
+	if err := store.SaveCredential(ctx, "anthropic", credential); err != nil {
+		t.Fatal(err)
+	}
+	set, _, _ := store.GetAccountSet("anthropic")
+	accountID := set.ActiveAccountID
+	observedGeneration := CredentialGeneration(credential)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	refresh := func(context.Context, string) (OAuthCredentials, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return OAuthCredentials{Access: "new", Refresh: "rotated", Expires: 999_999, AccountID: "account"}, nil
+	}
+	first := make(chan RefreshResult, 1)
+	second := make(chan RefreshResult, 1)
+	go func() {
+		result, err := store.RefreshAccountIfGeneration(ctx, "anthropic", accountID, observedGeneration, refresh)
+		if err != nil {
+			t.Errorf("first refresh error = %v", err)
+		}
+		first <- result
+	}()
+	<-entered
+	go func() {
+		result, err := store.RefreshAccountIfGeneration(ctx, "anthropic", accountID, observedGeneration, refresh)
+		if err != nil {
+			t.Errorf("second refresh error = %v", err)
+		}
+		second <- result
+	}()
+	close(release)
+	firstResult, secondResult := <-first, <-second
+	if calls.Load() != 1 {
+		t.Fatalf("refresh calls = %d, want 1", calls.Load())
+	}
+	if !firstResult.Refreshed || !secondResult.Superseded {
+		t.Fatalf("results = first %#v, second %#v", firstResult, secondResult)
+	}
+}
+
+func TestCredentialStoreSaveNamedAccountKeepsPublicAndPhysicalIDsSeparate(t *testing.T) {
+	store := NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	credential := OAuthCredentials{Access: "access-secret", Refresh: "refresh-secret", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: "physical-chatgpt-id"}
+	if err := store.SaveNamedAccount(context.Background(), "openai", "work", credential); err != nil {
+		t.Fatal(err)
+	}
+	set, found, err := store.GetAccountSet("openai")
+	if err != nil || !found || set.ActiveAccountID != "work" || len(set.Accounts) != 1 {
+		t.Fatalf("set=%#v found=%t err=%v", set, found, err)
+	}
+	if set.Accounts[0].ID != "work" || set.Accounts[0].Credential.AccountID != "physical-chatgpt-id" {
+		t.Fatalf("account=%#v", set.Accounts[0])
+	}
+}

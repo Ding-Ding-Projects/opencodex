@@ -1,0 +1,320 @@
+package claude
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+type failingAnthropicWriter struct{ err error }
+
+func (writer failingAnthropicWriter) Write([]byte) (int, error) { return 0, writer.err }
+
+type flushingAnthropicWriter struct {
+	bytes.Buffer
+	flushes int
+}
+
+func (writer *flushingAnthropicWriter) Flush() { writer.flushes++ }
+
+func TestAliasRoundTripAndGuards(t *testing.T) {
+	alias, ok := AliasForRoute("openrouter", "model--variant")
+	if !ok || alias != "claude-ocx-openrouter--model--variant" {
+		t.Fatalf("alias = %q, %v", alias, ok)
+	}
+	if got, ok := ResolveAlias(alias); !ok || got != "openrouter/model--variant" {
+		t.Fatalf("resolved = %q, %v", got, ok)
+	}
+	if _, ok := AliasForRoute("bad--provider", "m"); ok {
+		t.Fatal("ambiguous provider was aliased")
+	}
+	if native, ok := AliasForNative("gpt-5.6"); !ok {
+		t.Fatal("native alias rejected")
+	} else if got, _ := ResolveAlias(native); got != "gpt-5.6" {
+		t.Fatalf("native resolved %q", got)
+	}
+}
+
+func TestContextWindowsAndOneMillionVariants(t *testing.T) {
+	windows := BuildClaudeContextWindows(map[string]int{"gpt": 1_050_000}, []ContextModel{{Provider: "p", ID: "m", ContextWindow: 372_000}, {Provider: "anthropic", ID: "claude-small", ContextWindow: 372_000}})
+	if windows["gpt"] != 1_050_000 || windows["p/m"] != 372_000 {
+		t.Fatalf("windows = %#v", windows)
+	}
+	if _, ok := windows["anthropic/claude-small"]; ok {
+		t.Fatal("sub-1m Anthropic route was registered")
+	}
+	auto := AutoContextMode{Enabled: true, CompactWindow: 350_000}
+	if got := WithOneMillionMarker("p/m", windows, auto); got != "p/m[1m]" {
+		t.Fatalf("marker = %q", got)
+	}
+	if got := StripOneMillionMarker("p/m[1M]"); got != "p/m" {
+		t.Fatalf("strip = %q", got)
+	}
+}
+
+func TestContextWindowsDesktopAliasesModelEnvAndBoundedAcquisition(t *testing.T) {
+	windows := BuildClaudeContextWindows(map[string]int{"gpt-native": 1_000_000}, []ContextModel{{Provider: "cursor", ID: "auto", ContextWindow: 400_000}})
+	if windows[Desktop3pAlias("native", "gpt-native")] != 1_000_000 || windows[Desktop3pAlias("cursor", "auto")] != 400_000 {
+		t.Fatalf("desktop aliases missing: %#v", windows)
+	}
+	env := EffectiveModelEnv(&ModelEnvConfig{
+		ContextConfig: ContextConfig{}, Model: "cursor/auto", SmallFastModel: "gpt-native",
+		TierModels: ClaudeTierModels{Opus: "gpt-native", Sonnet: "cursor/auto", Fable: "cursor/auto"},
+	}, windows, nil)
+	if env["ANTHROPIC_MODEL"] != "cursor/auto[1m]" || env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "gpt-native[1m]" || env["ANTHROPIC_SMALL_FAST_MODEL"] != "gpt-native[1m]" {
+		t.Fatalf("effective model env=%#v", env)
+	}
+	if _, ok := BoundedContextWindows(context.Background(), time.Millisecond, func(ctx context.Context) (map[string]int, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}); ok {
+		t.Fatal("timed out acquisition reported success")
+	}
+}
+
+func TestModelInfoAdvertisesOnlyDeclaredCapabilities(t *testing.T) {
+	infos := BuildModelInfos(nil, []DiscoveryModel{{Provider: "p", ID: "vision", ReasoningEfforts: []string{"low", "ultra"}, ContextWindow: 372_000, ImageInput: true}}, AutoContextMode{Enabled: true, CompactWindow: 350_000})
+	if len(infos) != 2 || infos[0].Capabilities.Effort.High.Supported || !infos[0].Capabilities.Effort.Low.Supported {
+		t.Fatalf("infos = %#v", infos)
+	}
+	if !strings.Contains(infos[1].DisplayName, "372k") || infos[1].MaxInputTokens == nil || *infos[1].MaxInputTokens != 372_000 {
+		t.Fatalf("variant = %#v", infos[1])
+	}
+	desktop := BuildModelInfosWithStyle(nil, []DiscoveryModel{{Provider: "p", ID: "vision"}}, AutoContextOff, AnthropicIDDesktop3P)
+	if len(desktop) != 1 || desktop[0].ID != Desktop3pAlias("p", "vision") {
+		t.Fatalf("desktop IDs=%#v", desktop)
+	}
+	payload, _ := json.Marshal(desktop[0].Capabilities)
+	if !strings.Contains(string(payload), `"context_management":{"supported":false,"clear_thinking_20251015":null`) {
+		t.Fatalf("capabilities=%s", payload)
+	}
+}
+
+func TestReasoningEnvelopeRoundTripAndRejectsGarbage(t *testing.T) {
+	want := ReasoningEnvelope{Signature: "sig", Redacted: []string{"red"}, Text: "hidden"}
+	got, ok := DecodeReasoningEnvelope(EncodeReasoningEnvelope(want))
+	if !ok || got.Signature != want.Signature || got.Text != want.Text || len(got.Redacted) != 1 {
+		t.Fatalf("got %#v, %v", got, ok)
+	}
+	if _, ok := DecodeReasoningEnvelope("native-encrypted"); ok {
+		t.Fatal("native blob decoded")
+	}
+}
+
+func TestAnthropicInboundToolsThinkingCacheAndElision(t *testing.T) {
+	large := "Base directory for this skill: /tmp/claude-api\n" + strings.Repeat("x", 10_100)
+	body := map[string]any{"model": "claude-ocx-p--m[1m]", "system": "sys", "metadata": map[string]any{"user_id": "session"}, "max_tokens": float64(99), "thinking": map[string]any{"type": "enabled", "budget_tokens": float64(5000)}, "tools": []any{map[string]any{"name": "run", "description": "d", "input_schema": map[string]any{"type": "object"}}}, "messages": []any{
+		map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "skill1", "name": "Skill", "input": map[string]any{"skill": "claude-api"}}}},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "skill1", "content": "Launching"}, map[string]any{"type": "text", "text": large}}},
+	}}
+	translated, err := AnthropicToResponses(body, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if translated.Body["model"] != "p/m" || translated.CacheKeySource != "metadata" {
+		t.Fatalf("translation = %#v", translated)
+	}
+	reasoning := translated.Body["reasoning"].(map[string]any)
+	if reasoning["effort"] != "medium" {
+		t.Fatalf("reasoning = %#v", reasoning)
+	}
+	input := translated.Body["input"].([]any)
+	wire, _ := json.Marshal(input)
+	if strings.Contains(string(wire), strings.Repeat("x", 100)) || !strings.Contains(string(wire), "elided") {
+		t.Fatalf("skill was not elided: %s", wire)
+	}
+}
+
+func TestParseResponsesItemsAndReasoningEnvelope(t *testing.T) {
+	envelope := EncodeReasoningEnvelope(ReasoningEnvelope{Signature: "signed", Text: "secret"})
+	raw := []byte(`{"model":"p/m","instructions":"sys","reasoning":{"effort":"ultra"},"tools":[{"type":"function","name":"run","parameters":{"type":"object"}}],"input":[{"type":"reasoning","encrypted_content":"` + envelope + `"},{"type":"function_call","call_id":"c1","name":"run","arguments":"{\"x\":1}"},{"type":"function_call_output","call_id":"c1","output":"ok"},{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA","detail":"original"}]}]}`)
+	req, err := ParseResponsesRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Options.Reasoning != "max" || len(req.Context.Tools) != 1 || len(req.Context.Messages) != 3 {
+		t.Fatalf("request = %#v", req)
+	}
+	if !strings.Contains(string(req.Context.Messages[0].Content), "signed") || req.Context.Messages[1].ToolCallID != "c1" || req.Context.Messages[1].ToolName != "run" {
+		t.Fatalf("messages = %#v", req.Context.Messages)
+	}
+	if !strings.Contains(string(req.Context.Messages[2].Content), `"detail":"high"`) {
+		t.Fatalf("image = %s", req.Context.Messages[2].Content)
+	}
+}
+
+func TestParseResponsesFunctionArgumentsRemainObjectOnly(t *testing.T) {
+	for _, test := range []struct {
+		name, arguments string
+		wantX           float64
+		wantEmpty       bool
+	}{
+		{name: "object", arguments: `{"x":1}`, wantX: 1},
+		{name: "array", arguments: `[]`, wantEmpty: true},
+		{name: "malformed", arguments: `{broken`, wantEmpty: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]any{"model": "m", "input": []any{map[string]any{"type": "function_call", "call_id": "c1", "name": "run", "arguments": test.arguments}}})
+			parsed, err := ParseResponsesRequest(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parts []map[string]any
+			if err := json.Unmarshal(parsed.Context.Messages[0].Content, &parts); err != nil || len(parts) != 1 {
+				t.Fatalf("parts=%#v err=%v", parts, err)
+			}
+			arguments, _ := parts[0]["arguments"].(map[string]any)
+			if test.wantEmpty && len(arguments) != 0 {
+				t.Fatalf("arguments=%#v", arguments)
+			}
+			if !test.wantEmpty && arguments["x"] != test.wantX {
+				t.Fatalf("arguments=%#v", arguments)
+			}
+		})
+	}
+}
+
+func TestResponsesValidationRejectsMalformedBoundaries(t *testing.T) {
+	cases := [][]byte{[]byte(`{}`), []byte(`{"model":"m","input":{}}`), []byte(`{"model":"m","input":[{"type":"function_call","name":"x"}]}`), []byte(`{"model":"m","tool_choice":"sometimes"}`)}
+	for _, raw := range cases {
+		if _, err := ValidateResponsesRequest(raw); err == nil {
+			t.Errorf("accepted %s", raw)
+		}
+	}
+}
+
+func TestOutboundLifecycleThinkingToolChunksAndUsage(t *testing.T) {
+	events := []types.AdapterEvent{{Type: types.EventReasoning, Reasoning: "why"}, {Type: types.EventTextDelta, Text: "answer"}, {Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "c1", Name: "run", Arguments: json.RawMessage(`{"x":`)}}, {Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "c1", Name: "run", Arguments: json.RawMessage(`1}`)}}, {Type: types.EventDone, Usage: &types.Usage{InputTokens: 15, OutputTokens: 4, CacheReadInputTokens: 5}}}
+	wire, message := ConvertEvents("m", events)
+	text := string(wire)
+	order := []string{"event: message_start", "event: content_block_start", "thinking_delta", "signature_delta", "event: content_block_stop", "text_delta", "input_json_delta", "event: message_delta", "event: message_stop"}
+	at := -1
+	for _, needle := range order {
+		next := strings.Index(text[at+1:], needle)
+		if next < 0 {
+			t.Fatalf("missing/out of order %q in %s", needle, text)
+		}
+		at += next + 1
+	}
+	if message.StopReason != "tool_use" || message.Usage["input_tokens"] != 10 || len(message.Content) != 3 {
+		t.Fatalf("message = %#v", message)
+	}
+	if input := message.Content[2]["input"].(map[string]any); input["x"] != float64(1) {
+		t.Fatalf("tool input = %#v", input)
+	}
+}
+
+func TestOutboundWebSearchIncompleteAndThinkingSignature(t *testing.T) {
+	stream, message := ConvertEvents("m", []types.AdapterEvent{
+		{Type: types.EventThinkingDelta, Reasoning: "private"},
+		{Type: types.EventThinkingSignature, Signature: "real-signature"},
+		{Type: types.EventWebSearchCallBegin, ID: "search-1", Queries: []string{"current version"}},
+		{Type: types.EventWebSearchCallEnd, ID: "search-1", WebSearchStatus: "completed", Sources: []types.URLCitation{{URL: "https://example.com", Title: "Example"}}},
+		{Type: types.EventDone, Usage: &types.Usage{InputTokens: 10, OutputTokens: 2}},
+	})
+	text := string(stream)
+	if !strings.Contains(text, `"signature":"real-signature"`) || !strings.Contains(text, `"type":"server_tool_use"`) || !strings.Contains(text, `"web_search_requests":1`) {
+		t.Fatalf("stream=%s", text)
+	}
+	if message.StopReason != "end_turn" || len(message.Content) != 3 {
+		t.Fatalf("message=%#v", message)
+	}
+	if signature := message.Content[0]["signature"]; signature != "real-signature" {
+		t.Fatalf("buffered thinking signature=%#v", signature)
+	}
+
+	_, incomplete := ConvertEvents("m", []types.AdapterEvent{{Type: types.EventIncomplete, Reason: "content_filter"}})
+	if incomplete.StopReason != "refusal" {
+		t.Fatalf("incomplete stop reason=%q", incomplete.StopReason)
+	}
+}
+
+func TestOutboundSanitizesWebSearchFunctionCallDomains(t *testing.T) {
+	if !IsClaudeWebSearchToolName(" WebSearch ") || !IsClaudeWebSearchToolName("web_search_preview") || IsClaudeWebSearchToolName("search") {
+		t.Fatal("WebSearch tool-name classification diverged from Claude")
+	}
+
+	events := []types.AdapterEvent{
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`{"query":"go","allowed_domains":[" docs.go.dev ","",7],`)}},
+		{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: "call-1", Name: "WebSearch", Arguments: json.RawMessage(`"blocked_domains":["example.com"]}`)}},
+		{Type: types.EventDone},
+	}
+	wire, message := ConvertEvents("m", events)
+	text := string(wire)
+	if strings.Contains(text, "blocked_domains") || strings.Count(text, `"type":"input_json_delta"`) != 1 {
+		t.Fatalf("WebSearch arguments were not buffered and sanitized once: %s", text)
+	}
+	input := message.Content[0]["input"].(map[string]any)
+	allowed, ok := input["allowed_domains"].([]string)
+	if !ok || len(allowed) != 1 || allowed[0] != "docs.go.dev" || input["query"] != "go" {
+		t.Fatalf("sanitized input = %#v", input)
+	}
+	if _, exists := input["blocked_domains"]; exists {
+		t.Fatalf("blocked_domains survived allow-list preference: %#v", input)
+	}
+
+	got := SanitizeWebSearchInput(map[string]any{"blocked_domains": []any{" a.test ", ""}, "allowed_domains": []any{}})
+	blocked, ok := got["blocked_domains"].([]string)
+	if !ok || len(blocked) != 1 || blocked[0] != "a.test" {
+		t.Fatalf("blocked-only input = %#v", got)
+	}
+}
+
+func TestOutboundStreamEmitsTimerDrivenIdlePing(t *testing.T) {
+	events := make(chan types.AdapterEvent)
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		events <- types.AdapterEvent{Type: types.EventDone}
+		close(events)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var output strings.Builder
+	if err := streamEventsWithPingInterval(ctx, &output, "m", events, 5*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	// The first idle tick starts the message (which emits an initial ping) and
+	// then emits the timer ping, matching the TypeScript stream contract.
+	if count := strings.Count(output.String(), "event: ping"); count < 2 {
+		t.Fatalf("timer pings = %d, stream = %s", count, output.String())
+	}
+}
+
+func TestOutboundClosedChannelFailsClosed(t *testing.T) {
+	ch := make(chan types.AdapterEvent)
+	close(ch)
+	var b strings.Builder
+	if err := StreamEvents(context.Background(), &b, "m", ch); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "adapter stream ended") || strings.Contains(b.String(), "event: message_stop") {
+		t.Fatalf("wire = %s", b.String())
+	}
+}
+
+func TestOutboundStreamPropagatesWritesAndFlushesFrames(t *testing.T) {
+	writeFailure := errors.New("injected write failure")
+	events := make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{Type: types.EventDone}
+	close(events)
+	if err := StreamEvents(context.Background(), failingAnthropicWriter{err: writeFailure}, "m", events); !errors.Is(err, writeFailure) {
+		t.Fatalf("write error = %v", err)
+	}
+
+	events = make(chan types.AdapterEvent, 1)
+	events <- types.AdapterEvent{Type: types.EventDone}
+	close(events)
+	writer := &flushingAnthropicWriter{}
+	if err := StreamEvents(context.Background(), writer, "m", events); err != nil {
+		t.Fatal(err)
+	}
+	if writer.flushes == 0 || !strings.Contains(writer.String(), "event: message_stop") {
+		t.Fatalf("stream was not flushed: flushes=%d body=%s", writer.flushes, writer.String())
+	}
+}

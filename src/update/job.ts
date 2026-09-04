@@ -382,6 +382,17 @@ function updateJob(job: UpdateJobState, patch: Partial<UpdateJobState>, logLine?
   return next;
 }
 
+/** Cross-runtime contract seam: exercises the real atomic TS job writer from Go tests. */
+export function transitionUpdateJobForTests(
+  jobId: string,
+  patch: Partial<UpdateJobState>,
+  logLine?: string,
+): UpdateJobState {
+  const job = readUpdateJob(jobId);
+  if (!job) throw new Error(`update job not found: ${jobId}`);
+  return updateJob(job, patch, logLine);
+}
+
 export function updateExecutionCommand(
   installer: Installer,
   channel: Channel,
@@ -422,6 +433,7 @@ export function restartCommand(
   launcher = packageLauncherPath(),
   port?: number,
   serviceArgs?: string[],
+  runtimeOverride?: string,
 ): { mode: "service" | "proxy"; bin: string; args: string[]; display: string } {
   const mode = serviceInstalled ? "service" : "proxy";
   const pinPort = !serviceInstalled && typeof port === "number" && Number.isFinite(port) && port > 0;
@@ -429,8 +441,8 @@ export function restartCommand(
     ? [launcher, "start", "--port", String(Math.trunc(port))]
     : [launcher, "start"];
   const svcArgs = serviceInstalled ? [launcher, ...(serviceArgs ?? ["service", "install"])] : startArgs;
-  if (installer === "npm") {
-    const bin = nodeBin();
+  if (runtimeOverride || installer === "npm") {
+    const bin = runtimeOverride ?? nodeBin();
     const args = svcArgs;
     return { mode, bin, args, display: formatCommand(bin, args) };
   }
@@ -880,6 +892,20 @@ export function restartAfterUpdateForTests(
   io: RestartIo,
 ): Promise<number | null> {
   return restartAfterUpdate(job, captured, io).then(started => started?.pid ?? null);
+}
+
+export function windowsTrayRefreshCommands(
+  entry: DurableRuntimeEntry,
+  status: { installed?: boolean; running?: boolean },
+): {
+  install: { bin: string; args: string[] };
+  start: { bin: string; args: string[] };
+} {
+  const plan = planWindowsTrayUpdate(status);
+  return {
+    install: { bin: entry.runtime, args: [entry.cli, ...plan.installArgs] },
+    start: { bin: entry.runtime, args: [entry.cli, "tray", "start"] },
+  };
 }
 
 function restartFailureHint(port: number): string {
@@ -1429,11 +1455,17 @@ export async function runGuiUpdateWorker(jobId: string, channel: Channel, restar
     }
 
     if (trayWasInstalled) {
-      const trayArgs = [process.argv[1], ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
-      const tray = runLoggedCommand(job, process.execPath, trayArgs, 20_000);
+      const entry = postInstallRuntimeEntry();
+      const trayCommands = windowsTrayRefreshCommands(entry, {
+        installed: trayWasInstalled,
+        running: trayWasRunning,
+      });
+      const tray = runLoggedCommand(job, trayCommands.install.bin, trayCommands.install.args, 20_000);
       if (tray.status !== 0) {
         updateJob(job, {}, "Windows tray refresh failed; run 'ocx tray install'.");
-        if (trayWasRunning) runLoggedCommand(job, process.execPath, [process.argv[1], "tray", "start"], 15_000);
+        if (trayWasRunning) {
+          runLoggedCommand(job, trayCommands.start.bin, trayCommands.start.args, 15_000);
+        }
       }
     }
 

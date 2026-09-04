@@ -1,0 +1,217 @@
+package management
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/lidge-jun/opencodex-go/internal/config"
+)
+
+func TestProxyAPIKeysNeverReturnSecretsAndNotifyAdmission(t *testing.T) {
+	cfg := config.Default()
+	var refreshed atomic.Int32
+	var notified []config.ProxyAPIKey
+	api := newParityAPI(t, &cfg, func(options *Options) {
+		options.RefreshCatalog = func() error { refreshed.Add(1); return nil }
+		options.OnAPIKeysChanged = func(keys []config.ProxyAPIKey) { notified = append([]config.ProxyAPIKey(nil), keys...) }
+	})
+	// The oracle takes only `name`; the server mints the secret and returns it
+	// exactly once, so the created response is the only place it appears.
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"desktop"}`)
+	if created.Code != http.StatusCreated || len(notified) != 1 {
+		t.Fatalf("created=%d %s notified=%d", created.Code, created.Body.String(), len(notified))
+	}
+	secret := notified[0].Key
+	if !strings.HasPrefix(secret, "ocx_") || !strings.Contains(created.Body.String(), secret) {
+		t.Fatalf("creation must return the minted key once: %s", created.Body.String())
+	}
+	listed := serveManagement(api, http.MethodGet, "/api/keys", "")
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secret) || strings.Contains(listed.Body.String(), `"key"`) || !strings.Contains(listed.Body.String(), `"prefix":"`+secret[:8]+`..."`) {
+		t.Fatalf("listed=%d %s", listed.Code, listed.Body.String())
+	}
+	if !strings.HasPrefix(listed.Body.String(), `{"keys":[{"id":`) || !strings.Contains(listed.Body.String(), `"createdAt":"`) {
+		t.Fatalf("API key DTO field order differs from TypeScript: %s", listed.Body.String())
+	}
+	if refreshed.Load() != 1 {
+		t.Fatalf("catalog refresh calls=%d", refreshed.Load())
+	}
+	deleted := serveManagement(api, http.MethodDelete, "/api/keys", `{"id":"`+cfg.APIKeys[0].ID+`"}`)
+	if deleted.Code != http.StatusOK || len(cfg.APIKeys) != 0 || len(notified) != 0 || refreshed.Load() != 2 {
+		t.Fatalf("deleted=%d %s keys=%d notified=%d refresh=%d", deleted.Code, deleted.Body.String(), len(cfg.APIKeys), len(notified), refreshed.Load())
+	}
+}
+
+func TestProviderKeyPoolCRUDReturnsMetadataOnly(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers["acme"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://api.example.test/v1", AuthMode: "key", DefaultModel: "m"}
+	api := newParityAPI(t, &cfg)
+	secretOne := "provider-secret-one"
+	secretTwo := "provider-secret-two"
+	first := serveManagement(api, http.MethodPost, "/api/providers/keys", `{"name":"acme","key":"`+secretOne+`","label":"primary"}`)
+	second := serveManagement(api, http.MethodPost, "/api/providers/keys", `{"name":"acme","key":"`+secretTwo+`","label":"backup"}`)
+	if first.Code != http.StatusCreated || second.Code != http.StatusCreated || strings.Contains(first.Body.String()+second.Body.String(), "provider-secret") {
+		t.Fatalf("first=%d %s second=%d %s", first.Code, first.Body.String(), second.Code, second.Body.String())
+	}
+	_, infos := config.ListAPIKeys(&cfg, "acme")
+	if len(infos) != 2 {
+		t.Fatalf("provider key infos=%#v", infos)
+	}
+	listed := serveManagement(api, http.MethodGet, "/api/providers/keys?name=acme", "")
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secretOne) || strings.Contains(listed.Body.String(), secretTwo) || !strings.Contains(listed.Body.String(), `"masked":"prov****-two"`) {
+		t.Fatalf("listed=%d %s", listed.Code, listed.Body.String())
+	}
+	if !strings.HasPrefix(listed.Body.String(), `{"activeId":"`+infos[1].ID+`","keys":[{"id":"`+infos[0].ID+`","label":"primary","masked":`) {
+		t.Fatalf("provider key field order differs from TS: %s", listed.Body.String())
+	}
+	active := serveManagement(api, http.MethodPut, "/api/providers/keys/active", `{"name":"acme","id":"`+infos[0].ID+`"}`)
+	alias := serveManagement(api, http.MethodPut, "/api/providers/keys/alias", `{"name":"acme","id":"`+infos[0].ID+`","alias":"main"}`)
+	removed := serveManagement(api, http.MethodDelete, "/api/providers/keys?name=acme&id="+infos[1].ID, "")
+	if active.Code != http.StatusOK || active.Body.String() != `{"ok":true,"name":"acme","activeId":"`+infos[0].ID+`"}` || alias.Code != http.StatusOK || removed.Code != http.StatusOK || cfg.Providers["acme"].APIKey != secretOne {
+		t.Fatalf("active=%d alias=%d removed=%d provider=%#v", active.Code, alias.Code, removed.Code, cfg.Providers["acme"])
+	}
+}
+
+func TestKeyProviderCatalogAndAPIAccessContainNoCredentials(t *testing.T) {
+	cfg := config.Default()
+	cfg.Host = "0.0.0.0"
+	cfg.Port = 10100
+	api := newParityAPI(t, &cfg)
+	providers := serveManagement(api, http.MethodGet, "/api/key-providers", "")
+	if providers.Code != http.StatusOK || !strings.Contains(providers.Body.String(), `"openai-apikey"`) || strings.Contains(strings.ToLower(providers.Body.String()), "authorization") {
+		t.Fatalf("providers=%d %s", providers.Code, providers.Body.String())
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://192.168.1.50:10100/api/keys", nil)
+	request.Host = "192.168.1.50:10100"
+	response := httptest.NewRecorder()
+	api.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"baseUrl":"http://192.168.1.50:10100/v1"`) {
+		t.Fatalf("api access=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAPIAccessWildcardBindPrefersOriginOverHost(t *testing.T) {
+	cfg := config.Default()
+	cfg.Host = "0.0.0.0"
+	cfg.Port = 10100
+	api := newParityAPI(t, &cfg)
+	request := httptest.NewRequest(http.MethodGet, "http://fallback.example.test:8888/api/keys", nil)
+	request.Host = "fallback.example.test:8888"
+	request.Header.Set("Origin", "https://origin.example.test:8443")
+	response := httptest.NewRecorder()
+	api.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"baseUrl":"https://origin.example.test:8443/v1"`) || strings.Contains(response.Body.String(), "fallback.example.test") {
+		t.Fatalf("origin priority response=%d %s", response.Code, response.Body.String())
+	}
+}
+
+// The CLI sends only {name}: the oracle generates the key server-side and
+// returns it once. Requiring a caller-supplied secret made `ocx access key
+// create` impossible, which a permissive CLI stub had hidden.
+func TestProxyAPIKeyCreationMintsAndReturnsTheKeyOnce(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"desktop"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("created=%d %s", created.Code, created.Body.String())
+	}
+	var payload struct{ ID, Name, Key, CreatedAt string }
+	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Key == "" {
+		t.Fatal("creation must return the minted key; it is the caller's only chance to store it")
+	}
+	if !strings.HasPrefix(payload.Key, "ocx_") || len(payload.Key) != 44 {
+		t.Fatalf("key = %q, want the oracle's ocx_ + 40 hex shape", payload.Key)
+	}
+	if len(cfg.APIKeys) != 1 || cfg.APIKeys[0].Key != payload.Key {
+		t.Fatalf("the returned key must be the persisted one: %+v", cfg.APIKeys)
+	}
+
+	// Two creations must not collide.
+	second := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"laptop"}`)
+	var other struct{ Key string }
+	if err := json.Unmarshal(second.Body.Bytes(), &other); err != nil {
+		t.Fatal(err)
+	}
+	if other.Key == payload.Key {
+		t.Fatal("two minted keys must differ")
+	}
+
+	// Every later read redacts it.
+	listed := serveManagement(api, http.MethodGet, "/api/keys", "")
+	if strings.Contains(listed.Body.String(), payload.Key) {
+		t.Fatalf("listing leaked the key: %s", listed.Body.String())
+	}
+}
+
+// The oracle reads only `name` from the body and mints the secret itself, so a
+// caller-supplied key must be ignored rather than honoured. Accepting one would
+// let a client pick its own credential -- a weaker one, or one it has already
+// leaked -- through an endpoint the TypeScript runtime never offered for that.
+func TestProxyAPIKeyCreationIgnoresACallerSuppliedKey(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+	secret := "ocx_caller_supplied_secret_123456789"
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"n","key":"`+secret+`"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("created=%d %s", created.Code, created.Body.String())
+	}
+	if strings.Contains(created.Body.String(), secret) {
+		t.Fatalf("the caller's secret was echoed: %s", created.Body.String())
+	}
+	if len(cfg.APIKeys) != 1 {
+		t.Fatalf("expected one stored key, got %+v", cfg.APIKeys)
+	}
+	if cfg.APIKeys[0].Key == secret {
+		t.Fatal("the caller's key was stored; the server must mint its own")
+	}
+	if !strings.HasPrefix(cfg.APIKeys[0].Key, "ocx_") {
+		t.Fatalf("stored key %q does not look server-minted", cfg.APIKeys[0].Key)
+	}
+}
+
+// The oracle returns id, name, key, createdAt IN THAT ORDER, and `--json`
+// prints the response verbatim. A Go map would serialize the keys sorted, so
+// this pins the ordered serializer rather than the field set alone.
+func TestProxyAPIKeyCreationPreservesOracleFieldOrder(t *testing.T) {
+	cfg := config.Default()
+	api := newParityAPI(t, &cfg)
+	created := serveManagement(api, http.MethodPost, "/api/keys", `{"name":"desktop"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("created=%d %s", created.Code, created.Body.String())
+	}
+	body := created.Body.String()
+	for _, pair := range [][2]string{{`"id"`, `"name"`}, {`"name"`, `"key"`}, {`"key"`, `"createdAt"`}} {
+		if strings.Index(body, pair[0]) > strings.Index(body, pair[1]) {
+			t.Fatalf("%s must precede %s: %s", pair[0], pair[1], body)
+		}
+	}
+}
+
+// The oracle reads only `name`, so whatever else the body carries must not
+// change the outcome. A string key was already covered; these pin the shapes a
+// typed field would have turned into a 400.
+func TestProxyAPIKeyCreationToleratesAnyKeyShape(t *testing.T) {
+	for _, body := range []string{
+		`{"name":"n","key":123}`,
+		`{"name":"n","key":null}`,
+		`{"name":"n","key":{"nested":true}}`,
+		`{"name":"n","key":["a"]}`,
+	} {
+		cfg := config.Default()
+		api := newParityAPI(t, &cfg)
+		created := serveManagement(api, http.MethodPost, "/api/keys", body)
+		if created.Code != http.StatusCreated {
+			t.Fatalf("body %s => %d %s, want 201", body, created.Code, created.Body.String())
+		}
+		if len(cfg.APIKeys) != 1 || !strings.HasPrefix(cfg.APIKeys[0].Key, "ocx_") {
+			t.Fatalf("body %s stored %+v, want a server-minted key", body, cfg.APIKeys)
+		}
+	}
+}

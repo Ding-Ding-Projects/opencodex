@@ -1,0 +1,584 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/lidge-jun/opencodex-go/internal/combos"
+	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+func TestResponsesSamePathDispatchesHTTPAndWebSocket(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{Registry: reg, WebSockets: true, ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return fakeAdapter{endpoint: upstream.URL}, nil
+	}})
+	server := httptest.NewServer(proxy.Handler())
+	defer server.Close()
+
+	httpResponse := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire","stream":false}`, nil)
+	if httpResponse.Code != http.StatusOK || !strings.Contains(httpResponse.Body.String(), `"status":"completed"`) {
+		t.Fatalf("HTTP responses=%d %s", httpResponse.Code, httpResponse.Body.String())
+	}
+
+	connection, response, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", nil)
+	if err != nil {
+		if response != nil {
+			defer response.Body.Close()
+		}
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := connection.WriteJSON(map[string]any{"type": "response.create", "model": "acme/wire", "input": []any{}, "generate": false}); err != nil {
+		t.Fatal(err)
+	}
+	foundTerminal := false
+	for i := 0; i < 8; i++ {
+		_, payload, err := connection.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(payload), `"type":"response.completed"`) {
+			foundTerminal = true
+			break
+		}
+	}
+	if !foundTerminal {
+		t.Fatal("WebSocket response did not emit response.completed")
+	}
+}
+
+func TestEffectiveWireAdapterHonorsPinsAndSafeOverrides(t *testing.T) {
+	provider := appconfig.ProviderConfig{Adapter: "openai-chat", ModelAdapters: map[string]string{"responses-model": "openai-responses"}}
+	if got := EffectiveWireAdapter("acme", "responses-model", provider); got != "openai-responses" {
+		t.Fatalf("override adapter=%q", got)
+	}
+	provider.ModelAdapters["minimax-m2.5"] = "openai-responses"
+	if got := EffectiveWireAdapter("opencode-go", "minimax-m2.5", provider); got != "anthropic" {
+		t.Fatalf("pinned adapter=%q", got)
+	}
+	canonical := appconfig.ProviderConfig{Adapter: "openai-responses", AuthMode: "forward", BaseURL: "https://chatgpt.com/backend-api/codex", ModelAdapters: map[string]string{"gpt": "openai-chat"}}
+	if got := EffectiveWireAdapter("openai", "gpt", canonical); got != "openai-responses" {
+		t.Fatalf("canonical adapter=%q", got)
+	}
+}
+
+func TestServerWiresSubagentFallbackGuidanceIntoResponsesCore(t *testing.T) {
+	cfg := appconfig.Default()
+	cfg.SubagentModelFallback = []string{"anthropic/claude", "xai/grok"}
+	proxy := New(Config{ManagementConfig: &cfg})
+	guidance := proxy.responses.config.Guidance.FallbackGuidance
+	if !strings.Contains(guidance, `"anthropic/claude", "xai/grok"`) || !strings.Contains(guidance, "rewrites thread_spawn") {
+		t.Fatalf("fallback guidance=%q", guidance)
+	}
+}
+
+func TestBaseChatHandlerConfigWiresComboResolver(t *testing.T) {
+	resolver, err := combos.New(map[string]combos.Combo{}, map[string]combos.Provider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := baseChatHandlerConfig(Config{Combos: resolver}, nil)
+	if configured.Combos != resolver {
+		t.Fatal("chat/messages combo resolver was not wired")
+	}
+}
+
+func TestServerWiresForwardAdmissionCredentialValidation(t *testing.T) {
+	cfg := appconfig.Default()
+	cfg.AuthToken = "management-admission-secret"
+	cfg.APIKeys = []appconfig.ProxyAPIKey{{ID: "key-1", Key: "dynamic-admission-secret"}}
+	proxy := New(Config{ManagementConfig: &cfg})
+	validate := proxy.responses.config.ValidateForwardAdmission
+	if validate == nil {
+		t.Fatal("forward admission validator was not wired")
+	}
+	for _, secret := range []string{"management-admission-secret", "dynamic-admission-secret"} {
+		headers := http.Header{"Authorization": []string{"Bearer " + secret}}
+		if err := validate(headers); err == nil {
+			t.Fatalf("admission secret %q was accepted for forwarding", secret)
+		}
+	}
+	if err := validate(http.Header{"Authorization": []string{"Bearer provider-secret"}}); err != nil {
+		t.Fatalf("provider credential was rejected: %v", err)
+	}
+}
+
+type parityRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn parityRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+func TestServerUsesNativeCompactOnlyForSupportedResponsesEndpoint(t *testing.T) {
+	var upstreamPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		upstreamPath = request.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output":[{"type":"compaction","encrypted_content":"opaque"}]}`)
+	}))
+	defer upstream.Close()
+	local, _ := url.Parse(upstream.URL)
+	client := &http.Client{Transport: parityRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		clone := request.Clone(request.Context())
+		clone.URL.Scheme, clone.URL.Host = local.Scheme, local.Host
+		return http.DefaultTransport.RoundTrip(clone)
+	})}
+	cfg := appconfig.Default()
+	cfg.DefaultProvider = "openai-apikey"
+	cfg.Providers["openai-apikey"] = appconfig.ProviderConfig{Adapter: "openai-responses", BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt"}
+	reg := registry.New(registry.Provider{ID: "openai-apikey", Adapter: "openai-responses", BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt", Models: []registry.ModelDefinition{{ID: "gpt"}}})
+	proxy := New(Config{ManagementConfig: &cfg, Registry: reg, Client: client, ResolveAdapter: func(_ *types.ResolvedModel, transport *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return fakeAdapter{endpoint: transport.BaseURL}, nil
+	}})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses/compact", `{"model":"openai-apikey/gpt","input":[]}`, nil)
+	if response.Code != http.StatusOK || upstreamPath != "/v1/responses/compact" || !strings.Contains(response.Body.String(), `"type":"compaction"`) {
+		t.Fatalf("response=%d %s upstreamPath=%q", response.Code, response.Body.String(), upstreamPath)
+	}
+}
+
+func TestServerStartsMemoryWatchdogAndStopsItWithHTTPServer(t *testing.T) {
+	var samples atomic.Int32
+	proxy := New(Config{MemoryWatchdogInterval: time.Millisecond, MemoryWatchdogCapacity: 4, MemorySample: func() MemorySample {
+		n := samples.Add(1)
+		return MemorySample{At: time.Now(), RSS: uint64(n)}
+	}})
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for samples.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := proxy.MemoryWatchdog().Snapshot(); samples.Load() < 2 || len(got) < 2 {
+		t.Fatalf("watchdog did not start at server construction: samples=%d snapshot=%v", samples.Load(), got)
+	}
+	memory := serveRequest(proxy.Handler(), http.MethodGet, "/api/system/memory", "", nil)
+	if memory.Code != http.StatusOK || !strings.Contains(memory.Body.String(), `"watchdog":{"samples":[`) {
+		t.Fatalf("management memory route did not expose active watchdog: %d %s", memory.Code, memory.Body.String())
+	}
+	httpServer := proxy.HTTPServer("127.0.0.1:0")
+	// DrainHTTPServer, not a bare Shutdown.
+	//
+	// A bare Shutdown CANNOT give this guarantee, and the test asserting it did
+	// was the flake: net/http starts each RegisterOnShutdown callback as
+	// `go f()` and returns without waiting, so whether the watchdog had stopped
+	// by the time Shutdown returned was a race the test lost roughly one run in
+	// twenty under `-count=60 -race`.
+	//
+	// The fix is not a longer sleep. Production has the same problem: `ocx
+	// start` returned from shutdown with the watchdog still sampling and
+	// response state still unflushed. DrainHTTPServer runs the cleanup on the
+	// caller's goroutine after Shutdown returns, and that is the path the CLI
+	// now uses, so the test exercises the contract the product actually has.
+	if err := DrainHTTPServer(context.Background(), httpServer, proxy.Lifecycle(), nil, proxy.Close); err != nil {
+		t.Fatal(err)
+	}
+	stoppedAt := samples.Load()
+	// No sleep is needed for correctness -- the drain has already completed --
+	// but one is kept so a regression that re-detaches the cleanup has a window
+	// in which to be caught rather than passing by timing.
+	time.Sleep(5 * time.Millisecond)
+	if samples.Load() != stoppedAt {
+		t.Fatalf("watchdog continued after the drain returned: before=%d after=%d", stoppedAt, samples.Load())
+	}
+}
+
+// The drain must stop the watchdog ON ITS OWN, without the http.Server's
+// RegisterOnShutdown backstop finishing first.
+//
+// The test above cannot show that: it drives a real *http.Server, so the
+// detached backstop is racing alongside and usually wins, which means removing
+// the synchronous cleanup entirely still passed. Verified by mutation --
+// deleting the closer call left that test green, and only deleting BOTH paths
+// turned it red.
+//
+// Passing a nil server removes the backstop from the picture, so the only
+// thing that can stop the watchdog is the closer DrainHTTPServer runs, and the
+// assertion is exact rather than probabilistic.
+func TestDrainRunsCleanupSynchronouslyWithoutTheShutdownBackstop(t *testing.T) {
+	var samples atomic.Int32
+	proxy := New(Config{MemoryWatchdogInterval: time.Millisecond, MemoryWatchdogCapacity: 4, MemorySample: func() MemorySample {
+		n := samples.Add(1)
+		return MemorySample{At: time.Now(), RSS: uint64(n)}
+	}})
+	deadline := time.Now().Add(2 * time.Second)
+	for samples.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if samples.Load() < 2 {
+		t.Fatalf("watchdog never started: samples=%d", samples.Load())
+	}
+	// A SLOW closer is what makes the difference observable. Timing alone does
+	// not settle it: proxy.Close stops the watchdog in well under a
+	// millisecond, so even a detached `go closer()` finishes before any
+	// reasonable sleep and the assertion passed either way -- confirmed by
+	// mutation before this was written.
+	const closerDuration = 120 * time.Millisecond
+	var closed atomic.Bool
+	start := time.Now()
+	err := DrainHTTPServer(context.Background(), nil, proxy.Lifecycle(), nil, func() {
+		time.Sleep(closerDuration)
+		proxy.Close()
+		closed.Store(true)
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !closed.Load() {
+		t.Fatal("the drain returned before the cleanup finished: it is detached, not synchronous")
+	}
+	if elapsed < closerDuration {
+		t.Fatalf("the drain returned in %v, faster than the %v cleanup it must wait for", elapsed, closerDuration)
+	}
+	// And the watchdog really is stopped once the drain has returned.
+	stoppedAt := samples.Load()
+	time.Sleep(10 * time.Millisecond)
+	if got := samples.Load(); got != stoppedAt {
+		t.Fatalf("the drain returned while the watchdog was still sampling: before=%d after=%d", stoppedAt, got)
+	}
+}
+
+func TestResponsesWebSocketDisabledAndPanicBoundary(t *testing.T) {
+	proxy := New(Config{})
+	disabled := serveRequest(proxy.Handler(), http.MethodGet, "/v1/responses", "", http.Header{"Connection": {"keep-alive, Upgrade"}, "Upgrade": {"websocket"}})
+	if disabled.Code != http.StatusUpgradeRequired || !strings.Contains(disabled.Body.String(), "WebSocket transport is disabled") {
+		t.Fatalf("disabled=%d %s", disabled.Code, disabled.Body.String())
+	}
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := Middleware(recoveryMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("secret-bearing panic text")
+	}), logger), MiddlewareConfig{Logger: logger})
+	response := serveRequest(handler, http.MethodPost, "/v1/messages", `{}`, nil)
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "Unexpected server failure") {
+		t.Fatalf("panic response=%d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "secret-bearing") || strings.Contains(logs.String(), "secret-bearing") {
+		t.Fatalf("panic value leaked: response=%s logs=%s", response.Body.String(), logs.String())
+	}
+}
+
+func TestUnknownManagementRoutesUseTypeScriptErrorBytes(t *testing.T) {
+	proxy := New(Config{})
+	defer proxy.Close()
+	for _, path := range []string{"/api/system", "/api/system/runtime"} {
+		response := serveRequest(proxy.Handler(), http.MethodGet, path, "", nil)
+		want := `{"error":{"message":"Unknown endpoint: GET ` + path + `","type":"not_found","code":"not_found"}}`
+		if response.Code != http.StatusNotFound || response.Body.String() != want {
+			t.Fatalf("%s = %d %q, want %q", path, response.Code, response.Body.String(), want)
+		}
+	}
+}
+
+func TestServerDynamicallyAppliesManagedAPIKeysAndClaudeToggle(t *testing.T) {
+	oldSecret := "ocx_existing_admission_secret_12345"
+	disabled := false
+	cfg := appconfig.Default()
+	cfg.Host = "0.0.0.0"
+	cfg.APIKeys = []appconfig.ProxyAPIKey{{ID: "existing", Name: "existing", Key: oldSecret, CreatedAt: "2026-01-01T00:00:00Z"}}
+	cfg.ClaudeCode = &appconfig.ClaudeCodeConfig{Enabled: &disabled}
+	var logs bytes.Buffer
+	var refreshes atomic.Int32
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	proxy := New(Config{ManagementConfig: &cfg, Logger: logger, RefreshCatalog: func() error { refreshes.Add(1); return nil }})
+
+	// The server mints the key; the caller cannot choose it. What this test is
+	// really about is that a newly created key authorizes immediately, without
+	// a restart, so the minted value is read back out of the response.
+	create := serveRequest(proxy.Handler(), http.MethodPost, "/api/keys", `{"name":"new"}`, http.Header{"Authorization": {"Bearer " + oldSecret}})
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create=%d %s", create.Code, create.Body.String())
+	}
+	var minted struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(create.Body.Bytes(), &minted); err != nil || minted.Key == "" {
+		t.Fatalf("creation must return the minted key: %v %s", err, create.Body.String())
+	}
+	newSecret := minted.Key
+	authorized := serveRequest(proxy.Handler(), http.MethodGet, "/api/config", "", http.Header{"Authorization": {"Bearer " + newSecret}})
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("new key was not activated without restart: %d %s", authorized.Code, authorized.Body.String())
+	}
+	claude := serveRequest(proxy.Handler(), http.MethodPost, "/v1/messages/count_tokens", `{"model":"m","messages":[]}`, http.Header{"X-Api-Key": {newSecret}})
+	if claude.Code != http.StatusForbidden || !strings.Contains(claude.Body.String(), `"type":"permission_error"`) {
+		t.Fatalf("Claude disabled response=%d %s", claude.Code, claude.Body.String())
+	}
+	if refreshes.Load() != 1 || strings.Contains(logs.String(), oldSecret) || strings.Contains(logs.String(), newSecret) {
+		t.Fatalf("refreshes=%d logs=%s", refreshes.Load(), logs.String())
+	}
+}
+
+func TestServerPortsModelsSidecarsAndV1Guard(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		if string(payload) != `{"model":"gpt-image-1","prompt":"draw"}` {
+			t.Fatalf("upstream body = %s", payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Upstream-Secret", "must-not-relay")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{
+		Registry: reg,
+		SidecarResolver: func(_ context.Context, kind SidecarKind, _ http.Header) (SidecarTarget, error) {
+			return SidecarTarget{URL: upstream.URL + "/" + string(kind), Timeout: time.Second}, nil
+		},
+	})
+
+	models := serveRequest(proxy.Handler(), http.MethodGet, "/v1/models", "", nil)
+	if models.Code != http.StatusOK || !strings.Contains(models.Body.String(), `"id":"acme/wire"`) {
+		t.Fatalf("models = %d %s", models.Code, models.Body.String())
+	}
+
+	for _, path := range []string{"/v1/images/generations", "/v1/images/edits", "/v1/alpha/search"} {
+		response := serveRequest(proxy.Handler(), http.MethodPost, path, `{"model":"gpt-image-1","prompt":"draw"}`, nil)
+		if response.Code != http.StatusOK || response.Body.String() != `{"ok":true}` || response.Header().Get("X-Upstream-Secret") != "" {
+			t.Fatalf("%s = %d headers=%v body=%s", path, response.Code, response.Header(), response.Body.String())
+		}
+	}
+
+	missing := serveRequest(proxy.Handler(), http.MethodPost, "/v1/unknown", `{}`, nil)
+	if missing.Code != http.StatusNotFound || !strings.Contains(missing.Body.String(), "Unknown endpoint: POST /v1/unknown") {
+		t.Fatalf("unknown v1 = %d %s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestResponsesPreservesUpstreamErrorStatus(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"cool down"}}`))
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{Registry: reg, ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return fakeAdapter{endpoint: upstream.URL}, nil
+	}})
+
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire"}`, nil)
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "" || !strings.Contains(response.Body.String(), `Provider error 429:`) || !strings.Contains(response.Body.String(), "cool down") {
+		t.Fatalf("provider error = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+type quotaHeaderAuth struct{}
+
+func (quotaHeaderAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
+	return &types.AuthContext{Provider: "acme", AccountID: "account-1"}, nil
+}
+func (quotaHeaderAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
+
+func TestServerConsumesResponsesQuotaHeadersIntoCodexStore(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Codex-Primary-Used-Percent", "73")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{Registry: reg, Auth: quotaHeaderAuth{}, ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, _ *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return fakeAdapter{endpoint: upstream.URL}, nil
+	}})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire"}`, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	quota, ok := proxy.QuotaStore().Get("account-1")
+	if !ok || quota.WeeklyPercent == nil || *quota.WeeklyPercent != 73 {
+		t.Fatalf("quota = %#v, found=%v", quota, ok)
+	}
+	quotaResponse := serveRequest(proxy.Handler(), http.MethodGet, "/api/codex-auth/quota", "", nil)
+	if quotaResponse.Code != http.StatusOK || !strings.Contains(quotaResponse.Body.String(), `"account-1"`) || !strings.Contains(quotaResponse.Body.String(), `"weeklyPercent":73`) {
+		t.Fatalf("quota route = %d %s", quotaResponse.Code, quotaResponse.Body.String())
+	}
+}
+
+type poolKeyAuth struct{}
+
+func (poolKeyAuth) ResolveAuth(context.Context, string, string) (*types.AuthContext, error) {
+	return &types.AuthContext{Provider: "acme", APIKey: "key-one"}, nil
+}
+func (poolKeyAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
+
+type poolKeyAdapter struct {
+	endpoint string
+	key      string
+}
+
+func (a poolKeyAdapter) BuildRequest(ctx context.Context, request *types.NormalizedRequest) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, strings.NewReader(string(request.RawBody)))
+	if err == nil {
+		req.Header.Set("X-Test-Key", a.key)
+	}
+	return req, err
+}
+func (a poolKeyAdapter) ParseStream(context.Context, io.ReadCloser) <-chan types.AdapterEvent {
+	out := make(chan types.AdapterEvent, 1)
+	out <- types.AdapterEvent{Type: types.EventDone}
+	close(out)
+	return out
+}
+func (a poolKeyAdapter) ParseUnary(context.Context, []byte) ([]types.AdapterEvent, error) {
+	return []types.AdapterEvent{{Type: types.EventDone}}, nil
+}
+
+func TestServerRotatesConfiguredAPIKeyPoolOnResponses429(t *testing.T) {
+	var attempts atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		if r.Header.Get("X-Test-Key") == "key-one" {
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		if r.Header.Get("X-Test-Key") != "key-two" {
+			t.Fatalf("unexpected key selector %q", r.Header.Get("X-Test-Key"))
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer upstream.Close()
+	cfg := appconfig.Default()
+	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", AuthMode: "key", APIKey: "key-one", APIKeyPool: []appconfig.APIKeyEntry{{ID: "one", Key: "key-one"}, {ID: "two", Key: "key-two"}}}}
+	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
+	proxy := New(Config{Registry: reg, Auth: poolKeyAuth{}, ManagementConfig: &cfg, ResolveAdapter: func(_ *types.ResolvedModel, _ *types.Transport, auth *types.AuthContext, _ http.Header) (types.Adapter, error) {
+		return poolKeyAdapter{endpoint: upstream.URL, key: auth.APIKey}, nil
+	}})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/responses", `{"model":"acme/wire","stream":false}`, nil)
+	if response.Code != http.StatusOK || attempts.Load() != 2 {
+		t.Fatalf("status=%d attempts=%d body=%s", response.Code, attempts.Load(), response.Body.String())
+	}
+	logs := serveRequest(proxy.Handler(), http.MethodGet, "/api/logs", "", nil)
+	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), `"terminalStatus":"completed"`) || !strings.Contains(logs.Body.String(), `"sendCount":2`) || !strings.Contains(logs.Body.String(), `"recoveryKinds":["key-429"]`) {
+		t.Fatalf("advanced production log = %d %s", logs.Code, logs.Body.String())
+	}
+	if strings.Contains(logs.Body.String(), "key-one") || strings.Contains(logs.Body.String(), "key-two") {
+		t.Fatalf("request log leaked key material: %s", logs.Body.String())
+	}
+}
+
+type sidecarTestAuth struct{}
+
+func (sidecarTestAuth) ResolveAuth(_ context.Context, provider, _ string) (*types.AuthContext, error) {
+	return &types.AuthContext{Provider: provider, Headers: map[string]string{"Authorization": "Bearer upstream-secret"}}, nil
+}
+func (sidecarTestAuth) RecordOutcome(string, types.OutcomeStatus, *types.RetryMeta) {}
+
+type sidecarProvenanceAuth struct {
+	thread string
+	meta   *types.RetryMeta
+}
+
+func (a *sidecarProvenanceAuth) ResolveAuth(_ context.Context, provider, threadID string) (*types.AuthContext, error) {
+	a.thread = threadID
+	return &types.AuthContext{Provider: provider, AccountID: "account", ProbeLeaseID: "sidecar-lease", ThreadID: threadID, Headers: map[string]string{"Authorization": "Bearer upstream-secret"}}, nil
+}
+
+func (a *sidecarProvenanceAuth) RecordOutcome(_ string, _ types.OutcomeStatus, meta *types.RetryMeta) {
+	if meta != nil {
+		copy := *meta
+		a.meta = &copy
+	}
+}
+
+func TestDefaultImageSidecarUsesKeyedOpenAIProvider(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/generations" || r.Header.Get("Authorization") != "Bearer upstream-secret" {
+			t.Fatalf("upstream request = %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer upstream.Close()
+	reg := registry.New(registry.Provider{ID: "openai-apikey", BaseURL: upstream.URL + "/v1", DefaultModel: "gpt", Models: []registry.ModelDefinition{{ID: "gpt"}}})
+	proxy := New(Config{Registry: reg, Auth: sidecarTestAuth{}})
+
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/images/generations", `{"model":"gpt-image-1","prompt":"draw"}`, nil)
+	if response.Code != http.StatusOK || response.Body.String() != `{"data":[]}` {
+		t.Fatalf("image sidecar = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDefaultImageSidecarCarriesParentThreadAndProbeLease(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer upstream.Close()
+	auth := &sidecarProvenanceAuth{}
+	reg := registry.New(registry.Provider{ID: "openai", BaseURL: upstream.URL, DefaultModel: "gpt", Models: []registry.ModelDefinition{{ID: "gpt"}}})
+	proxy := New(Config{Registry: reg, Auth: auth})
+	response := serveRequest(proxy.Handler(), http.MethodPost, "/v1/images/generations", `{"model":"gpt-image-1","prompt":"draw"}`, http.Header{"X-Codex-Parent-Thread-Id": []string{" parent-thread "}})
+	if response.Code != http.StatusOK || auth.thread != "parent-thread" || auth.meta == nil || auth.meta.ThreadID != "parent-thread" || auth.meta.ProbeLeaseID != "sidecar-lease" {
+		t.Fatalf("response=%d thread=%q meta=%#v", response.Code, auth.thread, auth.meta)
+	}
+}
+
+func TestRemoteAdmissionAndOriginParity(t *testing.T) {
+	handler := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), MiddlewareConfig{
+		Token: "secret", Hostname: "0.0.0.0", AllowedOrigins: []string{"https://allowed.example"},
+	})
+
+	missing := serveRequest(handler, http.MethodGet, "/api/system", "", nil)
+	if missing.Code != http.StatusUnauthorized {
+		t.Fatalf("missing auth = %d", missing.Code)
+	}
+
+	wrongBearer := http.Header{"Authorization": []string{"Bearer secret"}}
+	responses := serveRequest(handler, http.MethodPost, "/v1/responses", `{}`, wrongBearer)
+	if responses.Code != http.StatusUnauthorized {
+		t.Fatalf("responses bearer admission = %d", responses.Code)
+	}
+	chat := serveRequest(handler, http.MethodPost, "/v1/chat/completions", `{}`, wrongBearer)
+	if chat.Code != http.StatusUnauthorized {
+		t.Fatalf("chat bearer admission = %d", chat.Code)
+	}
+
+	dedicated := http.Header{"X-OpenCodex-Api-Key": []string{"secret"}}
+	authorized := serveRequest(handler, http.MethodPost, "/v1/responses", `{}`, dedicated)
+	if authorized.Code != http.StatusNoContent {
+		t.Fatalf("dedicated admission = %d %s", authorized.Code, authorized.Body.String())
+	}
+
+	badOrigin := http.Header{"X-OpenCodex-Api-Key": []string{"secret"}, "Origin": []string{"https://evil.example"}}
+	rejected := serveRequest(handler, http.MethodPost, "/v1/responses", `{}`, badOrigin)
+	if rejected.Code != http.StatusForbidden {
+		t.Fatalf("origin rejection = %d %s", rejected.Code, rejected.Body.String())
+	}
+
+	preflight := serveRequest(handler, http.MethodOptions, "/v1/responses", "", http.Header{
+		"Origin": []string{"https://allowed.example"}, "Access-Control-Request-Method": []string{"POST"},
+	})
+	if preflight.Code != http.StatusNoContent || preflight.Header().Get("Access-Control-Allow-Origin") != "https://allowed.example" || !strings.Contains(preflight.Header().Get("Access-Control-Allow-Methods"), "PATCH") {
+		t.Fatalf("preflight = %d headers=%v", preflight.Code, preflight.Header())
+	}
+}
+
+func serveRequest(handler http.Handler, method, path, body string, headers http.Header) *httptest.ResponseRecorder {
+	request := loopbackRequest(method, path, strings.NewReader(body))
+	for name, values := range headers {
+		for _, value := range values {
+			request.Header.Add(name, value)
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}

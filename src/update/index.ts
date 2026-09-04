@@ -29,6 +29,14 @@ export function historyRestoreIncomplete(configDir = getConfigDir()): boolean {
 
 export const PKG = "@bitkyc08/opencodex";
 const HERE = dirname(fileURLToPath(import.meta.url)); // .../opencodex/src/update
+const PACKAGE_ROOT = join(HERE, "..", "..");
+
+function postInstallRuntimeEntry(): { runtime: string; cli: string } {
+  return preferredDurableRuntime(PACKAGE_ROOT, {
+    runtime: process.execPath,
+    cli: process.argv[1],
+  });
+}
 
 export type Installer = "bun" | "npm" | "source" | "desktop";
 export type Channel = "latest" | "preview";
@@ -196,10 +204,29 @@ export function checkUpdatePackageIntegrity(
  * `ocx update` fallback for source checkouts and Bun global installs. npm global installs are updated
  * in the Node bin launcher before Bun starts, so Windows does not replace the running Bun binary.
  */
-export async function runUpdate(): Promise<void> {
+export async function runUpdate(argv: string[] = []): Promise<void> {
   const installer = detectInstall();
   const current = currentVersion();
   const tag = updateTag(current);
+  // `--dry-run` is a planning flag (mirrors go/internal/cli/update.go). It must return before
+  // the proxy stop, the Windows tray handoff, and package replacement — a user asking for a
+  // plan must never get a live update.
+  if (argv.includes("--dry-run")) {
+    console.log(`opencodex v${current} (installed via ${installer}, tag ${tag})`);
+    if (installer === "source") {
+      console.log("Dry run: no update would be performed.");
+      console.log("Update a source checkout with:  git pull && bun install");
+      return;
+    }
+    const latest = latestVersion(tag);
+    console.log("Update plan (dry run — nothing was changed):");
+    console.log(`  Current version: ${current}`);
+    console.log(`  Channel:         ${tag}`);
+    console.log(`  Latest version:  ${latest ?? "unresolved"}`);
+    console.log(`  Command:         ${updateCommandStr(installer, tag, latest)}`);
+    if (latest && latest === current) console.log(`Already on the latest ${tag} version.`);
+    return;
+  }
   console.log(`opencodex v${current} (installed via ${installer}, tag ${tag})`);
 
   if (installer === "source") {
@@ -358,25 +385,22 @@ export async function runUpdate(): Promise<void> {
   }
   if (r.status === 0) {
     console.log(`\n✅ Updated${latest ? ` to v${latest}` : ""}.`);
-    // Re-bake the bundled Bun path into the Codex autostart shim on every
-    // platform when one is installed (refresh-only; never installs fresh).
-    try {
-      const { isCodexShimInstalled, installCodexShim } = await import("../codex/shim");
-      if (isCodexShimInstalled()) {
-        const result = installCodexShim();
-        if (result.installed) console.log(`🔧 ${result.message}`);
-      }
-    } catch (e) {
-      console.warn(`⚠️  Shim repair skipped: ${e instanceof Error ? e.message : e}`);
+    const postInstall = postInstallRuntimeEntry();
+    const shim = spawnSync(postInstall.runtime, [postInstall.cli, "codex-shim", "refresh-runtime"], {
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    if (shim.status !== 0) {
+      console.warn("⚠️  Shim runtime refresh failed; retained Bun remains valid. Run 'ocx codex-shim refresh-runtime'.");
     }
     if (trayWasInstalled) {
-      const trayArgs = [process.argv[1], ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
-      const tray = spawnSync(process.execPath, trayArgs, { stdio: "inherit", windowsHide: true });
+      const trayArgs = [postInstall.cli, ...planWindowsTrayUpdate({ installed: trayWasInstalled, running: trayWasRunning }).installArgs];
+      const tray = spawnSync(postInstall.runtime, trayArgs, { stdio: "inherit", windowsHide: true });
       if (tray.status === 0) {
         console.log("🔧 Refreshed Windows tray startup paths.");
       } else {
         console.warn("⚠️  Windows tray refresh failed. Run 'ocx tray install'.");
-        if (trayWasRunning) spawnSync(process.execPath, [process.argv[1], "tray", "start"], { stdio: "ignore", windowsHide: true });
+        if (trayWasRunning) spawnSync(postInstall.runtime, [postInstall.cli, "tray", "start"], { stdio: "ignore", windowsHide: true });
       }
     }
     // The stop above unloaded any managed service; reinstall it with the NEW files
@@ -398,7 +422,7 @@ export async function runUpdate(): Promise<void> {
       process.env.OCX_BAKE_PORT = String(capturedListen.port);
       try {
         const svcStdio = updateChildStdio();
-        const svc = spawnSync(process.execPath, [process.argv[1], ...serviceReinstallArgs()], {
+        const svc = spawnSync(postInstall.runtime, [postInstall.cli, ...serviceReinstallArgs()], {
           stdio: svcStdio,
           encoding: svcStdio === "pipe" ? "utf8" : undefined,
           windowsHide: true,
@@ -417,7 +441,7 @@ export async function runUpdate(): Promise<void> {
             console.warn("   Run 'ocx service install' as administrator to refresh the background service.");
             const env = { ...process.env };
             delete env.OCX_SERVICE;
-            const child = spawn(process.execPath, [process.argv[1], "start", "--port", String(capturedListen.port)], {
+            const child = spawn(postInstall.runtime, [postInstall.cli, "start", "--port", String(capturedListen.port)], {
               detached: true,
               stdio: "ignore",
               windowsHide: true,

@@ -42,6 +42,9 @@ interface SystemMemory {
   observedBytes?: number;
   observedMetric?: MemoryMetric;
   jscHeap: { heapSize: number; heapCapacity: number; objectCount: number } | null;
+  /** Sent only by the Go proxy; the Bun proxy sends bunVersion instead. */
+  goVersion?: string;
+  goroutines?: number;
   /** Absent on older proxies whose /api/system/memory predates the continuation-store metrics. */
   responseState?: ResponseState;
   /** Absent on older proxies predating the drain-and-restart action (#563). */
@@ -333,6 +336,9 @@ export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }
   const growth = data?.watchdog ? observedGrowthPerHour(data.watchdog.samples) : null;
   const observedBytes = data ? data.observedBytes ?? data.watchdog?.observedBytes ?? observedMemory(data) : null;
   const observedBy = data ? observedMetric(data) : null;
+  // The Go and Bun handlers each stamp their own version field and neither sends the
+  // other's, so this cannot misfire. It decides labels only; every value is served as-is.
+  const isGoRuntime = typeof data?.goVersion === "string";
   // Optional on purpose: a 200 from an older proxy may lack the responseState field.
   const responseState = data?.responseState;
   const activeTurns = data?.activeTurnCount;
@@ -347,8 +353,21 @@ export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }
 
       <div className="stat-row">
         <Stat label={t("dash.mem.rss")} value={data ? formatBytes(data.rss, locale) : "—"} />
-        <Stat label={t("dash.mem.jsHeap")} value={data ? `${formatBytes(data.heapUsed, locale)} / ${formatBytes(data.heapTotal, locale)}` : "—"} />
-        <Stat label={t("dash.mem.jscHeap")} value={data?.jscHeap ? formatBytes(data.jscHeap.heapSize, locale) : "—"} />
+        <Stat
+          label={t(isGoRuntime ? "dash.mem.goHeap" : "dash.mem.jsHeap")}
+          value={data ? `${formatBytes(data.heapUsed, locale)} / ${formatBytes(data.heapTotal, locale)}` : "—"}
+        />
+        {isGoRuntime ? (
+          // JavaScriptCore does not exist on the Go proxy, and an always-empty tile reads as a
+          // missing measurement rather than an inapplicable one. Goroutines are the counter the
+          // Go handler actually sends in its place.
+          <Stat
+            label={t("dash.mem.goroutines")}
+            value={typeof data?.goroutines === "number" ? plainNumberFormat(locale).format(data.goroutines) : "—"}
+          />
+        ) : (
+          <Stat label={t("dash.mem.jscHeap")} value={data?.jscHeap ? formatBytes(data.jscHeap.heapSize, locale) : "—"} />
+        )}
         <Stat
           label={t("dash.mem.growth")}
           value={growth === null ? "—" : `${growth >= 0 ? "+" : "-"}${formatBytes(Math.abs(growth), locale)}${t("dash.mem.perHour")}`}
@@ -358,7 +377,7 @@ export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }
       {/* Secondary diagnostics collapsed by default: only the headline stats stay visible. */}
       <details style={{ marginTop: 10 }}>
         <summary className="muted text-label" style={{ cursor: "pointer", padding: "2px 2px" }}>{t("dash.mem.details")}</summary>
-        <div className="muted text-control" style={{ margin: "8px 0 0" }}>{t("dash.mem.hint")}</div>
+        <div className="muted text-control" style={{ margin: "8px 0 0" }}>{t(isGoRuntime ? "dash.mem.hintGo" : "dash.mem.hint")}</div>
 
         <div className="muted text-label" style={{ margin: "14px 0 6px" }}>{t("dash.mem.runtime")}</div>
         <div className="stat-row">

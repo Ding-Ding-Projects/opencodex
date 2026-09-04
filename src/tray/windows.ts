@@ -105,9 +105,15 @@ function currentCodexHome(): string {
 }
 
 function currentEntry(): WindowsTrayEntry {
+  return windowsTrayRuntimeEntry();
+}
+
+export function windowsTrayRuntimeEntry(packageRoot = join(import.meta.dir, "..", "..")): WindowsTrayEntry {
+  const fallback = { runtime: durableBunPath(), cli: join(import.meta.dir, "..", "cli", "index.ts") };
+  const entry = preferredDurableRuntime(packageRoot, fallback);
   return {
-    bun: durableBunPath(),
-    cli: join(import.meta.dir, "..", "cli", "index.ts"),
+    bun: entry.runtime,
+    cli: entry.cli,
     script: installedTrayScriptPath(),
     codexHome: currentCodexHome(),
     opencodexHome: getConfigDir(),

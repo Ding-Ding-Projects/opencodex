@@ -1,0 +1,143 @@
+package usage
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+func TestLogJSONLRoundTrip(t *testing.T) {
+	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
+	record := &types.UsageRecord{
+		RequestID: "req-1", ThreadID: "thread-1", Provider: "deepseek", Model: "deepseek-chat",
+		Surface: string(SurfaceGrok),
+		Usage:   types.Usage{InputTokens: 120, OutputTokens: 30, CacheReadInputTokens: 20},
+		Status:  types.OutcomeSuccess, StartedAt: time.UnixMilli(1_700_000_000_000), Duration: 1250 * time.Millisecond,
+	}
+	if err := log.Record(context.Background(), record); err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	if err := log.Append(Entry{RequestID: "req-2", Timestamp: 1_700_000_001_000, Provider: "cursor", Model: "auto", Status: 200, DurationMS: 20, UsageStatus: StatusUnreported}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	entries, err := log.ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2", len(entries))
+	}
+	if entries[0].RequestID != "req-1" || entries[0].DurationMS != 1250 {
+		t.Fatalf("first entry = %#v", entries[0])
+	}
+	if entries[0].Surface != SurfaceGrok {
+		t.Fatalf("surface = %q, want grok", entries[0].Surface)
+	}
+	if entries[0].TotalTokens == nil || *entries[0].TotalTokens != 150 {
+		t.Fatalf("total = %v, want 150", entries[0].TotalTokens)
+	}
+
+	recent, err := log.ReadRecent(1)
+	if err != nil || len(recent) != 1 || recent[0].RequestID != "req-2" {
+		t.Fatalf("ReadRecent() = %#v, %v", recent, err)
+	}
+}
+
+func TestLogSkipsMalformedJSONLRows(t *testing.T) {
+	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
+	if err := log.Append(Entry{RequestID: "valid", Timestamp: 1, Provider: "p", Model: "m", Status: 200, UsageStatus: StatusReported, Usage: &types.Usage{InputTokens: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(log.Path(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString("{partial\n")
+	_ = file.Close()
+	entries, err := log.ReadAll()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ReadAll() = %#v, %v", entries, err)
+	}
+}
+
+func TestLogPreservesContextTotalWithoutTreatingItAsTurnTotal(t *testing.T) {
+	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
+	contextTotal := 100_000
+	entry := Entry{
+		RequestID: "kiro-context", Timestamp: 1, Provider: "kiro", Model: "claude-sonnet-4.5",
+		Status: 200, UsageStatus: StatusReported,
+		Usage: &types.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15, ContextTotalTokens: contextTotal},
+	}
+	if err := log.Append(entry); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	entries, err := log.ReadAll()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ReadAll = %#v, %v", entries, err)
+	}
+	if entries[0].Usage.ContextTotalTokens != contextTotal {
+		t.Fatalf("contextTotalTokens = %d", entries[0].Usage.ContextTotalTokens)
+	}
+	if total := CanonicalTotal(*entries[0].Usage); total != 15 {
+		t.Fatalf("CanonicalTotal = %d, want per-turn total 15", total)
+	}
+
+	entry.RequestID = "invalid-context"
+	entry.Usage.ContextTotalTokens = -1
+	if err := log.Append(entry); err == nil {
+		t.Fatal("negative contextTotalTokens was accepted")
+	}
+}
+
+func TestLogSurfaceSanitizerAllowsKnownSurfaces(t *testing.T) {
+	log := NewLog(filepath.Join(t.TempDir(), "usage.jsonl"))
+	base := Entry{Timestamp: 1, Provider: "p", Model: "m", Status: 200, UsageStatus: StatusUnreported}
+	desktop := base
+	desktop.RequestID, desktop.Surface = "desktop", SurfaceClaudeDesktop
+	grok := base
+	grok.RequestID, grok.Surface = "grok", SurfaceGrok
+	invalid := base
+	invalid.RequestID, invalid.Surface = "invalid", Surface("other")
+	if err := log.Append(desktop); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Append(grok); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Append(invalid); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := log.ReadAll()
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("entries=%#v err=%v", entries, err)
+	}
+	if entries[0].Surface != SurfaceClaudeDesktop || entries[1].Surface != SurfaceGrok || entries[2].Surface != "" {
+		t.Fatalf("surfaces=%q,%q,%q", entries[0].Surface, entries[1].Surface, entries[2].Surface)
+	}
+
+	data, err := os.ReadFile(log.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var grokJSON, invalidJSON map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &grokJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[2]), &invalidJSON); err != nil {
+		t.Fatal(err)
+	}
+	if grokJSON["surface"] != "grok" {
+		t.Fatalf("serialized grok surface = %#v", grokJSON["surface"])
+	}
+	if _, ok := invalidJSON["surface"]; ok {
+		t.Fatalf("unknown surface serialized: %s", lines[2])
+	}
+}

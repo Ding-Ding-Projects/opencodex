@@ -1,0 +1,182 @@
+package server
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestStaticHandlerSPAFallbackAndAssetBoundaries(t *testing.T) {
+	handler := StaticHandler()
+
+	root := httptest.NewRecorder()
+	handler.ServeHTTP(root, loopbackRequest(http.MethodGet, "/dashboard/providers", nil))
+	if root.Code != http.StatusOK || root.Header().Get("Cache-Control") != "" || root.Header().Get("Content-Type") != "text/html" || !strings.Contains(root.Body.String(), "proxy dashboard") || strings.Contains(root.Body.String(), "GUI assets are not bundled") {
+		t.Fatalf("SPA fallback = %d headers=%v body=%s", root.Code, root.Header(), root.Body.String())
+	}
+
+	index := httptest.NewRecorder()
+	handler.ServeHTTP(index, loopbackRequest(http.MethodGet, "/", nil))
+	if index.Code != http.StatusOK || !strings.Contains(index.Body.String(), "/assets/index-") {
+		t.Fatalf("embedded production index = %d %s", index.Code, index.Body.String())
+	}
+
+	asset := httptest.NewRecorder()
+	handler.ServeHTTP(asset, loopbackRequest(http.MethodGet, "/provider-icons/openai.svg", nil))
+	if asset.Code != http.StatusOK || asset.Header().Get("Content-Type") != "image/svg+xml" || asset.Body.Len() == 0 {
+		t.Fatalf("embedded asset = %d headers=%v bytes=%d", asset.Code, asset.Header(), asset.Body.Len())
+	}
+
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, loopbackRequest(http.MethodGet, "/missing.js", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing asset = %d %s", missing.Code, missing.Body.String())
+	}
+
+	post := httptest.NewRecorder()
+	handler.ServeHTTP(post, loopbackRequest(http.MethodPost, "/", nil))
+	if post.Code != http.StatusMethodNotAllowed || post.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("post = %d headers=%v", post.Code, post.Header())
+	}
+
+	traversal := httptest.NewRecorder()
+	handler.ServeHTTP(traversal, loopbackRequest(http.MethodGet, "/%2e%2e/secret", nil))
+	if traversal.Code != http.StatusNotFound {
+		t.Fatalf("traversal = %d %s", traversal.Code, traversal.Body.String())
+	}
+}
+
+type embeddedStaticManifest struct {
+	Algorithm string `json:"algorithm"`
+	Files     []struct {
+		Path   string `json:"path"`
+		SHA256 string `json:"sha256"`
+	} `json:"files"`
+}
+
+func TestEmbeddedGUIBundleMatchesCommittedManifest(t *testing.T) {
+	manifestData, err := fs.ReadFile(staticAssets, "static-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest embeddedStaticManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode static manifest: %v", err)
+	}
+	if manifest.Algorithm != "sha256" || len(manifest.Files) == 0 {
+		t.Fatalf("invalid static manifest header: %#v", manifest)
+	}
+	want := make(map[string]string, len(manifest.Files))
+	for _, file := range manifest.Files {
+		if file.Path == "" || file.SHA256 == "" {
+			t.Fatalf("invalid static manifest row: %#v", file)
+		}
+		if _, duplicate := want[file.Path]; duplicate {
+			t.Fatalf("duplicate static manifest path: %s", file.Path)
+		}
+		want[file.Path] = file.SHA256
+	}
+	embedded, err := fs.Sub(staticAssets, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fs.WalkDir(embedded, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		data, readErr := fs.ReadFile(embedded, name)
+		if readErr != nil {
+			return readErr
+		}
+		got := fmt.Sprintf("%x", sha256.Sum256(data))
+		expected, ok := want[name]
+		if !ok {
+			t.Errorf("embedded GUI has stale unmanifested file: %s", name)
+			return nil
+		}
+		delete(want, name)
+		if got != expected {
+			t.Errorf("embedded GUI hash mismatch: %s got=%s want=%s", name, got, expected)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for missing := range want {
+		t.Errorf("manifest references missing embedded GUI file: %s", missing)
+	}
+}
+
+func TestEmbeddedGUIBundleMatchesSourceDistWhenPresent(t *testing.T) {
+	dist := os.Getenv("OPENCODEX_GUI_DIST")
+	if dist == "" {
+		dist = filepath.Clean("../../../gui/dist")
+	}
+	if _, err := os.Stat(filepath.Join(dist, "index.html")); err != nil {
+		t.Skip("gui/dist is absent; committed embedded fallback remains buildable")
+	}
+	embedded, err := fs.Sub(staticAssets, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	err = fs.WalkDir(os.DirFS(dist), ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		// npm drops nested README files from the published tarball regardless of `files`
+		// or `.npmignore`, so scripts/embed-gui.ts excludes them to keep the embedded tree
+		// byte-identical to what actually ships.
+		if isExcludedGUIAsset(name) {
+			return nil
+		}
+		source, readErr := os.ReadFile(filepath.Join(dist, filepath.FromSlash(name)))
+		if readErr != nil {
+			return readErr
+		}
+		bundled, readErr := fs.ReadFile(embedded, name)
+		if readErr != nil {
+			return readErr
+		}
+		if string(source) != string(bundled) {
+			t.Errorf("embedded GUI asset differs from gui/dist: %s", name)
+		}
+		seen[name] = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fs.WalkDir(embedded, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		if !seen[name] {
+			t.Errorf("embedded GUI has stale asset absent from gui/dist: %s", name)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func isExcludedGUIAsset(name string) bool {
+	for _, segment := range strings.Split(name, "/") {
+		if strings.EqualFold(segment, "README.md") {
+			return true
+		}
+	}
+	return false
+}

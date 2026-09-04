@@ -6,6 +6,7 @@ node_modules/
 # electron/proxy-adoption.mjs treats that number as an identity.
 build-info.json
 dist/
+/bin/native/
 .env
 *.log
 .DS_Store

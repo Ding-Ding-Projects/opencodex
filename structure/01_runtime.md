@@ -32,6 +32,18 @@ server infrastructure (`src/lib/bun-stream-caps.ts` owns the Bun stream-capabili
 static GUI, WebSocket bridge, port/liveness, decompression, and adapter-resolution helpers live in
 their own files.
 
+## Installed runtime boundary
+
+The published npm package contains six Go binaries: macOS, Linux, and Windows on amd64 and arm64.
+Node 18+ runs only the small launcher that selects and validates the exact package-local artifact.
+An ordinary command on those targets must not execute Bun or `bun/install.js`.
+
+The `bun` dependency is intentionally retained but dormant. It exists only for an older updater to
+install the transition package, for one guarded legacy Codex-shim refresh after Go has validated,
+for callers that explicitly select the Bun package API, and as a bridge on unsupported platforms.
+Removing it is a later compatibility milestone, not part of the Go runtime cutover. Source development
+continues to use a locally installed Bun CLI and the TypeScript entrypoints.
+
 ## Lifecycle
 
 `ocx start` and `ocx ensure` identity-probe the configured live proxy before reconciling an old

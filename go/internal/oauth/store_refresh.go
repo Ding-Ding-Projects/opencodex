@@ -1,0 +1,223 @@
+package oauth
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+)
+
+// RefreshAccount serializes refresh grants per account across processes, then
+// persists with a generation compare-and-swap. A process that waited for another
+// refresher adopts the newer credential instead of replaying the old grant.
+func (s *CredentialStore) RefreshAccount(ctx context.Context, provider, accountID string, refresh RefreshFunc) (RefreshResult, error) {
+	// Read the current generation BEFORE acquiring the lock. If another
+	// goroutine or process refreshes while we wait, the generation inside
+	// the lock will differ and we adopt the winner without calling refresh.
+	observed, ok, err := s.GetAccountCredential(provider, accountID)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	if !ok {
+		return RefreshResult{}, ErrLoginRequired
+	}
+	observedGen := CredentialGeneration(observed)
+	LogOAuthEvent("OAuth refresh started", map[string]any{"provider": provider, "accountId": accountID})
+
+	lock, err := acquireFileLock(ctx, s.refreshLockPath(provider, accountID))
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	defer lock.release()
+
+	// Re-read inside the lock. If the generation changed, another refresher
+	// won the race — adopt their result.
+	currentAccount, ok, err := s.getProviderAccount(provider, accountID)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	if !ok {
+		return RefreshResult{}, ErrLoginRequired
+	}
+	if currentAccount.NeedsReauth {
+		return RefreshResult{}, ErrLoginRequired
+	}
+	current := currentAccount.Credential
+	currentGen := CredentialGeneration(current)
+	if currentGen != observedGen {
+		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
+		return RefreshResult{Credential: current, Generation: currentGen, Superseded: true}, nil
+	}
+	if err := s.beginRefresh(ctx, provider, accountID, currentGen); err != nil {
+		return RefreshResult{}, err
+	}
+
+	updated, err := refresh(ctx, current.Refresh)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	updated = mergeRefreshedCredential(updated, current)
+	if !validCredential(updated) {
+		return RefreshResult{}, errors.New("provider returned an invalid OAuth credential")
+	}
+	result, err := s.mergeRefreshed(ctx, provider, accountID, currentGen, updated)
+	if err == nil {
+		_, err = s.ClearRefreshIntent(provider, accountID, currentGen)
+		if err == nil && result.Refreshed {
+			LogOAuthEvent("OAuth credentials rotated and persisted", map[string]any{"provider": provider, "accountId": accountID})
+		}
+	}
+	return result, err
+}
+
+// RefreshAccountIfGeneration refreshes only when the locked store still has the
+// generation observed by the caller. This is the stale-read-safe entry point for
+// request resolvers and background sweepers.
+func (s *CredentialStore) RefreshAccountIfGeneration(
+	ctx context.Context,
+	provider string,
+	accountID string,
+	observedGeneration string,
+	refresh RefreshFunc,
+) (RefreshResult, error) {
+	LogOAuthEvent("OAuth refresh started", map[string]any{"provider": provider, "accountId": accountID})
+	lock, err := acquireFileLock(ctx, s.refreshLockPath(provider, accountID))
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	defer lock.release()
+
+	currentAccount, ok, err := s.getProviderAccount(provider, accountID)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	if !ok {
+		return RefreshResult{}, ErrLoginRequired
+	}
+	if currentAccount.NeedsReauth {
+		return RefreshResult{}, ErrLoginRequired
+	}
+	current := currentAccount.Credential
+	expected := CredentialGeneration(current)
+	if expected != observedGeneration {
+		LogOAuthEvent("OAuth refresh joined existing operation", map[string]any{"provider": provider, "accountId": accountID})
+		return RefreshResult{Credential: current, Generation: expected, Superseded: true}, nil
+	}
+	if err := s.beginRefresh(ctx, provider, accountID, expected); err != nil {
+		return RefreshResult{}, err
+	}
+	updated, err := refresh(ctx, current.Refresh)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	updated = mergeRefreshedCredential(updated, current)
+	if !validCredential(updated) {
+		return RefreshResult{}, errors.New("provider returned an invalid OAuth credential")
+	}
+	result, err := s.mergeRefreshed(ctx, provider, accountID, expected, updated)
+	if err == nil {
+		_, err = s.ClearRefreshIntent(provider, accountID, expected)
+		if err == nil && result.Refreshed {
+			LogOAuthEvent("OAuth credentials rotated and persisted", map[string]any{"provider": provider, "accountId": accountID})
+		}
+	}
+	return result, err
+}
+
+func mergeRefreshedCredential(fresh, previous OAuthCredentials) OAuthCredentials {
+	if fresh.Refresh == "" {
+		fresh.Refresh = previous.Refresh
+	}
+	if previous.Source == SourceLocalCLI {
+		fresh.Source = SourceOAuth
+	} else if fresh.Source == "" {
+		fresh.Source = previous.Source
+		if fresh.Source == "" {
+			fresh.Source = SourceOAuth
+		}
+	}
+	if fresh.ProjectID == "" {
+		fresh.ProjectID = previous.ProjectID
+	}
+	if fresh.APIBaseURL == "" {
+		fresh.APIBaseURL = previous.APIBaseURL
+	}
+	if fresh.Email == "" {
+		fresh.Email = previous.Email
+	}
+	if fresh.AccountID == "" {
+		fresh.AccountID = previous.AccountID
+	}
+	return fresh
+}
+
+func (s *CredentialStore) getProviderAccount(provider, accountID string) (ProviderAccount, bool, error) {
+	set, found, err := s.GetAccountSet(provider)
+	if err != nil || !found {
+		return ProviderAccount{}, false, err
+	}
+	for _, account := range set.Accounts {
+		if account.ID == accountID {
+			return account, true, nil
+		}
+	}
+	return ProviderAccount{}, false, nil
+}
+
+func (s *CredentialStore) beginRefresh(ctx context.Context, provider, accountID, generation string) error {
+	if pending, ok := s.ReadRefreshIntent(provider, accountID); ok {
+		if pending.Uncertain || pending.Generation == generation {
+			_, _ = s.MarkNeedsReauth(ctx, provider, accountID, generation)
+			return ErrLoginRequired
+		}
+		_, _ = s.ClearRefreshIntent(provider, accountID, pending.Generation)
+	}
+	return s.WriteRefreshIntent(provider, accountID, generation)
+}
+
+func (s *CredentialStore) mergeRefreshed(ctx context.Context, provider, accountID, expected string, updated OAuthCredentials) (RefreshResult, error) {
+	result := RefreshResult{}
+	err := s.mutate(ctx, func(store AuthStore) error {
+		set, ok := store[provider]
+		if !ok {
+			return ErrLoginRequired
+		}
+		for i := range set.Accounts {
+			if set.Accounts[i].ID != accountID {
+				continue
+			}
+			stored := set.Accounts[i].Credential
+			if set.Accounts[i].NeedsReauth {
+				return ErrLoginRequired
+			}
+			if CredentialGeneration(stored) != expected {
+				result = RefreshResult{Credential: stored, Generation: CredentialGeneration(stored), Superseded: true}
+				return nil
+			}
+			set.Accounts[i].Credential = updated
+			set.Accounts[i].NeedsReauth = false
+			store[provider] = set
+			result = RefreshResult{Credential: updated, Generation: CredentialGeneration(updated), Refreshed: true}
+			return nil
+		}
+		return ErrLoginRequired
+	})
+	return result, err
+}
+
+func (s *CredentialStore) refreshLockPath(provider, accountID string) string {
+	safeProvider := strings.Map(safeLockRune, provider)
+	digest := sha256.Sum256([]byte(accountID))
+	name := fmt.Sprintf("auth.refresh.%s.%s.lock", safeProvider, hex.EncodeToString(digest[:12]))
+	return filepath.Join(filepath.Dir(s.path), name)
+}
+
+func safeLockRune(r rune) rune {
+	if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+		return r
+	}
+	return '_'
+}

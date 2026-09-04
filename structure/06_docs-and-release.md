@@ -49,6 +49,10 @@ docs change also edits runtime/package/release files, run the relevant local run
 push and let `ci.yml` provide the Linux/Windows confirmation. Service-related changes
 (`src/service.ts`, `src/cli/index.ts`) additionally trigger the `service-lifecycle.yml` smoke test on Linux.
 
+The TypeScript prerelease line remains `preview`. `dev2-go` is a temporary, independently validated
+Go track, not a release-promotion branch and not a standing pull request into `dev`. Its head is
+stable only after Go CI succeeds for the exact commit.
+
 ## Root README
 
 The root READMEs are the concise product entrypoint. They should explain what opencodex does, how to
@@ -77,12 +81,11 @@ enforcement.
 - 다른 대안 대신 이 방식을 선택한 이유: A two-maintainer project needs clear ownership and sensitive-path review rules but does not yet need a separate governance framework.
 - 장점, 단점 및 영향: Contributors can identify reviewers and merge expectations directly from the repository. The roster must be updated when responsibilities change, and CODEOWNERS still requires branch-protection configuration to enforce approvals.
 
-## Package runtime (bundled Bun)
+## Package runtime (packaged Go)
 
-The source runs on Bun, but the published package does **not** require a user-installed Bun.
-`package.json` `bin` points at `bin/ocx.mjs` (a Node shim), and the Bun runtime ships as the `bun`
-npm dependency (esbuild-style: a tiny main package plus platform-specific `@oven/bun-*`
-`optionalDependencies`, finalized by the dependency's own `postinstall: node install.js`).
+The source-development toolchain remains Bun-native TypeScript, while supported npm installations
+run Go. `package.json` `bin` points at `bin/ocx.mjs`, a small Node launcher, and the tarball carries
+one exact Go artifact for each darwin/linux/windows × amd64/arm64 target.
 
 Invariants:
 
@@ -104,7 +107,7 @@ Invariants:
   the npm global prefix) into launchd/systemd/Task Scheduler and the Codex autostart shim, so those
   durable artifacts keep resolving across `ocx update`.
 - Public docs (root READMEs + `docs-site` installation pages, all locales) state Node 18+ as the only
-  prerequisite. Do not reintroduce "install Bun first" / "bun must be on PATH" guidance for npm users.
+  runtime prerequisite and identify all six supported Go targets.
 
 ### Runtime closure and port boundary
 
@@ -127,10 +130,32 @@ branch documents the boundary, but do not manufacture a Go runtime change for it
 
 ## Release workflow
 
-Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`, `prepublishOnly` runs
-typecheck and GUI build, and `scripts/release.ts` now runs local typecheck, `bun test --isolate tests`, and
-`bun run privacy:scan` before the version bump, commit/push, Cross-platform CI wait, and GitHub
-Release workflow dispatch. Docs publishing is separate from npm release publishing.
+Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`;
+`prepublishOnly` rejects direct source publishing so only the release workflow may publish.
+`scripts/release.ts` runs local typecheck, the test suite, and `bun run privacy:scan`
+before the version bump. Because `gui/vite.config.ts` bakes the package version into the GUI
+bundle, the bump is followed by `bun scripts/embed-gui.ts`, and the regenerated
+`go/internal/server/static/**` plus `static-manifest.json` are staged with `package.json` so the
+release commit can pass the embed guard it triggers. The helper then commits, pushes, and waits
+for successful exact-SHA runs of Cross-platform CI, Service lifecycle, **and Go CI** before the
+live remote-head check and the GitHub Release workflow dispatch; the CI wait timeout and poll
+interval are environment-overridable for tests but keep their production defaults. Every dispatch
+must name the exact expected commit SHA and fails closed when it is empty or differs from
+`GITHUB_SHA`. The workflow builds the GUI, verifies `gui/dist` against the committed embedded
+bundle, packs once, verifies that exact archive, compares the packed `package/gui/dist` bytes to
+the embedded tree by per-file SHA-256, runs the isolated poison-install receipt, and copies the
+validated bytes into a
+runner-private retained archive identified by an absolute path and SHA-256. It materializes and
+validates exactly six native binaries plus their checksum manifest from that retained archive
+before publish. A dry-run performs all archive and asset preparation but cannot run npm, Git tag,
+Git push, or GitHub Release mutations. A real run publishes the private retained archive and uses
+freshly materialized, immediately revalidated bytes as the seven GitHub Release assets. It then
+downloads the remote assets, normalizes local modes, and verifies their inventory and bytes against
+the retained archive. Registry visibility must prove both immutable version integrity and the
+requested npm dist-tag before GitHub reconciliation. Post-notes tag and GitHub Release changes are
+owned by `scripts/reconcile-release-assets.ts`, which receives that npm integrity and dist-tag, uses
+bounded argument-vector `git`/`gh` calls, revalidates npm identity and the authoritative remote tag
+before every mutation, and repeats both checks before final success. Docs publishing is separate.
 
 ## Release metadata invariants
 
@@ -139,17 +164,30 @@ Every npm release version must map cleanly across four surfaces:
 | Surface | Required state |
 | --- | --- |
 | `package.json` | `version` equals the release workflow `version` input. |
-| npm registry | `@bitkyc08/opencodex@<version>` does not exist before publish, then exists after publish with the requested dist-tag. |
-| Git tag | `v<version>` does not exist before publish, then points at the exact release commit. |
-| GitHub Release | `v<version>` does not exist before publish, then is created from the exact release commit. |
+| npm registry | `@bitkyc08/opencodex@<version>` is absent, or its integrity exactly matches the retained archive and the requested dist-tag already maps to it. |
+| Git tag | `v<version>` is absent, or it already resolves to the exact release commit. |
+| GitHub Release | `v<version>` is absent, or its tag, title, prerelease flag, notes, and existing asset names are compatible with exact recovery. Its final inventory is the seven archive-bound native assets. |
 
-The release must fail before `npm publish` if npm, the Git tag, or the GitHub Release already has the
-requested version. This prevents partial releases where npm is published but GitHub Release creation
-fails afterward.
+The workflow classifies public state only after it has retained the candidate archive. npm identity
+is exact only when registry integrity and dist-tag both match. A same-SHA tag is reusable. GitHub
+Release presence is only a candidate until generated title, prerelease flag, and notes are available;
+the final exact classification happens immediately before create or repair. Any identity mismatch or
+unexpected asset name fails before mutation.
 
-Do not force-move public version tags by default. If release metadata is already inconsistent, treat
-the version as consumed and publish the next unused patch version instead. Only rewrite a public tag
-after an explicit human decision that the public history rewrite is acceptable.
+Exact-integrity reruns recover from interruptions after npm publish, tag push, empty-draft creation,
+or a partial asset upload. Creation, each asset write, and publication are separate npm-guarded
+mutations. A mismatched draft asset is deleted by exact asset ID, npm identity is checked again, and
+the replacement is uploaded without `--clobber`; missing assets are uploaded individually. The
+reconciler re-verifies all seven remote bytes against the retained archive, then explicitly publishes
+the complete draft with `gh release edit --draft=false`.
+An already published Release is verification-only and is never edited or uploaded to. Already exact
+mutations are skipped. This recovery path is deliberately narrow: it never moves a conflicting tag,
+republishes different npm bytes, accepts changed release metadata, or removes an unexpected remote
+asset.
+
+Do not force-move public version tags. If release metadata is inconsistent with the retained archive,
+exact commit, requested channel, generated notes, or seven-asset inventory, treat the version as
+consumed and publish the next unused patch version instead.
 
 Manual preflight checks when debugging a release:
 
@@ -159,9 +197,9 @@ git ls-remote origin refs/tags/v<version>
 gh release view v<version>
 ```
 
-If any of these commands reports an existing artifact for the requested version, stop before
-publishing. For a non-destructive recovery, choose the next unused patch version and release that
-version through `scripts/release.ts`.
+An existing artifact is recoverable only when the workflow's exact-integrity classifier accepts every
+identity above. Otherwise stop before publishing and choose the next unused patch version through
+`scripts/release.ts`.
 
 ## Cross-platform CI
 
@@ -178,20 +216,21 @@ cd gui && bun install --frozen-lockfile && bun run build
 bun run src/cli/index.ts help
 ```
 
-and the Node-only global-install smoke path:
+and the Node-only global-install smoke path. It verifies and installs the same archive that
+release validation inspected, disables lifecycle scripts, poisons Bun compatibility
+execution, and then runs the installed launcher:
 
 ```bash
-npm install
-npm run build:gui
 npm pack --json > pack.json
-npm install -g ./bitkyc08-opencodex-*.tgz
-ocx help
+npm run verify:native-package
+npm run verify:native-install
 ```
 
 The CI intentionally does not build docs, run coverage, or perform remote Ubuntu/RDP smoke tests.
 Those stay outside the default gate until a concrete regression justifies the extra runtime.
 
 The Release workflow remains manual and publish-focused. Before any dry-run or publish step, it
-checks that the exact release commit (`GITHUB_SHA`) already has a successful Cross-platform CI run.
-This keeps release runs short and makes release a deployment of a verified commit rather than a
-second CI pipeline.
+checks that the exact release commit (`GITHUB_SHA`) already has successful Cross-platform CI and Go
+CI runs. Go CI runs on `dev2-go`, `main`, and `preview`, with pinned Bun 1.3.14 in every job for the
+mandatory cross-runtime compatibility test. This keeps release runs short and makes release a
+deployment of a verified commit rather than a second CI pipeline.

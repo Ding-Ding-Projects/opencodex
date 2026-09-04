@@ -1,0 +1,582 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	anthropicadapter "github.com/lidge-jun/opencodex-go/internal/adapter/anthropic"
+	googleadapter "github.com/lidge-jun/opencodex-go/internal/adapter/google"
+	openaiadapter "github.com/lidge-jun/opencodex-go/internal/adapter/openai"
+	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/registry"
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+func resolveTestAdapter(t *testing.T, provider string, cfg config.ProviderConfig) types.Adapter {
+	t.Helper()
+	all := config.Default()
+	all.Providers[provider] = cfg
+	reg := configuredRegistry(all)
+	adapter, err := adapterResolver(reg, all)(
+		&types.ResolvedModel{Provider: provider, Model: cfg.DefaultModel},
+		&types.Transport{BaseURL: cfg.BaseURL, Headers: cfg.Headers},
+		&types.AuthContext{APIKey: "test-key", AccessToken: "test-token"},
+		http.Header{"X-Codex-Turn-Metadata": {"metadata"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return adapter
+}
+
+func TestAdapterResolverUsesProviderAwareAnthropicConstructor(t *testing.T) {
+	cfg := config.Default()
+	cfg.CacheRetention = "long"
+	cfg.Providers["anthropic"] = config.ProviderConfig{Adapter: "anthropic", BaseURL: "https://api.anthropic.com", AuthMode: "oauth", DefaultModel: "claude-opus-4-7"}
+	reg := configuredRegistry(cfg)
+	resolved, err := adapterResolver(reg, cfg)(
+		&types.ResolvedModel{Provider: "anthropic", Model: "claude-opus-4-7"},
+		&types.Transport{BaseURL: "https://api.anthropic.com"},
+		&types.AuthContext{AccessToken: "oauth-token"}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, ok := unwrapAdapter(resolved).(*anthropicadapter.Adapter)
+	if !ok {
+		t.Fatalf("Anthropic factory returned %T", resolved)
+	}
+	request, err := adapter.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: "claude-opus-4-7",
+		Context: types.RequestContext{
+			Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}},
+			Tools:    []types.Tool{{Name: "lookup", Description: "Lookup", Parameters: map[string]any{"type": "object"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	tools, _ := body["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("Anthropic tools = %#v", body["tools"])
+	}
+	tool, _ := tools[0].(map[string]any)
+	if adapter.CacheRetention != "long" || request.Header.Get("Authorization") != "Bearer oauth-token" || tool["name"] != "custom_lookup" || body["cache_control"] == nil {
+		t.Fatalf("Anthropic factory policy missing: retention=%q headers=%#v body=%#v", adapter.CacheRetention, request.Header, body)
+	}
+}
+
+func TestAdapterResolverUsesProviderAwareOpenAIConstructors(t *testing.T) {
+	chatCfg := config.ProviderConfig{
+		Adapter: "openai-chat", BaseURL: "https://chat.example/v1", DefaultModel: "reasoner",
+		AutoToolChoiceOnlyModels: []string{"reasoner"}, ModelReasoningEffortMap: map[string]map[string]string{"reasoner": {"high": "enabled"}},
+		PreserveReasoningContentModels: []string{"reasoner"}, ReasoningSplitModels: []string{"reasoner"}, NoTemperatureModels: []string{"reasoner"},
+	}
+	chat, ok := unwrapAdapter(resolveTestAdapter(t, "custom-chat", chatCfg)).(*openaiadapter.ChatAdapter)
+	if !ok {
+		t.Fatalf("chat factory returned %T", chat)
+	}
+	if chat.Provider.BaseURL != chatCfg.BaseURL || len(chat.Provider.AutoToolChoiceOnlyModels) != 1 || chat.Provider.ModelReasoningEffortMap["reasoner"]["high"] != "enabled" || len(chat.Provider.PreserveReasoningContentModels) != 1 || len(chat.Provider.ReasoningSplitModels) != 1 {
+		t.Fatalf("chat provider policy was dropped: %#v", chat.Provider)
+	}
+	temperature := 0.7
+	chatRequest, err := chat.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: "reasoner", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+		Options: types.RequestOptions{Temperature: &temperature, Reasoning: "high"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chatBody map[string]any
+	if err := json.NewDecoder(chatRequest.Body).Decode(&chatBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := chatBody["temperature"]; present || chatBody["reasoning_effort"] != "enabled" {
+		t.Fatalf("chat request did not apply provider policy: %#v", chatBody)
+	}
+
+	responsesCfg := config.ProviderConfig{Adapter: "openai-responses", BaseURL: "https://responses.example", ResponsesPath: "/custom/responses", NoReasoningModels: []string{"plain"}}
+	responses, ok := unwrapAdapter(resolveTestAdapter(t, "custom-responses", responsesCfg)).(*openaiadapter.ResponsesAdapter)
+	if !ok {
+		t.Fatalf("responses factory returned %T", responses)
+	}
+	if responses.ResponsesPath != "/custom/responses" || len(responses.Provider.NoReasoningModels) != 1 || responses.IncomingHeaders.Get("X-Codex-Turn-Metadata") != "metadata" {
+		t.Fatalf("responses provider policy was dropped: %#v", responses)
+	}
+	responsesRequest, err := responses.BuildRequest(context.Background(), &types.NormalizedRequest{ModelID: "plain", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if responsesRequest.URL.String() != "https://responses.example/custom/responses" {
+		t.Fatalf("responses path policy = %s", responsesRequest.URL)
+	}
+}
+
+func TestAdapterResolverAppliesPerModelWireOverridePolicy(t *testing.T) {
+	t.Run("chat provider selects responses wire", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-chat", BaseURL: "https://mixed.example/v1", DefaultModel: "responses-model",
+			ModelAdapters: map[string]string{"responses-model": "openai-responses"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "mixed", cfg)).(*openaiadapter.ResponsesAdapter); !ok {
+			t.Fatalf("model override returned %T", adapter)
+		}
+	})
+
+	t.Run("responses provider selects chat wire", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-responses", BaseURL: "https://mixed.example/v1", DefaultModel: "chat-model",
+			ModelAdapters: map[string]string{"chat-model": "openai-chat"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "mixed", cfg)).(*openaiadapter.ChatAdapter); !ok {
+			t.Fatalf("model override returned %T", adapter)
+		}
+	})
+
+	t.Run("immutable pin wins over configured override", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-chat", BaseURL: "https://opencode.ai/zen/v1", DefaultModel: "minimax-m2.5",
+			ModelAdapters: map[string]string{"minimax-m2.5": "openai-responses"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "opencode-go", cfg)).(*anthropicadapter.Adapter); !ok {
+			t.Fatalf("pinned model returned %T", adapter)
+		}
+	})
+
+	t.Run("canonical forward provider ignores unsafe override", func(t *testing.T) {
+		cfg := config.ProviderConfig{
+			Adapter: "openai-responses", BaseURL: "https://chatgpt.com/backend-api/codex", AuthMode: "forward",
+			CodexAccountMode: "pool", DefaultModel: "gpt-test", ModelAdapters: map[string]string{"gpt-test": "openai-chat"},
+		}
+		if adapter, ok := unwrapAdapter(resolveTestAdapter(t, "openai", cfg)).(*openaiadapter.ResponsesAdapter); !ok {
+			t.Fatalf("canonical forward override returned %T", adapter)
+		}
+	})
+}
+
+func TestAdapterResolverAppliesOpenRouterRoutingPolicy(t *testing.T) {
+	allowFallbacks := false
+	cfg := config.ProviderConfig{
+		Adapter: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", DefaultModel: "vendor/model",
+		OpenRouterRouting: &providers.OpenRouterProviderRouting{Order: []string{"anthropic"}},
+		ModelOpenRouterRouting: map[string]providers.OpenRouterProviderRouting{
+			"vendor/model": {Only: []string{"google"}, AllowFallbacks: &allowFallbacks},
+		},
+	}
+	adapter, ok := unwrapAdapter(resolveTestAdapter(t, "openrouter", cfg)).(*openaiadapter.ChatAdapter)
+	if !ok {
+		t.Fatalf("OpenRouter factory returned %T", adapter)
+	}
+	request, err := adapter.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: "vendor/model", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	routing, _ := body["provider"].(map[string]any)
+	only, _ := routing["only"].([]any)
+	if len(only) != 1 || only[0] != "google" || routing["allow_fallbacks"] != false {
+		t.Fatalf("OpenRouter routing policy = %#v", routing)
+	}
+}
+
+func TestConfiguredRegistryAppliesStaticHeadersAndDefaultProvider(t *testing.T) {
+	cfg := config.Default()
+	cfg.DefaultProvider = "custom"
+	cfg.Providers["custom"] = config.ProviderConfig{
+		Adapter: "openai-chat", BaseURL: "https://custom.example/v1", DefaultModel: "custom-default",
+		Headers: map[string]string{"X-Provider-Policy": "enabled"},
+	}
+	reg := configuredRegistry(cfg)
+	resolved, err := reg.ResolveModel("unqualified-model")
+	if err != nil || resolved.Provider != "custom" {
+		t.Fatalf("configured default provider was not applied: resolved=%#v err=%v", resolved, err)
+	}
+	entry, ok := reg.Lookup("custom")
+	if !ok {
+		t.Fatal("custom provider missing")
+	}
+	transport, err := registry.ResolveProviderTransport(entry, &types.AuthContext{APIKey: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := adapterResolver(reg, cfg)(resolved, transport, &types.AuthContext{APIKey: "secret"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := adapter.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: resolved.Model, Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Header.Get("X-Provider-Policy") != "enabled" {
+		t.Fatalf("static provider headers were not applied: %#v", request.Header)
+	}
+}
+
+func TestConfiguredAuthHonorsExplicitKeyModeForOAuthRegistryProvider(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["kiro"] = config.ProviderConfig{Adapter: "kiro", BaseURL: "https://example.test", AuthMode: "key", APIKey: "configured-key"}
+	resolver, err := configuredAuthWithStore(cfg, oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := resolver.ResolveAuth(context.Background(), "kiro", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.APIKey != "configured-key" || auth.Kind != "api-key" {
+		t.Fatalf("auth = %#v", auth)
+	}
+}
+
+func TestAdapterResolverMimoUsesProviderDoForBootstrapAnd401Retry(t *testing.T) {
+	var bootstraps, chats atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/bootstrap":
+			attempt := bootstraps.Add(1)
+			_ = json.NewEncoder(writer).Encode(map[string]string{"jwt": "jwt-" + string(rune('0'+attempt))})
+		case "/chat":
+			attempt := chats.Add(1)
+			if request.Header.Get("Authorization") != "Bearer jwt-"+string(rune('0'+attempt)) {
+				t.Errorf("chat attempt %d used %q", attempt, request.Header.Get("Authorization"))
+			}
+			if attempt == 1 {
+				writer.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"ok":true}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer upstream.Close()
+
+	resolved := resolveTestAdapter(t, "mimo-free", config.ProviderConfig{Adapter: "mimo-free", BaseURL: upstream.URL, DefaultModel: "mimo-auto"})
+	mimo, ok := unwrapAdapter(resolved).(*openaiadapter.MimoAdapter)
+	if !ok {
+		t.Fatalf("MiMo factory returned %T", unwrapAdapter(resolved))
+	}
+	mimo.Client = upstream.Client()
+	mimo.BootstrapURL = upstream.URL + "/bootstrap"
+	mimo.ChatURL = upstream.URL + "/chat"
+	mimo.ConfigDir = t.TempDir()
+	request, err := resolved.BuildRequest(context.Background(), &types.NormalizedRequest{ModelID: "mimo-auto", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := newAdapterAwareClient(upstream.Client()).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || bootstraps.Load() != 2 || chats.Load() != 2 {
+		t.Fatalf("status=%d bootstraps=%d chats=%d", response.StatusCode, bootstraps.Load(), chats.Load())
+	}
+}
+
+func TestAdapterResolverGoogleBindsRetryingDoPath(t *testing.T) {
+	resolved := resolveTestAdapter(t, "google-vertex", config.ProviderConfig{Adapter: "google", BaseURL: "https://vertex.example", GoogleMode: "vertex", Project: "project", Location: "global"})
+	bound, ok := resolved.(*fetchBoundAdapter)
+	if !ok {
+		t.Fatalf("Google factory returned unbound %T", resolved)
+	}
+	google, ok := bound.Adapter.(*googleadapter.Adapter)
+	if !ok || google.Mode != googleadapter.ModeVertex || google.Project != "project" || google.Location != "global" {
+		t.Fatalf("Google policy was dropped: %#v", google)
+	}
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(writer, "ok")
+	}))
+	defer upstream.Close()
+	google.Client = upstream.Client()
+	request, _ := http.NewRequest(http.MethodPost, upstream.URL, strings.NewReader("{}"))
+	request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("{}")), nil }
+	response, err := bound.fetch(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || calls.Load() != 2 {
+		t.Fatalf("status=%d calls=%d", response.StatusCode, calls.Load())
+	}
+}
+
+func TestProductionVertexRouteAcquiresADCWhenCredentialIsOmitted(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["google-vertex"] = config.ProviderConfig{
+		Adapter: "google", GoogleMode: "vertex", Project: "project-id", Location: "us-central1", Models: []string{"gemini-test"},
+	}
+	original := getVertexAccessToken
+	t.Cleanup(func() { getVertexAccessToken = original })
+	var calls atomic.Int32
+	getVertexAccessToken = func(context.Context) (string, error) {
+		calls.Add(1)
+		return "adc-production-token", nil
+	}
+	resolved, err := adapterResolver(configuredRegistry(cfg), cfg)(
+		&types.ResolvedModel{Provider: "google-vertex", Model: "gemini-test"},
+		&types.Transport{}, &types.AuthContext{}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := resolved.BuildRequest(context.Background(), &types.NormalizedRequest{
+		ModelID: "gemini-test", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || request.Header.Get("Authorization") != "Bearer adc-production-token" || !strings.Contains(request.URL.String(), "/projects/project-id/locations/us-central1/") {
+		t.Fatalf("calls=%d url=%s authorization=%q", calls.Load(), request.URL, request.Header.Get("Authorization"))
+	}
+}
+
+func TestAdapterAwareClientFallsBackForOrdinaryRequests(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) }))
+	defer upstream.Close()
+	request, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	response, err := newAdapterAwareClient(upstream.Client()).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+}
+
+func TestConfiguredAuthAllowsKeyOptionalMimoWithoutCredential(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["mimo-free"] = config.ProviderConfig{Adapter: "mimo-free", BaseURL: "https://api.xiaomimimo.com/api/free-ai/openai/chat", AuthMode: "key"}
+	resolver, err := configuredAuthWithStore(cfg, oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := resolver.ResolveAuth(context.Background(), "mimo-free", "")
+	if err != nil || auth.APIKey != "" {
+		t.Fatalf("MiMo auth=%#v err=%v", auth, err)
+	}
+}
+
+func TestConfiguredAuthActivatesOpenAIAccountPool(t *testing.T) {
+	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	for index, access := range []string{"pool-access-one", "pool-access-two"} {
+		credential := oauth.OAuthCredentials{Access: access, Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: fmt.Sprintf("account-%d", index)}
+		if err := store.SaveCredential(context.Background(), "openai", credential); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.FreshInstall()
+	resolver, err := configuredAuthWithStore(cfg, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := resolver.ResolveAuth(context.Background(), "openai", "thread-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := resolver.ResolveAuth(context.Background(), "openai", "thread-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolver.Pool == nil || first.AccountID == "" || second.AccountID == "" || first.AccountID == second.AccountID {
+		t.Fatalf("pool=%v first=%#v second=%#v", resolver.Pool != nil, first, second)
+	}
+}
+
+func TestConfiguredLiveResolverUsesProviderPolicyWithoutLeakingSecrets(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["openai-apikey"] = config.ProviderConfig{Adapter: "openai-responses", BaseURL: "https://api.openai.test/v1", APIKey: "keyed-secret", Headers: map[string]string{"X-Static": "yes"}}
+	resolver := configuredLiveResolver(&cfg, oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json")))
+	target, err := resolver(context.Background(), http.Header{"Authorization": {"Bearer incoming-token"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ProviderBaseURL != cfg.Providers["openai"].BaseURL || !target.UsesBackendShape || target.Headers.Get("Authorization") != "Bearer incoming-token" {
+		t.Fatalf("forward live target = %#v", target)
+	}
+	delete(cfg.Providers, "openai")
+	target, err = resolver(context.Background(), nil)
+	if err != nil || !target.Keyed || target.Headers.Get("Authorization") != "Bearer keyed-secret" || target.Headers.Get("X-Static") != "yes" {
+		t.Fatalf("keyed live target = %#v err=%v", target, err)
+	}
+}
+
+func TestXAIAdapterFactoryAddsPerAttemptRequestID(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.Providers["xai"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://cli-chat-proxy.grok.test/v1", APIKey: "xai-key", AuthMode: "key", DefaultModel: "grok-test", Models: []string{"grok-test"}}
+	reg := configuredRegistry(cfg)
+	resolved, err := reg.ResolveModel("xai/grok-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := reg.ResolveTransport("xai", &types.AuthContext{Kind: "api-key", Provider: "xai", APIKey: "xai-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := adapterResolver(reg, cfg)(resolved, transport, &types.AuthContext{Kind: "api-key", Provider: "xai", APIKey: "xai-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &types.NormalizedRequest{ModelID: "grok-test", Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: json.RawMessage(`"hello"`)}}}}
+	first, err := adapter.BuildRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := adapter.BuildRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	firstID, secondID := first.Header.Get(providers.XAIRequestIDHeader), second.Header.Get(providers.XAIRequestIDHeader)
+	if !uuid.MatchString(firstID) || !uuid.MatchString(secondID) || firstID == secondID {
+		t.Fatalf("xAI request ids first=%q second=%q", firstID, secondID)
+	}
+}
+
+func TestProviderFetchTimeoutsUseConfiguredConnectBudget(t *testing.T) {
+	cfg := config.FreshInstall()
+	cfg.ConnectTimeoutMS = 1234
+	timeouts := providerFetchTimeouts(cfg)
+	want := 1234 * time.Millisecond
+	if timeouts.Connect != want || timeouts.TLSHandshake != want || timeouts.ResponseHeader != want || timeouts.Overall != 10*time.Minute {
+		t.Fatalf("timeouts=%#v", timeouts)
+	}
+}
+
+func TestConfiguredStallTimeoutIsPassedAsSeconds(t *testing.T) {
+	if configuredStallTimeout(config.Config{}) != nil {
+		t.Fatal("omitted stall timeout must preserve the server default")
+	}
+	value := configuredStallTimeout(config.Config{StallTimeoutSec: 1})
+	if value == nil || *value != 1 {
+		t.Fatalf("configured stall timeout = %v", value)
+	}
+}
+
+func TestVisionFactoryPreservesExplicitZeroDescriptionLimit(t *testing.T) {
+	cfg := config.Default()
+	cfg.VisionSidecar = &config.VisionSidecarConfig{
+		Backend: "openai", MaxDescriptionsPerTurn: 0, MaxDescriptionsPerTurnSet: true,
+	}
+	preprocessor := configuredVisionPreprocessor(cfg, http.DefaultClient)
+	if preprocessor == nil {
+		t.Fatal("configuredVisionPreprocessor returned nil")
+	}
+	content := json.RawMessage(`[{"type":"input_image","image_url":"https://images.example/pixel.png"}]`)
+	request := &types.NormalizedRequest{Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: content}}}}
+	if err := preprocessor.PreprocessForModel(context.Background(), request, false); err != nil {
+		t.Fatalf("PreprocessForModel: %v", err)
+	}
+	if strings.Contains(string(request.Context.Messages[0].Content), "input_image") {
+		t.Fatalf("explicit zero must strip rather than describe images: %s", request.Context.Messages[0].Content)
+	}
+}
+
+func TestVisionProductionFactoryEnablesOmittedConfigAndUsesAnthropicOAuth(t *testing.T) {
+	var authorization string
+	visionUpstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"content":[{"type":"text","text":"oauth vision description"}]}`)
+	}))
+	defer visionUpstream.Close()
+	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err := store.SaveCredential(context.Background(), "anthropic-oauth", oauth.OAuthCredentials{Access: "anthropic-oauth-token", Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), Source: oauth.SourceOAuth}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.FreshInstall()
+	cfg.VisionSidecar = nil
+	cfg.Providers["anthropic-oauth"] = config.ProviderConfig{Adapter: "anthropic", AuthMode: "oauth", BaseURL: visionUpstream.URL}
+	cfg.Providers["text-only"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://target.example/v1", Models: []string{"plain"}, NoVisionModels: []string{"plain"}}
+	resolver := configBackedAdapterResolver(&cfg, nil, visionUpstream.Client(), store)
+	adapter, err := resolver(&types.ResolvedModel{Provider: "text-only", Model: "plain"}, &types.Transport{BaseURL: "https://target.example/v1"}, &types.AuthContext{APIKey: "target-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := adapter.(*visionBoundAdapter); !ok {
+		t.Fatalf("omitted vision config did not wrap production adapter: %T", adapter)
+	}
+	request := visionImageRequest("plain")
+	if _, err := adapter.BuildRequest(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if authorization != "Bearer anthropic-oauth-token" {
+		t.Fatalf("Anthropic vision authorization=%q content=%s", authorization, request.Context.Messages[0].Content)
+	}
+	if !strings.Contains(string(request.Context.Messages[0].Content), "oauth vision description") {
+		t.Fatalf("vision description was not injected: %s", request.Context.Messages[0].Content)
+	}
+}
+
+func TestVisionProductionFactoryFallsBackToOpenAIForwardAccount(t *testing.T) {
+	var authorization, accountID string
+	visionUpstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		accountID = request.Header.Get("chatgpt-account-id")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"output_text":"openai fallback description"}`)
+	}))
+	defer visionUpstream.Close()
+	store := oauth.NewCredentialStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err := store.SaveCredential(context.Background(), "openai", oauth.OAuthCredentials{Access: "openai-forward-token", Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: "chatgpt-account", Source: oauth.SourceOAuth}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.FreshInstall()
+	cfg.VisionSidecar = nil
+	openai := cfg.Providers["openai"]
+	openai.BaseURL = visionUpstream.URL
+	cfg.Providers["openai"] = openai
+	// An API-key Anthropic provider is deliberately ineligible for the OAuth
+	// Messages sidecar and must not suppress the OpenAI forward fallback.
+	cfg.Providers["anthropic-key"] = config.ProviderConfig{Adapter: "anthropic", AuthMode: "key", APIKey: "must-not-be-used", BaseURL: "https://anthropic.invalid"}
+	cfg.Providers["text-only"] = config.ProviderConfig{Adapter: "openai-chat", BaseURL: "https://target.example/v1", Models: []string{"plain"}, NoVisionModels: []string{"plain"}}
+	resolver := configBackedAdapterResolver(&cfg, nil, visionUpstream.Client(), store)
+	adapter, err := resolver(&types.ResolvedModel{Provider: "text-only", Model: "plain"}, &types.Transport{BaseURL: "https://target.example/v1"}, &types.AuthContext{APIKey: "target-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := visionImageRequest("plain")
+	if _, err := adapter.BuildRequest(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if authorization != "Bearer openai-forward-token" || accountID != "chatgpt-account" {
+		t.Fatalf("OpenAI fallback auth=%q account=%q content=%s", authorization, accountID, request.Context.Messages[0].Content)
+	}
+	if !strings.Contains(string(request.Context.Messages[0].Content), "openai fallback description") {
+		t.Fatalf("vision description was not injected: %s", request.Context.Messages[0].Content)
+	}
+}
+
+func visionImageRequest(model string) *types.NormalizedRequest {
+	content := json.RawMessage(`[{"type":"input_image","image_url":"https://images.example/pixel.png"}]`)
+	return &types.NormalizedRequest{ModelID: model, Context: types.RequestContext{Messages: []types.Message{{Role: "user", Content: content}}}, RawBody: json.RawMessage(`{"model":"` + model + `","input":[]}`)}
+}

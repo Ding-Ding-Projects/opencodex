@@ -1,0 +1,355 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"unicode/utf16"
+	"unicode/utf8"
+
+	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
+	"github.com/lidge-jun/opencodex-go/internal/server"
+)
+
+// RuntimeAPIError mirrors the TypeScript RuntimeApiError: it carries the HTTP
+// status and the decoded body so callers can react to the status, not the text.
+type RuntimeAPIError struct {
+	Message string
+	Status  int
+	Body    any
+}
+
+func (e *RuntimeAPIError) Error() string { return e.Message }
+
+// runtimeAPI is the management-plane client shared by the headless CLI
+// commands. The oracle equivalent is src/cli/runtime-api.ts: find the live
+// proxy, send the request with the management headers, then translate a
+// non-2xx response into a message the user can act on.
+type runtimeAPI struct {
+	// BaseURL short-circuits proxy discovery. Tests inject an httptest URL.
+	BaseURL string
+	Client  *http.Client
+	// Headers are applied OVER the defaults, so a caller can override
+	// Content-Type without having to restate the management credential.
+	// Applied through http.Header.Set, so the match is case-insensitive
+	// exactly like the oracle's Headers object.
+	Headers map[string]string
+	// findProxy and loadCfg are seams so a test can drive the discovery and
+	// credential paths without a live proxy or a real config file.
+	findProxy func(context.Context, *config.Config) (hostname string, port int, ok bool)
+	loadCfg   func() (*config.Config, error)
+	// loadToken resolves the admission credential. Tests inject it to avoid
+	// touching the real config directory.
+	loadToken func(*config.Config) string
+	// cached holds the resolved configuration for this client's lifetime.
+	// Re-reading per request is not free of consequence: loadConfig falls
+	// through to BackupInvalidConfig, which WRITES a backup file when the
+	// config fails to parse, so a command issuing several requests against a
+	// broken config would litter backups and repeat the warning each time.
+	// state is a POINTER so the client stays copyable. Every dispatcher passes
+	// runtimeAPI by value, and embedding a sync.Once or sync.Mutex directly
+	// would make `go vet` reject each of those copies.
+	state *runtimeState
+}
+
+// runtimeState holds the lazily resolved configuration shared by copies of a
+// client. `system status` fans its reads out across goroutines sharing one
+// client, so this has to be synchronized.
+type runtimeState struct {
+	once   sync.Once
+	cached *config.Config
+}
+
+func (api runtimeAPI) client() *http.Client {
+	if api.Client != nil {
+		return api.Client
+	}
+	return http.DefaultClient
+}
+
+// configuration resolves and memoizes the config for this client.
+//
+// The lock is not decoration: `system status` fans the six status reads out
+// across goroutines sharing one client, so an unguarded lazy field is a real
+// data race on the very first request. sync.Once rather than a plain mutex
+// because the load itself must happen exactly once — loadConfig can WRITE a
+// backup file when the config fails to parse, and racing loaders would write
+// several.
+func (api *runtimeAPI) configuration() *config.Config {
+	state := api.state
+	if state == nil {
+		// A client built as a bare literal has no shared state. Lazily
+		// assigning one here would itself be the race the pointer exists to
+		// avoid, because every goroutine in a fan-out holds its own copy of
+		// the struct. Resolve into a throwaway instead, and let
+		// newRuntimeAPI's callers get the shared, once-only behavior.
+		state = &runtimeState{}
+	}
+	state.once.Do(func() {
+		load := api.loadCfg
+		if load == nil {
+			load = func() (*config.Config, error) {
+				cfg, _, err := loadConfig()
+				return cfg, err
+			}
+		}
+		cfg, err := load()
+		if err != nil || cfg == nil {
+			cfg = &config.Config{}
+		}
+		state.cached = cfg
+	})
+	return state.cached
+}
+
+// managementToken resolves the admission credential the proxy expects.
+//
+// The order is the one the rest of this CLI already uses (status.go,
+// service.go): environment variable, then the service token file, then the
+// configured value. A managed service is started with its token in
+// `service-api-token` and never in the config, so reading only the config
+// makes every management command 401 against exactly the deployment most
+// likely to be running.
+func (api *runtimeAPI) managementToken(cfg *config.Config) string {
+	if api.loadToken != nil {
+		return strings.TrimSpace(api.loadToken(cfg))
+	}
+	tokenFile := ""
+	if dir, err := configDir(); err == nil {
+		tokenFile = filepath.Join(dir, "service-api-token")
+	}
+	if token, err := platform.LoadServiceToken(os.Getenv("OPENCODEX_API_AUTH_TOKEN"), tokenFile); err == nil && token != "" {
+		return token
+	}
+	if cfg == nil {
+		return ""
+	}
+	// The server resolves environment indirection through ResolveEnvValue
+	// before comparing (serve.go via config.ResolveEnvironment), so the client
+	// must use the SAME resolver. A hand-rolled `$NAME` strip silently misses
+	// the braced `${NAME}` form and sends the literal text, which 401s.
+	return strings.TrimSpace(config.ResolveEnvValue(strings.TrimSpace(cfg.AuthToken)))
+}
+
+// managementHeaders builds the headers for a management request.
+//
+// The oracle's runningProxyUpdateHeaders always sets Content-Type and adds the
+// admission credential when one is configured. Omitting the credential is not a
+// harmless default: the proxy answers /api/* with 401, so every ported command
+// would fail against a protected proxy.
+//
+// http.Header is used rather than a plain map so caller overrides match
+// case-insensitively. With a map, a caller passing `content-type` would leave
+// the default `Content-Type` entry in place and random map iteration would
+// decide which one won.
+func (api *runtimeAPI) managementHeaders(cfg *config.Config) http.Header {
+	headers := http.Header{}
+	headers.Set("Content-Type", "application/json")
+	if token := api.managementToken(cfg); token != "" {
+		headers.Set("X-OpenCodex-API-Key", token)
+	}
+	for key, value := range api.Headers {
+		headers.Set(key, value)
+	}
+	return headers
+}
+
+// runtimeBaseURL resolves the management base URL, preferring an explicit
+// override and otherwise locating the running proxy by identity-checked lookup.
+func (api *runtimeAPI) runtimeBaseURL(ctx context.Context, cfg *config.Config) (string, error) {
+	if strings.TrimSpace(api.BaseURL) != "" {
+		return strings.TrimRight(api.BaseURL, "/"), nil
+	}
+	find := api.findProxy
+	if find == nil {
+		find = func(lookupCtx context.Context, configuration *config.Config) (string, int, bool) {
+			live := findLiveProxy(lookupCtx, configuration)
+			if live == nil {
+				return "", 0, false
+			}
+			return live.Hostname, live.Port, true
+		}
+	}
+	hostname, port, ok := find(ctx, cfg)
+	if !ok || port <= 0 {
+		return "", &RuntimeAPIError{
+			Message: "Proxy is not running. Start it with: ocx start",
+			Status:  http.StatusServiceUnavailable,
+		}
+	}
+	return fmt.Sprintf("http://%s:%d", server.ProbeHostname(hostname), port), nil
+}
+
+// truncateLikeJS caps a string at 400 JavaScript string units.
+//
+// The oracle uses String.prototype.slice, which counts UTF-16 code units, so a
+// byte-based cut would truncate multi-byte text far earlier.
+//
+// The cut is deliberately pulled back to a whole-rune boundary. Slicing exactly
+// at the limit can land between the two halves of a surrogate pair; JavaScript
+// keeps the lone high surrogate, but Go has no way to carry one in a valid
+// string, and utf16.Decode would turn it into U+FFFD. Emitting a replacement
+// character invents content the server never sent, so the half-character is
+// dropped instead. The result is at most one code unit shorter than the
+// oracle's and never contains a substituted glyph.
+func truncateLikeJS(value string, limit int) string {
+	units := utf16.Encode([]rune(value))
+	if len(units) <= limit {
+		return value
+	}
+	cut := limit
+	if utf16.IsSurrogate(rune(units[cut-1])) && utf16.DecodeRune(rune(units[cut-1]), rune(units[cut])) != utf8.RuneError {
+		cut--
+	}
+	return string(utf16.Decode(units[:cut]))
+}
+
+// responseMessage extracts the most specific human-readable error the body
+// offers, matching the oracle's error/message/detail precedence.
+func responseMessage(body any, status int) string {
+	if record, ok := body.(map[string]any); ok {
+		for _, key := range []string{"error", "message", "detail"} {
+			if text, ok := record[key].(string); ok && text != "" {
+				return text
+			}
+		}
+	}
+	if text, ok := body.(string); ok && strings.TrimSpace(text) != "" {
+		return truncateLikeJS(strings.TrimSpace(text), 400)
+	}
+	return fmt.Sprintf("Management request failed (%d)", status)
+}
+
+// decodeBody keeps a non-JSON payload as a string rather than discarding it, so
+// an HTML error page or a plain-text proxy failure still reaches the user. Only
+// a genuinely empty body decodes to nil; whitespace is content, exactly as
+// JSON.parse(" ") throwing leaves the oracle holding " ".
+func decodeBody(raw []byte) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	// UseNumber first, then convert: plain Unmarshal rejects a literal beyond
+	// float64 range, but JSON.parse accepts 1e400 as Infinity. Failing here
+	// would treat a valid body as raw text and drop every row in it.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded any
+	if decoder.Decode(&decoded) != nil {
+		return string(raw)
+	}
+	// JSON.parse throws on trailing content, and the oracle then keeps the body
+	// as raw text. Accepting the first value would hide a malformed response and
+	// swap a useful error message for a generic one.
+	if _, err := decoder.Token(); err != io.EOF {
+		return string(raw)
+	}
+	return convertJSONNumbers(decoded)
+}
+
+// convertJSONNumbers turns json.Number into float64 the way JSON.parse does,
+// mapping an out-of-range literal to infinity rather than an error.
+func convertJSONNumbers(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		number, err := strconv.ParseFloat(typed.String(), 64)
+		if err != nil {
+			if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+				return number
+			}
+			return typed.String()
+		}
+		return number
+	case map[string]any:
+		for key, child := range typed {
+			typed[key] = convertJSONNumbers(child)
+		}
+		return typed
+	case []any:
+		for index, child := range typed {
+			typed[index] = convertJSONNumbers(child)
+		}
+		return typed
+	default:
+		return value
+	}
+}
+
+// request performs a management call and decodes the JSON body.
+func (api *runtimeAPI) request(ctx context.Context, method, path string, payload any) (any, error) {
+	decoded, _, err := api.requestWithRaw(ctx, method, path, payload)
+	return decoded, err
+}
+
+// requestWithRaw also returns the untouched response bytes.
+//
+// Callers that must reproduce JSON.stringify byte-for-byte need them: a decoded
+// map has no key order, so re-marshalling sorts the keys and diverges from the
+// oracle, which preserves parse order.
+func (api *runtimeAPI) requestWithRaw(ctx context.Context, method, path string, payload any) (any, []byte, error) {
+	cfg := api.configuration()
+	baseURL, err := api.runtimeBaseURL(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	var body io.Reader
+	if payload != nil {
+		encoded, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			return nil, nil, marshalErr
+		}
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, baseURL+path, body)
+	if err != nil {
+		return nil, nil, err
+	}
+	for key, values := range api.managementHeaders(cfg) {
+		for _, value := range values {
+			request.Header.Set(key, value)
+		}
+	}
+	response, err := api.client().Do(request)
+	if err != nil {
+		return nil, nil, &RuntimeAPIError{
+			Message: fmt.Sprintf("Management API is unreachable: %v", err),
+			Status:  http.StatusServiceUnavailable,
+		}
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	decoded := decodeBody(raw)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, nil, &RuntimeAPIError{
+			Message: responseMessage(decoded, response.StatusCode),
+			Status:  response.StatusCode,
+			Body:    decoded,
+		}
+	}
+	return decoded, raw, nil
+}
+
+// newRuntimeAPI builds a client whose lazily resolved configuration is shared
+// by every copy of it.
+//
+// The zero value works too, but each copy would then resolve its own config,
+// and `system status` copies the client into six goroutines. Constructing the
+// shared state up front means the config is read once, which matters because
+// loadConfig can write a backup file for an unparseable config.
+func newRuntimeAPI() runtimeAPI {
+	return runtimeAPI{state: &runtimeState{}}
+}

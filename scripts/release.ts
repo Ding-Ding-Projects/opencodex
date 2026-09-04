@@ -230,7 +230,7 @@ await runRequired(["bun", "test", "--isolate", "tests"], "test suite");
 console.log("→ privacy scan");
 await runRequired(["bun", "run", "privacy:scan"], "privacy scan");
 
-// 2. Bump package.json only; the workflow creates the version tag after npm publish.
+// 2. Bump package.json and regenerate the versioned embedded GUI; the workflow creates the version tag after npm publish.
 console.log(`→ bump package.json → ${version}`);
 await runRequired(["npm", "version", version, "--no-git-tag-version"]);
 

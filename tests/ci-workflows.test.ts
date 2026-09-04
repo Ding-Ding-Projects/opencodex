@@ -146,6 +146,10 @@ describe("GitHub Actions hardening", () => {
       ".npmignore",
       "bin/**",
       "bun.lock",
+      // go-ci.yml has no pull_request trigger, so this filter is the ONLY
+      // pull-request coverage for Go changes. Dropping it would let a Go-only
+      // PR merge with no cross-platform run at all.
+      "go/**",
       "gui/**",
       "package.json",
       "scripts/**",
@@ -423,18 +427,18 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).not.toContain("--generate-notes");
     // Notes must be assembled before tagging so a notes API failure does not leave
     // a remote tag that blocks release retries at preflight.
-    const createStep = workflow.split("- name: Create GitHub release")[1]!.split(/\n {6}- name:/)[0]!;
+    const createStep = workflow.split("- name: Create/reconcile GitHub release")[1]!.split(/\n {6}- name:/)[0]!;
+    const notesAssembly = createStep.split('upload_root=')[0]!;
     // Preview carry lookup must use tag-specific API status, not `gh release view` stderr prose.
-    expect(createStep).toContain("releases/tags/");
-    expect(createStep).not.toContain("gh release view");
+    expect(notesAssembly).toContain("releases/tags/");
+    expect(notesAssembly).not.toContain("gh release view");
     // Fail closed: no soft-skip in any spelling around gh api calls in this step.
     for (const line of createStep.split("\n").filter(l => l.includes("gh api"))) {
       expect(line).not.toMatch(/\|\|\s*(true|echo|:)/);
     }
     expect(createStep).not.toContain("set +e\n            pr_notes");
     expect(createStep.indexOf("gh api")).toBeGreaterThan(-1);
-    expect(createStep.indexOf('git tag "$release_tag"')).toBeGreaterThan(-1);
-    expect(createStep.indexOf("gh api")).toBeLessThan(createStep.indexOf('git tag "$release_tag"'));
+    expect(createStep.indexOf("bun scripts/reconcile-release-assets.ts")).toBeGreaterThan(createStep.indexOf("gh api"));
     // First-channel releases must not call generate-notes without an explicit baseline
     // (GitHub would otherwise pick the newest repo tag, possibly from the other channel).
     // Scope to the single if-block that owns generate-notes; createStep has two
@@ -1964,6 +1968,185 @@ describe("GitHub Actions hardening", () => {
     expect(draftCallIndex).toBeGreaterThan(-1);
     expect(pendingWriteIndex).toBeLessThan(draftCallIndex);
     expect(afterDraftWriteIndex).toBeGreaterThan(draftCallIndex);
+  });
+
+  test("release workflow retains one exact archive and isolates every mutation from dry-run", async () => {
+    const workflow = await readText(".github/workflows/release.yml");
+
+    expect(workflow).toMatch(/expected-sha:[\s\S]*?required: true/);
+    expect(workflow).toContain('echo "::error::expected-sha is required"');
+    expect(workflow).toContain('if [ -z "$EXPECTED_SHA" ]; then');
+    expect(workflow).toMatch(
+      /permissions:\n  contents: write[^\n]*\n  actions: read[^\n]*\n  id-token: write[^\n]*/,
+    );
+    expect(workflow).not.toContain("secrets.NPM_TOKEN");
+    expect(workflow).not.toContain("NODE_AUTH_TOKEN:");
+
+    const setupGo = workflowStep(workflow, /^Setup Go$/);
+    expect(setupGo).toContain("actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e");
+    expect(setupGo).toContain("cache-dependency-path: go/go.sum");
+
+    expect(count(workflow, "npm pack --json")).toBe(1);
+    const build = workflowStep(workflow, /^Build and retain exact release archive$/);
+    const publish = workflowStep(workflow, /^Publish exact tarball$/);
+    const smoke = workflowStep(workflow, /^Post-publish registry smoke$/);
+    const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
+
+    expect(build).toContain("npm run build:publish");
+    expect(build).toContain("npm pack --json > pack.json");
+    expect(build).not.toContain("npm pack --json --ignore-scripts");
+    expect(build).toContain("npm run verify:native-package");
+    expect(build).toContain("npm run verify:native-install");
+    expect(build).toContain("bun scripts/prepare-release-assets.ts");
+    expect(build).toContain("prepare");
+    expect(build).toContain("TARBALL_SHA256");
+    expect(build).toContain("RELEASE_NATIVE_DIR");
+    for (const mutator of ["npm publish", "git tag", "git push", "gh release create", "gh release upload"]) {
+      expect(build).not.toContain(mutator);
+    }
+
+    for (const guarded of [publish, smoke, release]) {
+      expect(guarded).toContain("if: ${{ inputs.dry-run != true }}");
+    }
+    for (const step of workflow.split(/\n {6,}- name: /).slice(1)) {
+      if (/npm publish|git tag "\$release_tag"|git push origin|gh release (?:create|upload)/.test(step)) {
+        expect(step).toContain("if: ${{ inputs.dry-run != true }}");
+      }
+    }
+    expect(publish).toMatch(
+      /prepare-release-assets\.ts verify[\s\S]*?npm publish "\$TARBALL" --ignore-scripts/,
+    );
+
+    const buildAt = workflow.indexOf("Build and retain exact release archive");
+    const helperAt = workflow.indexOf("bun scripts/prepare-release-assets.ts", buildAt);
+    const publishAt = workflow.indexOf("Publish exact tarball");
+    const releaseAt = workflow.search(/Create(?:\/reconcile)? GitHub release/);
+    expect(buildAt).toBeGreaterThan(-1);
+    expect(helperAt).toBeGreaterThan(buildAt);
+    expect(publishAt).toBeGreaterThan(helperAt);
+    expect(releaseAt).toBeGreaterThan(publishAt);
+  });
+
+  test("release workflow classifies exact retries only after immutable identities exist", async () => {
+    const workflow = await readText(".github/workflows/release.yml");
+    const classify = workflowStep(workflow, /^Classify exact release retry state$/);
+    const smoke = workflowStep(workflow, /^Post-publish registry smoke$/);
+    const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
+
+    expect(classify).toContain("pack.json");
+    expect(classify).toContain("dist.integrity");
+    expect(classify).toContain("dist-tag");
+    expect(classify).toContain("NPM_RELEASE_STATE");
+    expect(classify).toContain("NPM_EXPECTED_INTEGRITY");
+    expect(classify).toContain("GITHUB_RELEASE_CANDIDATE");
+    expect(classify).not.toContain("GITHUB_RELEASE_STATE=exact");
+    expect(classify).toContain("GITHUB_SHA");
+
+    const notesAt = release.indexOf('notes_file=');
+    const reconcileAt = release.indexOf("bun scripts/reconcile-release-assets.ts");
+    expect(notesAt).toBeGreaterThan(-1);
+    expect(reconcileAt).toBeGreaterThan(notesAt);
+    expect(release).not.toContain("gh release create");
+    expect(release).not.toContain("gh release upload");
+    expect(release).not.toContain("git push origin");
+    expect(release).toContain('--archive-sha256 "$TARBALL_SHA256"');
+    expect(release).toContain('--native-dir "$upload_native_dir"');
+    expect(release).toContain('--npm-tag "$NPM_DIST_TAG"');
+    expect(release).toContain('--npm-integrity "$NPM_EXPECTED_INTEGRITY"');
+
+    expect(smoke).toContain("NPM_DIST_TAG: ${{ inputs.tag }}");
+    expect(smoke).toContain('dist.integrity');
+    expect(smoke).toContain('"dist-tags.${NPM_DIST_TAG}"');
+    expect(smoke).toContain('"$remote_integrity" != "$NPM_EXPECTED_INTEGRITY"');
+    expect(smoke).toContain('"$tagged_version" = "$RELEASE_VERSION"');
+  });
+
+  test("GitHub release assets are exactly the six binaries and checksum manifest", async () => {
+    const workflow = await readText(".github/workflows/release.yml");
+    const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
+    const reconciler = await readText("scripts/reconcile-release-assets.ts");
+    expect(reconciler).toContain("const names = [...nativeArtifactNames(version), `ocx_${version}_checksums.txt`]");
+    expect(reconciler).toContain("return Promise.all(names.map(async name =>");
+    expect(release).toContain("reconcile-release-assets.ts");
+    expect(reconciler).toContain('"--verify-tag"');
+    expect(reconciler).toContain('"--draft=false"');
+    expect(reconciler).not.toContain('"--clobber"');
+    expect(reconciler).toContain('"--method", "DELETE"');
+    expect(reconciler).toContain("downloadAsset");
+  });
+
+  test("dev2-go changes activate both package and Go release ownership gates", async () => {
+    const ci = await readText(".github/workflows/ci.yml");
+    const goCi = await readText(".github/workflows/go-ci.yml");
+
+    // dev2-go is covered on push by go-ci.yml, not by cross-platform ci.yml.
+    // Upstream deliberately keeps ci.yml's push trigger to the release-promotion
+    // branches (main, preview, dev) and pins that list in
+    // "PR checks reach every branch the target gate accepts". dev2-go still gets
+    // cross-platform coverage through ci.yml's pull_request trigger, which does
+    // list it, so an accepted PR is still a checked one.
+    expect(ci).toMatch(/pull_request:[\s\S]*?branches: \[main, dev, dev2-go\]/);
+    expect(ci).toMatch(/push:[\s\S]*?branches: \[main, preview, dev\]/);
+    expect(ci).toContain("npm run verify:native-install");
+    expect(goCi).toMatch(/push:[\s\S]*?branches: \[dev2-go, main, preview\]/);
+    expect(count(goCi, "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6")).toBe(3);
+    expect(count(goCi, "bun-version: 1.3.14")).toBe(3);
+    for (const [job, nextJob] of [
+      ["build-and-test", "cross-compile"],
+      ["cross-compile", "e2e"],
+      ["e2e", undefined],
+    ] as const) {
+      const tail = goCi.split(`\n  ${job}:\n`)[1]!;
+      const block = nextJob ? tail.split(`\n  ${nextJob}:\n`)[0]! : tail;
+      expect(block).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
+      expect(block).toContain("bun-version: 1.3.14");
+    }
+
+    for (const path of [
+      '"bin/**"',
+      '"src/update/job.ts"',
+      '"scripts/build-go-release.go"',
+      '"scripts/prepare-package.ts"',
+      '"scripts/prepare-release-assets.ts"',
+      '"scripts/reconcile-release-assets.ts"',
+      '"scripts/ocx-native-launcher.test.mjs"',
+      '"scripts/verify-native-install.mjs"',
+      '"package.json"',
+      '"bun.lock"',
+      '".github/workflows/ci.yml"',
+      '".github/workflows/release.yml"',
+    ]) {
+      expect(goCi).toContain(path);
+    }
+    expect(goCi).toContain("Verify six native release names without publishing");
+    expect(goCi).toContain('version="0.0.0-preview.0"');
+    expect(goCi).toContain("--dry-run");
+    expect(goCi).toContain("grep -c -- ' -> '");
+    for (const suffix of [
+      "darwin_amd64",
+      "darwin_arm64",
+      "linux_amd64",
+      "linux_arm64",
+      "windows_amd64.exe",
+      "windows_arm64.exe",
+    ]) {
+      expect(goCi).toContain(suffix);
+    }
+  });
+
+  test("all governing workflow actions remain immutable SHA pins", async () => {
+    for (const path of [
+      ".github/workflows/ci.yml",
+      ".github/workflows/go-ci.yml",
+      ".github/workflows/release.yml",
+    ]) {
+      const workflow = await readText(path);
+      const refs = [...workflow.matchAll(/^\s*(?:-\s+)?uses:\s+([^\s#]+)/gm)].map(match => match[1]!);
+      expect(refs.length).toBeGreaterThan(0);
+      for (const ref of refs) {
+        expect(ref).toMatch(/@[0-9a-f]{40}$/);
+      }
+    }
   });
 
   test("docs deployment is pinned, bounded, and scoped to Pages", async () => {

@@ -1,0 +1,144 @@
+name: Go CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev2-go, main, preview]
+    paths:
+      - "go/**"
+      - "bin/**"
+      - "src/update/job.ts"
+      - "gui/**"
+      - "scripts/embed-gui.ts"
+      - "scripts/build-go-release.go"
+      - "scripts/prepare-package.ts"
+      - "scripts/prepare-release-assets.ts"
+      - "scripts/reconcile-release-assets.ts"
+      - "scripts/ocx-native-launcher.test.mjs"
+      - "scripts/verify-native-install.mjs"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/go-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build + Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      # The embedded GUI bundle is a committed copy of gitignored gui/dist, so nothing else
+      # in CI can notice when it goes stale. Building here is the whole point: the Go test
+      # that compares them skips when gui/dist is absent.
+      - name: Verify embedded GUI bundle
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: .
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/embed-gui.ts --check
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1 -timeout 120s
+
+      - name: Race detector
+        run: go test -race ./... -count=1 -timeout 180s
+        if: matrix.os != 'windows-latest'
+
+  cross-compile:
+    name: Cross-compile
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: windows/amd64
+        run: GOOS=windows GOARCH=amd64 go build ./...
+
+      - name: linux/amd64
+        run: GOOS=linux GOARCH=amd64 go build ./...
+
+      - name: darwin/arm64
+        run: GOOS=darwin GOARCH=arm64 go build ./...
+
+      - name: darwin/amd64
+        run: GOOS=darwin GOARCH=amd64 go build ./...
+
+      - name: linux/arm64
+        run: GOOS=linux GOARCH=arm64 go build ./...
+
+      - name: Verify six native release names without publishing
+        run: |
+          set -euo pipefail
+          version="0.0.0-preview.0"
+          output="$(go run ../scripts/build-go-release.go --version "$version" --dry-run)"
+          printf '%s\n' "$output"
+          test "$(printf '%s\n' "$output" | grep -c -- ' -> ')" -eq 6
+          for suffix in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64 windows_amd64.exe windows_arm64.exe; do
+            printf '%s\n' "$output" | grep -Fq -- "/ocx_${version}_${suffix}"
+          done
+
+  e2e:
+    name: E2E Integration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: E2E tests
+        run: go test ./test/e2e/... -v -count=1 -timeout 60s

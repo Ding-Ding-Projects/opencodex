@@ -114,6 +114,31 @@ function defaultRespond(url: string): Response {
   return new Response(null, { status: 404 });
 }
 
+// What the Go proxy actually serves: goVersion and goroutines, and none of the
+// JavaScriptCore-only fields. Labelling these numbers "JS heap" described a runtime
+// that is not there, and the JSC tile could only ever render an em dash.
+const GO_MEMORY_PAYLOAD = {
+  pid: 97438,
+  goVersion: "go1.26.4",
+  goroutines: 17,
+  platform: "darwin",
+  rss: 26_378_240,
+  heapUsed: 2_097_152,
+  heapTotal: 4_194_304,
+  responseState: { count: 0, totalBytes: 0, largestBytes: 0, oldestAgeMs: 0 },
+  watchdog: { samples: [] },
+};
+
+function goRespond(url: string): Response {
+  if (url.includes("/api/startup-health")) {
+    return Response.json({ protection: "service" });
+  }
+  if (url.includes("/api/system/memory")) {
+    return Response.json(GO_MEMORY_PAYLOAD);
+  }
+  return new Response(null, { status: 404 });
+}
+
 // The formatter stays module-private (exporting it breaks the react-refresh lint rule for
 // component files), so unit-scale coverage rides on the rendered card below — which is stronger
 // evidence anyway: it also proves the card fetches, mounts, and unmounts correctly.
@@ -130,6 +155,33 @@ test("a healthy payload renders the metrics with binary units", async () => {
   expect(text).not.toContain("1.5 KB");   // the mislabelled decimal unit must be gone
   expect(text).toContain("Drain & restart");
   expect(text).toContain("In-flight");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a Go payload is labelled as the Go runtime, not as JS", async () => {
+  const { root, container } = await mountCard(goRespond);
+
+  const text = container.textContent ?? "";
+  expect(text).toContain("Go heap (used / total)");
+  expect(text).not.toContain("JS heap");
+  // The JSC tile cannot apply here; goroutines are what the Go handler sends instead.
+  expect(text).not.toContain("JSC heap");
+  expect(text).toContain("Goroutines");
+  expect(text).toContain("17");
+  expect(text).toContain("25.2 MiB"); // rss, now real residency
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a Bun payload keeps the JS runtime labels", async () => {
+  const { root, container } = await mountCard(defaultRespond);
+
+  const text = container.textContent ?? "";
+  expect(text).toContain("JS heap (used / total)");
+  expect(text).toContain("JSC heap");
+  expect(text).not.toContain("Go heap");
+  expect(text).not.toContain("Goroutines");
 
   await act(async () => { root.unmount(); });
 });

@@ -1,0 +1,785 @@
+package bridge
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/lib"
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+// Event is one OpenAI Responses protocol event.
+type Event struct {
+	Type string         `json:"type"`
+	Data map[string]any `json:"-"`
+}
+
+// Response is the buffered form of a bridged Responses stream.
+type Response struct {
+	ID                string           `json:"id"`
+	Object            string           `json:"object"`
+	CreatedAt         int64            `json:"created_at"`
+	Status            string           `json:"status"`
+	Model             string           `json:"model"`
+	Output            []map[string]any `json:"output"`
+	Usage             map[string]any   `json:"usage"`
+	Error             map[string]any   `json:"error,omitempty"`
+	LastError         map[string]any   `json:"last_error,omitempty"`
+	Retryable         bool             `json:"retryable,omitempty"`
+	IncompleteDetails map[string]any   `json:"incomplete_details,omitempty"`
+}
+
+// UpstreamStallError distinguishes bridge-owned stall cancellation from caller cancellation.
+var UpstreamStallError = errors.New("upstream stall timeout")
+
+type machine struct {
+	response          Response
+	sequence          int
+	current           *openItem
+	terminal          bool
+	usage             *types.Usage
+	pendingSignature  string
+	pendingRedacted   []string
+	pendingWebSources []types.URLCitation
+	onUsage           func(*types.Usage)
+	usageReported     bool
+	freeformTools     map[string]struct{}
+	toolSearchTools   map[string]struct{}
+	toolNamespaces    map[string]NamespacedTool
+}
+
+// NamespacedTool restores an MCP tool's identity on the way back to the client: the model
+// only ever sees the flattened "<namespace>__<name>" wire name.
+type NamespacedTool struct {
+	Namespace string
+	Name      string
+}
+
+func (m *machine) isFreeform(name string) bool {
+	_, ok := m.freeformTools[name]
+	return ok
+}
+
+func (m *machine) isToolSearch(name string) bool {
+	_, ok := m.toolSearchTools[name]
+	return ok
+}
+
+type openItem struct {
+	kind, id, callID, name string
+	phase                  string
+	index                  int
+	text                   strings.Builder
+	status                 string
+	queries                []string
+	sources                []types.URLCitation
+	// freeform marks a call the client declared as a custom tool (apply_patch). It must
+	// go back as a custom_tool_call; Codex's freeform handler rejects a function_call for
+	// such a tool and aborts the turn with no visible error.
+	freeform bool
+	// inputEmitted is the freeform input already streamed, so deltas stay incremental.
+	inputEmitted string
+	// toolSearch marks a client-executed tool-discovery call, which relays as a
+	// tool_search_call and carries no argument events.
+	toolSearch bool
+	// namespace is the MCP namespace the wire name was flattened from, restored on the
+	// relayed function_call because Codex routes MCP calls by this field, not by the name.
+	namespace string
+}
+
+// StreamOptions supplies terminal usage recording metadata without coupling the
+// bridge to a concrete persistence implementation.
+type StreamOptions struct {
+	StallTimeout    time.Duration
+	StallTimeoutSec *float64
+	OnCancel        func()
+	Recorder        types.UsageRecorder
+	Record          *types.UsageRecord
+	// OnUsage receives raw adapter usage before strict-client wire normalization.
+	OnUsage func(*types.Usage)
+	// BeforeRecord adjusts the record just before it is written, for callers
+	// whose route identity can change while the turn runs.
+	BeforeRecord func(*types.UsageRecord)
+	// OnFirstEvent fires once response.created has been written, so a caller
+	// can hold back work that must not start before the client sees the
+	// stream open.
+	OnFirstEvent func()
+	// FreeformTools names the tools the client declared as custom (freeform) tools.
+	// Calls to them relay back as custom_tool_call items.
+	FreeformTools []string
+	// ToolSearchTools names the tools the client declared as tool_search tools.
+	ToolSearchTools []string
+	// ToolNamespaces maps a flattened "<namespace>__<name>" wire name back to its parts.
+	ToolNamespaces map[string]NamespacedTool
+}
+
+// ConvertOptions supplies callbacks for buffered bridge conversion.
+type ConvertOptions struct {
+	// OnUsage receives raw adapter usage before strict-client wire normalization.
+	OnUsage func(*types.Usage)
+	// FreeformTools names the tools the client declared as custom (freeform) tools.
+	// Calls to them relay back as custom_tool_call items.
+	FreeformTools []string
+	// ToolSearchTools names the tools the client declared as tool_search tools.
+	ToolSearchTools []string
+	// ToolNamespaces maps a flattened "<namespace>__<name>" wire name back to its parts.
+	ToolNamespaces map[string]NamespacedTool
+}
+
+// Convert consumes adapter events and returns ordered Responses events and the final response.
+func Convert(model string, events []types.AdapterEvent) ([]Event, Response) {
+	return ConvertWithOptions(model, events, ConvertOptions{})
+}
+
+// ConvertWithOptions consumes buffered adapter events and reports raw terminal usage.
+func ConvertWithOptions(model string, events []types.AdapterEvent, options ConvertOptions) ([]Event, Response) {
+	m := newMachineWithUsage(model, options.OnUsage)
+	m.freeformTools, m.toolSearchTools, m.toolNamespaces = toolNameSet(options.FreeformTools), toolNameSet(options.ToolSearchTools), options.ToolNamespaces
+	out := []Event{m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})}
+	for _, event := range events {
+		out = append(out, m.accept(event)...)
+	}
+	if !m.terminal {
+		out = append(out, m.finishIncomplete("adapter_eof", "adapter stream ended without terminal event")...)
+	}
+	return out, m.response
+}
+
+// Stream converts an adapter channel to SSE. It always emits one protocol terminal and [DONE].
+func Stream(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent) error {
+	return StreamWithOptions(ctx, w, model, events, StreamOptions{})
+}
+
+// StreamWithOptions converts an adapter channel to SSE and records provider
+// usage after the protocol terminal has been emitted.
+func StreamWithOptions(ctx context.Context, w io.Writer, model string, events <-chan types.AdapterEvent, options StreamOptions) error {
+	m := newMachineWithUsage(model, options.OnUsage)
+	m.freeformTools, m.toolSearchTools, m.toolNamespaces = toolNameSet(options.FreeformTools), toolNameSet(options.ToolSearchTools), options.ToolNamespaces
+	if err := writeSSE(w, m.emit("response.created", map[string]any{"response": m.snapshot("in_progress")})); err != nil {
+		return err
+	}
+	if options.OnFirstEvent != nil {
+		options.OnFirstEvent()
+	}
+	stallTimeout := resolveStallTimeout(options)
+	stallCh := make(chan uint64, 1)
+	var stallGeneration uint64 = 1
+	stallTimer := time.AfterFunc(stallTimeout, func() {
+		select {
+		case stallCh <- 1:
+		default:
+		}
+	})
+	defer func() { stallTimer.Stop() }()
+	resetStallTimer := func() {
+		stallTimer.Stop()
+		stallGeneration++
+		generation := stallGeneration
+		stallTimer = time.AfterFunc(stallTimeout, func() {
+			select {
+			case stallCh <- generation:
+			default:
+			}
+		})
+	}
+	for !m.terminal {
+		select {
+		case <-ctx.Done():
+			for _, event := range m.finish("incomplete", ctx.Err().Error()) {
+				if err := writeSSE(w, event); err != nil {
+					return err
+				}
+			}
+		case event, ok := <-events:
+			if !ok {
+				for _, tail := range m.finishIncomplete("adapter_eof", "adapter stream ended without terminal event") {
+					if err := writeSSE(w, tail); err != nil {
+						return err
+					}
+				}
+				break
+			}
+			resetStallTimer()
+			for _, bridged := range m.accept(event) {
+				if err := writeSSE(w, bridged); err != nil {
+					return err
+				}
+			}
+		case generation := <-stallCh:
+			if generation != stallGeneration {
+				resetStallTimer()
+				continue
+			}
+			for _, tail := range m.finishIncomplete("upstream_stall_timeout", UpstreamStallError.Error()) {
+				if err := writeSSE(w, tail); err != nil {
+					return err
+				}
+			}
+			if options.OnCancel != nil {
+				options.OnCancel()
+			}
+		}
+	}
+	_, err := io.WriteString(w, "data: [DONE]\n\n")
+	if err == nil {
+		recordStreamUsage(ctx, m, options)
+	}
+	return err
+}
+
+func recordStreamUsage(ctx context.Context, m *machine, options StreamOptions) {
+	if options.Recorder == nil || options.Record == nil || m.usage == nil {
+		return
+	}
+	record := *options.Record
+	record.Usage = *m.usage
+	record.Duration = time.Since(record.StartedAt)
+	switch {
+	case errors.Is(context.Cause(ctx), UpstreamStallError):
+		record.Status = types.OutcomeProviderError
+	case ctx.Err() != nil:
+		record.Status = types.OutcomeCancelled
+	case m.response.Status == "completed":
+		record.Status = types.OutcomeSuccess
+	case m.response.Status == "incomplete":
+		record.Status = types.OutcomeProviderError
+	default:
+		record.Status = types.OutcomeProviderError
+	}
+	// Last, so the callback sees the FINAL usage, duration and status. A
+	// caller rebinding route identity after a mid-turn failover needs to be
+	// able to inspect what it is correcting.
+	if options.BeforeRecord != nil {
+		options.BeforeRecord(&record)
+	}
+	_ = options.Recorder.Record(context.WithoutCancel(ctx), &record)
+}
+
+// Buffered consumes an adapter channel and returns the JSON response representation.
+func Buffered(ctx context.Context, model string, events <-chan types.AdapterEvent) (Response, error) {
+	collected := make([]types.AdapterEvent, 0, 16)
+	for {
+		select {
+		case <-ctx.Done():
+			return Response{}, ctx.Err()
+		case event, ok := <-events:
+			if !ok {
+				_, response := Convert(model, collected)
+				return response, nil
+			}
+			collected = append(collected, event)
+			if event.Type == types.EventDone || event.Type == types.EventError || event.Type == types.EventIncomplete {
+				_, response := Convert(model, collected)
+				return response, nil
+			}
+		}
+	}
+}
+
+func newMachine(model string) *machine {
+	return newMachineWithUsage(model, nil)
+}
+
+func newMachineWithUsage(model string, onUsage func(*types.Usage)) *machine {
+	return &machine{
+		response: Response{ID: "resp_" + randomID(), Object: "response", CreatedAt: time.Now().Unix(), Status: "in_progress", Model: responseModelID(model), Output: []map[string]any{}, Usage: nil},
+		onUsage:  onUsage,
+	}
+}
+
+func responseModelID(model string) string {
+	model = strings.TrimSpace(model)
+	if slash := strings.IndexByte(model, '/'); slash >= 0 && slash+1 < len(model) {
+		return model[slash+1:]
+	}
+	return model
+}
+
+func (m *machine) accept(event types.AdapterEvent) []Event {
+	if m.terminal {
+		return nil
+	}
+	var out []Event
+	switch event.Type {
+	case types.EventTextDelta:
+		if m.current != nil && m.current.kind == "message" && m.current.phase != event.Phase {
+			out = append(out, m.closeCurrent()...)
+		}
+		out = append(out, m.ensureItem("message", "msg_")...)
+		m.current.phase = event.Phase
+		m.current.text.WriteString(event.Text)
+		out = append(out, m.emit("response.output_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "delta": event.Text}))
+	case types.EventReasoning:
+		out = append(out, m.ensureItem("reasoning", "rs_")...)
+		delta := event.Reasoning
+		if delta == "" {
+			delta = event.Text
+		}
+		m.current.text.WriteString(delta)
+		out = append(out, m.emit("response.reasoning_summary_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "summary_index": 0, "delta": delta}))
+	case types.EventThinkingDelta:
+		out = append(out, m.ensureItem("reasoning", "rs_")...)
+		delta := event.Reasoning
+		if delta == "" {
+			delta = event.Text
+		}
+		m.current.text.WriteString(delta)
+		out = append(out, m.emit("response.reasoning_summary_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "summary_index": 0, "delta": delta}))
+	case types.EventThinkingSignature:
+		m.pendingSignature = event.Signature
+	case types.EventRedactedThinking:
+		m.pendingRedacted = append(m.pendingRedacted, event.Data)
+	case types.EventReasoningRawDelta:
+		out = append(out, m.ensureItem("raw_reasoning", "rs_")...)
+		m.current.text.WriteString(event.Text)
+		out = append(out, m.emit("response.reasoning_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "delta": event.Text}))
+	case types.EventToolCallStart:
+		out = append(out, m.closeCurrent()...)
+		callID := event.ID
+		if callID == "" {
+			callID = "call_" + randomID()
+		}
+		m.current = m.newToolItem(callID, event.Name)
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": m.current.openToolItem()}))
+	case types.EventToolCallDelta:
+		if m.current != nil && m.current.kind == "tool" {
+			m.current.text.WriteString(event.Arguments)
+			out = append(out, m.toolArgumentDelta(event.Arguments)...)
+		}
+	case types.EventToolCallEnd:
+		out = append(out, m.closeCurrent()...)
+	case types.EventWebSearchCallBegin:
+		out = append(out, m.closeCurrent()...)
+		m.current = &openItem{kind: "web_search", id: "ws_" + randomID(), callID: event.ID, index: len(m.response.Output), status: "in_progress"}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": map[string]any{"type": "web_search_call", "id": m.current.id, "status": "in_progress"}}))
+	case types.EventWebSearchCallEnd:
+		if m.current == nil || m.current.kind != "web_search" || m.current.callID != event.ID {
+			out = append(out, m.closeCurrent()...)
+			m.current = &openItem{kind: "web_search", id: "ws_" + randomID(), callID: event.ID, index: len(m.response.Output), status: "in_progress"}
+			out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": map[string]any{"type": "web_search_call", "id": m.current.id, "status": "in_progress"}}))
+		}
+		m.current.status, m.current.queries, m.current.sources = event.WebSearchStatus, append([]string(nil), event.Queries...), append([]types.URLCitation(nil), event.Sources...)
+		if m.current.status == "" {
+			m.current.status = "completed"
+		}
+		out = append(out, m.closeCurrent()...)
+		m.addPendingSources(event.Sources)
+	case types.EventToolCall:
+		if event.ToolCall == nil {
+			break
+		}
+		callID := event.ToolCall.ID
+		if callID == "" {
+			callID = "call_" + randomID()
+		}
+		if m.current == nil || m.current.kind != "tool" || m.current.callID != callID {
+			out = append(out, m.closeCurrent()...)
+			m.current = m.newToolItem(callID, event.ToolCall.Name)
+			out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": m.current.openToolItem()}))
+		}
+		chunk := string(event.ToolCall.Arguments)
+		m.current.text.WriteString(chunk)
+		out = append(out, m.toolArgumentDelta(chunk)...)
+	case types.EventUsage:
+		m.usage = cloneUsage(event.Usage)
+		m.response.Usage = usage(event.Usage)
+	case types.EventHeartbeat:
+		return nil
+	case types.EventAssistantBoundary:
+		out = append(out, m.closeCurrent()...)
+	case types.EventDone:
+		m.usage = cloneUsage(event.Usage)
+		m.response.Usage = usage(event.Usage)
+		if reason := doneIncompleteReason(event.StopReason); reason != "" {
+			out = append(out, m.finishIncomplete(reason, "")...)
+		} else {
+			out = append(out, m.finish("completed", "")...)
+		}
+	case types.EventError:
+		message := event.Error
+		if message == "" {
+			message = "provider error"
+		}
+		if event.Usage != nil {
+			m.usage = cloneUsage(event.Usage)
+			m.response.Usage = usage(event.Usage)
+		}
+		status := event.StatusCode
+		errorType := event.ErrorType
+		if status == 0 {
+			inferred := lib.AdapterFailureFromMessage(message)
+			status, errorType, message = inferred.HTTPStatus, inferred.Error.Type, inferred.Error.Message
+		}
+		failure := responseError(status, errorType, message)
+		out = append(out, m.finishFailure(failure, event.Retryable)...)
+	case types.EventIncomplete:
+		m.usage = cloneUsage(event.Usage)
+		m.response.Usage = usage(event.Usage)
+		out = append(out, m.finishIncomplete(event.Reason, event.Message)...)
+	}
+	return out
+}
+
+func (m *machine) ensureItem(kind, prefix string) []Event {
+	if m.current != nil && m.current.kind == kind {
+		return nil
+	}
+	out := m.closeCurrent()
+	m.current = &openItem{kind: kind, id: prefix + randomID(), index: len(m.response.Output)}
+	var item map[string]any
+	if kind == "message" {
+		item = map[string]any{"type": "message", "id": m.current.id, "status": "in_progress", "role": "assistant", "content": []any{}}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+		out = append(out, m.emit("response.content_part.added", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}}))
+		return out
+	} else if kind == "reasoning" {
+		item = map[string]any{"type": "reasoning", "id": m.current.id, "summary": []any{}}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+		out = append(out, m.emit("response.reasoning_summary_part.added", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": ""}}))
+		return out
+	} else {
+		item = map[string]any{"type": "reasoning", "id": m.current.id, "summary": []any{}, "content": []any{}}
+		out = append(out, m.emit("response.output_item.added", map[string]any{"output_index": m.current.index, "item": item}))
+		return out
+	}
+}
+
+func (m *machine) closeCurrent() []Event {
+	if m.current == nil {
+		return nil
+	}
+	item, text := m.current, m.current.text.String()
+	var out []Event
+	var final map[string]any
+	switch item.kind {
+	case "message":
+		annotations := m.takeWebAnnotations()
+		out = append(out,
+			m.emit("response.output_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "text": text}),
+			m.emit("response.content_part.done", map[string]any{"item_id": item.id, "output_index": item.index, "content_index": 0, "part": map[string]any{"type": "output_text", "text": text, "annotations": annotations}}),
+		)
+		final = map[string]any{"type": "message", "id": item.id, "status": "completed", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": annotations}}}
+		if item.phase != "" {
+			final["phase"] = item.phase
+		}
+	case "reasoning":
+		out = append(out,
+			m.emit("response.reasoning_summary_text.done", map[string]any{"item_id": item.id, "output_index": item.index, "summary_index": 0, "text": text}),
+			m.emit("response.reasoning_summary_part.done", map[string]any{"item_id": item.id, "output_index": item.index, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": text}}),
+		)
+		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{map[string]any{"type": "summary_text", "text": text}}}
+		if m.pendingSignature != "" || len(m.pendingRedacted) > 0 {
+			final["encrypted_content"] = claude.EncodeReasoningEnvelope(claude.ReasoningEnvelope{Signature: m.pendingSignature, Redacted: m.pendingRedacted})
+			m.pendingSignature, m.pendingRedacted = "", nil
+		}
+	case "raw_reasoning":
+		final = map[string]any{"type": "reasoning", "id": item.id, "summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": text}}}
+	case "tool":
+		if item.toolSearch {
+			final = map[string]any{"type": "tool_search_call", "id": item.id, "call_id": item.callID, "execution": "client", "arguments": parseArgumentsObject(text), "status": "completed"}
+			break
+		}
+		if item.freeform {
+			input := freeformInput(text)
+			out = append(out, m.emit("response.custom_tool_call_input.done", map[string]any{"item_id": item.id, "output_index": item.index, "input": input}))
+			final = map[string]any{"type": "custom_tool_call", "id": item.id, "call_id": item.callID, "name": item.name, "input": input, "status": "completed"}
+			break
+		}
+		if text == "" {
+			text = "{}"
+		}
+		out = append(out, m.emit("response.function_call_arguments.done", map[string]any{"item_id": item.id, "output_index": item.index, "arguments": text}))
+		final = map[string]any{"type": "function_call", "id": item.id, "call_id": item.callID, "name": item.name, "arguments": text, "status": "completed"}
+		if item.namespace != "" {
+			final["namespace"] = item.namespace
+		}
+	case "web_search":
+		status := item.status
+		if status == "" || status == "in_progress" {
+			status = "completed"
+		}
+		action := map[string]any{"type": "search", "query": ""}
+		if len(item.queries) == 1 {
+			action["query"] = item.queries[0]
+		} else if len(item.queries) > 1 {
+			delete(action, "query")
+			action["queries"] = item.queries
+		}
+		final = map[string]any{"type": "web_search_call", "id": item.id, "status": status, "action": action}
+		if len(item.sources) > 0 {
+			final["sources"] = item.sources
+		}
+	}
+	if final != nil {
+		m.response.Output = append(m.response.Output, final)
+		out = append(out, m.emit("response.output_item.done", map[string]any{"output_index": item.index, "item": final}))
+	}
+	m.current = nil
+	return out
+}
+
+func (m *machine) addPendingSources(sources []types.URLCitation) {
+	seen := make(map[string]bool, len(m.pendingWebSources))
+	for _, source := range m.pendingWebSources {
+		seen[source.URL] = true
+	}
+	for _, source := range sources {
+		if source.URL != "" && !seen[source.URL] {
+			seen[source.URL] = true
+			m.pendingWebSources = append(m.pendingWebSources, source)
+		}
+	}
+}
+
+func (m *machine) takeWebAnnotations() []any {
+	annotations := make([]any, 0, len(m.pendingWebSources))
+	for _, source := range m.pendingWebSources {
+		annotation := map[string]any{"type": "url_citation", "url": source.URL, "start_index": 0, "end_index": 0}
+		if source.Title != "" {
+			annotation["title"] = source.Title
+		}
+		annotations = append(annotations, annotation)
+	}
+	m.pendingWebSources = nil
+	return annotations
+}
+
+func (m *machine) finish(status, message string) []Event {
+	if m.terminal {
+		return nil
+	}
+	if m.current != nil && m.current.kind == "web_search" && status != "completed" {
+		m.current.status = "failed"
+	}
+	out := m.closeCurrent()
+	out = append(out, m.flushPendingReasoningEnvelope()...)
+	m.reportUsage()
+	m.terminal, m.response.Status = true, status
+	if (status == "failed" || status == "incomplete") && m.response.Error == nil && message != "" {
+		m.response.Error = map[string]any{"type": "server_error", "message": message}
+	}
+	eventType := "response." + status
+	out = append(out, m.emit(eventType, map[string]any{"response": m.snapshot(status)}))
+	return out
+}
+
+func (m *machine) reportUsage() {
+	if m.usageReported {
+		return
+	}
+	m.usageReported = true
+	if m.onUsage != nil {
+		m.onUsage(cloneUsage(m.usage))
+	}
+}
+
+func (m *machine) flushPendingReasoningEnvelope() []Event {
+	if m.pendingSignature == "" && len(m.pendingRedacted) == 0 {
+		return nil
+	}
+	index := len(m.response.Output)
+	item := map[string]any{
+		"type": "reasoning", "id": "rs_" + randomID(), "summary": []any{},
+		"encrypted_content": claude.EncodeReasoningEnvelope(claude.ReasoningEnvelope{Signature: m.pendingSignature, Redacted: m.pendingRedacted}),
+	}
+	m.pendingSignature, m.pendingRedacted = "", nil
+	m.response.Output = append(m.response.Output, item)
+	return []Event{
+		m.emit("response.output_item.added", map[string]any{"output_index": index, "item": item}),
+		m.emit("response.output_item.done", map[string]any{"output_index": index, "item": item}),
+	}
+}
+
+func (m *machine) finishFailure(failure map[string]any, retryable bool) []Event {
+	m.response.Error = failure
+	m.response.LastError = failure
+	m.response.Retryable = retryable
+	return m.finish("failed", "")
+}
+
+func (m *machine) finishIncomplete(reason, message string) []Event {
+	m.response.IncompleteDetails = map[string]any{"reason": reason}
+	if message != "" {
+		m.response.IncompleteDetails["message"] = message
+	}
+	return m.finish("incomplete", message)
+}
+
+func (m *machine) snapshot(status string) map[string]any {
+	result := map[string]any{"id": m.response.ID, "object": "response", "created_at": m.response.CreatedAt, "status": status, "model": m.response.Model, "output": m.response.Output, "usage": m.response.Usage}
+	if m.response.Error != nil {
+		result["error"] = m.response.Error
+	}
+	if m.response.LastError != nil {
+		result["last_error"] = m.response.LastError
+	}
+	if m.response.Retryable {
+		result["retryable"] = true
+	}
+	if m.response.IncompleteDetails != nil {
+		result["incomplete_details"] = m.response.IncompleteDetails
+	}
+	return result
+}
+
+func (m *machine) emit(kind string, data map[string]any) Event {
+	data["sequence_number"] = m.sequence
+	m.sequence++
+	return Event{Type: kind, Data: data}
+}
+
+func randomID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return hex.EncodeToString(b)
+}
+
+func toolNameSet(names []string) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name != "" {
+			out[name] = struct{}{}
+		}
+	}
+	return out
+}
+
+// newToolItem resolves the wire name back to its declared identity before choosing the item
+// shape, in the oracle's order: namespace first, then tool_search, then freeform.
+func (m *machine) newToolItem(callID, wireName string) *openItem {
+	name, namespace := wireName, ""
+	if mapped, ok := m.toolNamespaces[wireName]; ok {
+		name, namespace = mapped.Name, mapped.Namespace
+	}
+	index := len(m.response.Output)
+	switch {
+	case m.isToolSearch(name):
+		return &openItem{kind: "tool", id: "tsc_" + randomID(), callID: callID, name: name, index: index, toolSearch: true}
+	case m.isFreeform(name):
+		return &openItem{kind: "tool", id: "ctc_" + randomID(), callID: callID, name: name, index: index, freeform: true}
+	default:
+		return &openItem{kind: "tool", id: "fc_" + randomID(), callID: callID, name: name, index: index, namespace: namespace}
+	}
+}
+
+func (item *openItem) openToolItem() map[string]any {
+	if item.toolSearch {
+		return map[string]any{"type": "tool_search_call", "id": item.id, "call_id": item.callID, "execution": "client", "arguments": map[string]any{}, "status": "in_progress"}
+	}
+	if item.freeform {
+		return map[string]any{"type": "custom_tool_call", "id": item.id, "call_id": item.callID, "name": item.name, "input": "", "status": "in_progress"}
+	}
+	open := map[string]any{"type": "function_call", "id": item.id, "call_id": item.callID, "name": item.name, "arguments": "", "status": "in_progress"}
+	if item.namespace != "" {
+		open["namespace"] = item.namespace
+	}
+	return open
+}
+
+// toolArgumentDelta streams argument progress on the channel the item's wire type uses.
+// A freeform call streams its unwrapped input, which codex-rs shows as a live preview
+// while the completed custom_tool_call item stays authoritative.
+func (m *machine) toolArgumentDelta(chunk string) []Event {
+	if m.current.toolSearch {
+		return nil // the oracle emits no argument events for a tool_search call
+	}
+	if !m.current.freeform {
+		return []Event{m.emit("response.function_call_arguments.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": chunk})}
+	}
+	buffer := m.current.text.String()
+	// Hold while the buffer is still an ambiguous prefix of the JSON wrapper, so a partial
+	// `{"in` never reaches the client as if it were tool input.
+	if strings.HasPrefix(freeformWrapPrefix, buffer) {
+		return nil
+	}
+	full := freeformPartialInput(buffer)
+	// Only forward progress is streamed; a re-read that shortens the value never rewinds.
+	if !strings.HasPrefix(full, m.current.inputEmitted) || len(full) <= len(m.current.inputEmitted) {
+		return nil
+	}
+	delta := full[len(m.current.inputEmitted):]
+	m.current.inputEmitted = full
+	return []Event{m.emit("response.custom_tool_call_input.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "delta": delta})}
+}
+
+// freeformInput unwraps the `{"input": "..."}` envelope the model is handed for a custom
+// tool, so the client receives the raw tool body it declared the tool with.
+func freeformInput(arguments string) string {
+	var wrapper struct {
+		Input *string `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &wrapper); err == nil && wrapper.Input != nil {
+		return *wrapper.Input
+	}
+	return arguments
+}
+
+const freeformWrapPrefix = `{"input":"`
+
+// freeformPartialInput unwraps a PARTIAL argument buffer, progressively unescaping the
+// compact `{"input":"…` form and streaming anything else raw.
+func freeformPartialInput(arguments string) string {
+	if !strings.HasPrefix(arguments, freeformWrapPrefix) {
+		return arguments
+	}
+	body := []rune(strings.TrimPrefix(arguments, freeformWrapPrefix))
+	var out strings.Builder
+	for index := 0; index < len(body); index++ {
+		char := body[index]
+		if char == '"' {
+			break // unescaped closing quote: the value is complete
+		}
+		if char != '\\' {
+			out.WriteRune(char)
+			continue
+		}
+		if index+1 >= len(body) {
+			break // escape split across chunks: wait for more
+		}
+		index++
+		switch next := body[index]; next {
+		case 'n':
+			out.WriteByte('\n')
+		case 't':
+			out.WriteByte('\t')
+		case 'r':
+			out.WriteByte('\r')
+		case 'u':
+			if index+4 >= len(body) {
+				return out.String() // incomplete \uXXXX: wait for more
+			}
+			value, err := strconv.ParseUint(string(body[index+1:index+5]), 16, 32)
+			if err != nil {
+				return out.String()
+			}
+			out.WriteRune(rune(value))
+			index += 4
+		default:
+			out.WriteRune(next)
+		}
+	}
+	return out.String()
+}
+
+// parseArgumentsObject decodes a tool_search argument buffer, which the oracle relays as a
+// JSON object rather than the raw string a function_call carries.
+func parseArgumentsObject(arguments string) map[string]any {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil || parsed == nil {
+		return map[string]any{}
+	}
+	return parsed
+}

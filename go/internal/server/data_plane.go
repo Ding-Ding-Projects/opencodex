@@ -1,0 +1,149 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/lidge-jun/opencodex-go/internal/claude"
+	"github.com/lidge-jun/opencodex-go/internal/codex"
+	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/providers"
+	"github.com/lidge-jun/opencodex-go/internal/types"
+)
+
+func (s *Server) handleModels(w http.ResponseWriter, request *http.Request) {
+	if s.config.Registry == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "server_not_configured", "model registry is not configured")
+		return
+	}
+	models := s.config.Registry.ListModels()
+	managementConfig := s.config.ManagementConfig
+	if s.config.ConfigPersistence != nil {
+		if snapshot := s.config.ConfigPersistence.Snapshot(); snapshot != nil {
+			managementConfig = snapshot
+		}
+	}
+	if managementConfig != nil {
+		for index := range models {
+			cap, enabled := providers.ProviderContextCap(providers.ContextCapConfig{ProviderContextCaps: intMapToFloat(managementConfig.ProviderContextCaps)}, models[index].Provider)
+			if enabled {
+				models[index].ContextWindow = providers.ApplyProviderContextCap(models[index].ContextWindow, cap)
+			}
+		}
+	}
+	if managementConfig != nil {
+		models = codex.FilterVisibleRuntimeModels(models, *managementConfig)
+	}
+	wantsAnthropic := request.Header.Get("anthropic-version") != "" || request.URL.Query().Get("flavor") == "anthropic"
+	if wantsAnthropic && request.URL.Query().Get("client_version") == "" {
+		if managementConfig != nil && managementConfig.ClaudeCode != nil && managementConfig.ClaudeCode.Enabled != nil && !*managementConfig.ClaudeCode.Enabled {
+			writeModelsJSON(w, map[string]any{"data": []claude.ModelInfo{}})
+			return
+		}
+		native, routed := claudeDiscoveryModels(models, managementConfig)
+		nativeSlugs := make([]string, 0, len(native))
+		for _, model := range native {
+			nativeSlugs = append(nativeSlugs, model.ID)
+		}
+		desktopRouted := make([]claude.Desktop3pRoutedModel, 0, len(routed))
+		for _, model := range routed {
+			desktopRouted = append(desktopRouted, claude.Desktop3pRoutedModel{Provider: model.Provider, ID: model.ID, ContextWindow: model.ContextWindow})
+		}
+		var profile *claude.DesktopProfile
+		if managementConfig != nil && managementConfig.ClaudeCode != nil {
+			profile = managementConfig.ClaudeCode.DesktopProfile
+		}
+		if _, err := claude.BuildDesktop3pRegistryWithProfile(nativeSlugs, desktopRouted, profile); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		auto := claude.AutoContextOff
+		if managementConfig != nil && managementConfig.ClaudeCode != nil {
+			auto = claude.ResolveAutoContext(&claude.ContextConfig{
+				AutoContext: managementConfig.ClaudeCode.AutoContext, AutoCompactWindow: managementConfig.ClaudeCode.AutoCompactWindow,
+				MaxContextTokens: managementConfig.ClaudeCode.MaxContextTokens,
+			}, "")
+		}
+		style := claude.AnthropicIDDesktop3P
+		switch request.URL.Query().Get("ids") {
+		case "cli":
+			style = claude.AnthropicIDReadable
+		case "desktop":
+		default:
+			if strings.HasPrefix(strings.ToLower(request.Header.Get("User-Agent")), "claude-code/") {
+				style = claude.AnthropicIDReadable
+			}
+		}
+		data := claude.BuildModelInfosWithAlias(native, routed, auto, style, claude.ActiveDesktop3pAlias)
+		writeModelsJSON(w, map[string]any{"data": data})
+		return
+	}
+	data := make([]map[string]any, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		id := model.ID
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		data = append(data, map[string]any{"id": id, "object": "model", "created": 0, "owned_by": model.Provider})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+}
+
+func intMapToFloat(values map[string]int) map[string]float64 {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]float64, len(values))
+	for key, value := range values {
+		result[key] = float64(value)
+	}
+	return result
+}
+
+func writeModelsJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func claudeDiscoveryModels(models []types.ModelEntry, cfg *appconfig.Config) (native, routed []claude.DiscoveryModel) {
+	for _, model := range models {
+		id := strings.TrimPrefix(model.ID, model.Provider+"/")
+		discovery := claude.DiscoveryModel{
+			Provider: model.Provider, ID: id, DisplayName: model.DisplayName,
+			ReasoningEfforts: append([]string(nil), model.ReasoningEfforts...), ContextWindow: model.ContextWindow,
+		}
+		if model.Provider == "openai" && !strings.Contains(model.ID, "/") {
+			discovery.ID, discovery.ImageInput = model.ID, true
+			discovery.ReasoningEfforts = codex.NativeReasoningEfforts(model.ID)
+			native = append(native, discovery)
+			continue
+		}
+		discovery.ImageInput = claudeModelImageInput(cfg, model.Provider, id)
+		routed = append(routed, discovery)
+	}
+	return native, routed
+}
+
+func claudeModelImageInput(cfg *appconfig.Config, provider, model string) bool {
+	if cfg == nil {
+		return false
+	}
+	configured, ok := cfg.Providers[provider]
+	if !ok || types.ModelInList(configured.NoVisionModels, model) {
+		return false
+	}
+	for _, modality := range configured.ModelInputModalities[model] {
+		if modality == "image" {
+			return true
+		}
+	}
+	return false
+}
+
+func unknownV1(w http.ResponseWriter, request *http.Request) {
+	writeClassifiedJSONError(w, http.StatusNotFound, "not_found", "Unknown endpoint: "+request.Method+" "+request.URL.Path)
+}

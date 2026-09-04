@@ -122,7 +122,7 @@ validation are `scripts/generate-windows-icon.mjs`.
 ## Quick start
 
 ```bash
-# Install (bundles the Bun runtime automatically — only Node 18+ required)
+# Install (ships the matching Go runtime — only Node 18+ required)
 # Prefer a user-owned Node (nvm/fnm) — avoid `sudo npm install -g …`
 npm install -g @bitkyc08/opencodex
 
@@ -140,30 +140,40 @@ codex "Write a hello world in Rust"
 ```
 
 <details>
-<summary><b>"bundled Bun runtime is missing" / npm blocked Bun install scripts?</b></summary>
+<summary><b>Why is Bun still present after installing the Go runtime?</b></summary>
 
 <br/>
 
-opencodex bundles the Bun runtime as a dependency and runs it via a Node
-launcher, so you do **not** need to install Bun yourself. If you see a
-"bundled Bun runtime is missing" error, the install skipped lifecycle scripts
-(including npm blocking bun's postinstall under `allowScripts`) or optional
-dependencies. Reinstall without those flags, allowing bun's install script:
+The package keeps Bun temporarily so older `ocx update` implementations can install the new package,
+and so a legacy Codex shim can refresh itself once before the validated Go binary takes over. Bun also
+remains available to callers that explicitly use the package's Bun API. It is not the proxy runtime on
+supported npm installations, and removing the dependency is a later compatibility cleanup.
 
-```bash
-npm install -g --allow-scripts=bun @bitkyc08/opencodex   # no --ignore-scripts, no --omit=optional
+Source checkouts still require a local Bun installation. Unsupported OS/architecture combinations may
+use the compatibility bridge instead of a packaged Go binary.
 
-# if the original install used sudo, keep using sudo:
-sudo npm install -g --allow-scripts=bun @bitkyc08/opencodex
-```
+</details>
 
-npm's own warning suggests an abbreviated command without the package name —
-that would reinstall the current directory, so always pass
-`@bitkyc08/opencodex` explicitly.
+<details>
+<summary><b>Windows shows “Previous session … restored from journal”, then Bun crashes?</b></summary>
 
-If you installed with `sudo` into a root-owned prefix, the sudo reinstall above
-unblocks that prefix — but prefer migrating to a user-owned Node (nvm, fnm, or
-a user npm prefix) when you can.
+<br/>
+
+The journal warning means opencodex recovered Codex state left by a definitively dead process; it is
+not itself the native-crash cause. Before recovery, `start` and `ensure` now identity-check whether a
+healthy proxy already owns routing, compare both persisted owner records before removing stale state,
+and skip journal recovery if a concurrent owner publishes new state. The external Node launcher also
+retries those two commands once, and only once, when Bun exits abnormally with its official
+`oh no: Bun has crashed` marker. The marker is latched independently of the bounded diagnostic tail,
+and live stderr forwarding honors writable backpressure. Ordinary CLI errors, the journal warning by
+itself, warnings without the marker, spawn failures, and termination signals are not retried. This is
+a bounded recovery measure, not a claim that Bun itself was fixed.
+
+If the second attempt also produces the Bun marker, opencodex preserves that failure and suggests
+`OPENCODEX_BUN_PATH`. Use only an absolute path to a Bun binary you deliberately downloaded and
+trust; reinstall a service or Codex shim after setting it so the durable artifact captures the same
+runtime. Full diagnosis, safety notes, and recovery commands are in [Bun Startup Crashes on
+Windows](https://opencodex.me/troubleshooting/bun-startup-crashes/).
 
 </details>
 
@@ -823,8 +833,9 @@ project-profile inventory: [`Global agent memory`](https://opencodex.me/guides/g
 
 ## Development
 
-Source development requires the `bun` CLI on your `PATH`. This is separate from the published npm
-package's bundled Bun runtime, which is used only by installed `ocx` commands.
+Source development requires the `bun` CLI on your `PATH`. The published npm package instead runs its
+packaged Go binary on supported targets; its bundled Bun dependency is dormant except for the old-updater
+and one-time legacy-shim bridge or explicit Bun package API use.
 
 ```bash
 git clone https://github.com/Ding-Ding-Projects/opencodex.git

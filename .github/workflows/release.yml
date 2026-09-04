@@ -159,51 +159,127 @@ jobs:
       # scripts are disabled for pack/publish so this workflow remains build-and-publication only.
       # PREREQUISITE: configure the Trusted Publisher for this repo + workflow on npmjs.com — possible
       # only AFTER the package's first version exists (do the first publish locally, see the runbook).
-      - name: Preflight release metadata
+      - name: Build and retain exact release archive
         env:
           RELEASE_VERSION: ${{ inputs.version }}
-          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
+          npm run build:publish
+          # build:publish has just written gui/dist. Prove the committed Go embed matches those
+          # exact bytes BEFORE packing, so the published binary cannot serve a stale dashboard.
+          bun scripts/embed-gui.ts --verify-dist
+          rm -f pack.json
+          npm pack --json > pack.json
+          npm run verify:native-package
+          npm run verify:native-install
 
+          # npm pack runs the prepack hook after the check above, and the packed-artifact verifier
+          # checks GUI presence/size/mode rather than content — so compare the actual tarball bytes.
+          extract_root="${RUNNER_TEMP}/ocx-release-pack-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$extract_root"
+          mkdir -p "$extract_root"
+          tarball="$(node -p "require('./pack.json')[0].filename")"
+          tar -xzf "$tarball" -C "$extract_root"
+          # shellcheck disable=SC2016  # the single-quoted body is Node source, not shell
+          node -e '
+            const { createHash } = require("node:crypto");
+            const { readdirSync, readFileSync } = require("node:fs");
+            const { join, relative, sep } = require("node:path");
+            const packed = join(process.argv[1], "package", "gui", "dist");
+            const embedded = join("go", "internal", "server", "static");
+            const list = dir => {
+              const out = [];
+              const walk = current => {
+                for (const entry of readdirSync(current, { withFileTypes: true })) {
+                  const full = join(current, entry.name);
+                  if (entry.isDirectory()) walk(full);
+                  else if (entry.isFile()) out.push(relative(dir, full).split(sep).join("/"));
+                }
+              };
+              walk(dir);
+              return out.sort();
+            };
+            const digest = path => createHash("sha256").update(readFileSync(path)).digest("hex");
+            const packedFiles = list(packed);
+            const embeddedFiles = list(embedded);
+            const problems = [];
+            if (JSON.stringify(packedFiles) !== JSON.stringify(embeddedFiles)) {
+              problems.push(`file lists differ: packed=${packedFiles.length} embedded=${embeddedFiles.length}`);
+            }
+            for (const name of packedFiles) {
+              if (!embeddedFiles.includes(name)) { problems.push(`packed-only: ${name}`); continue; }
+              if (digest(join(packed, name)) !== digest(join(embedded, name))) problems.push(`content differs: ${name}`);
+            }
+            for (const name of embeddedFiles) {
+              if (!packedFiles.includes(name)) problems.push(`embedded-only: ${name}`);
+            }
+            if (problems.length > 0) {
+              console.error("::error::packed gui/dist does not match the embedded Go GUI bundle");
+              for (const problem of problems) console.error(`  ${problem}`);
+              process.exit(1);
+            }
+            console.log(`packed gui/dist matches the embedded bundle (${packedFiles.length} files)`);
+          ' "$extract_root"
+          rm -rf "$extract_root"
+
+          asset_root="${RUNNER_TEMP}/ocx-release-assets-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          env_receipt="${RUNNER_TEMP}/ocx-release-assets-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.env"
+          test ! -e "$asset_root"
+          test ! -e "$env_receipt"
+          bun scripts/prepare-release-assets.ts prepare \
+            --pack pack.json \
+            --output "$asset_root" \
+            --receipt "$env_receipt"
+
+          test "$(wc -l < "$env_receipt" | tr -d '[:space:]')" = "3"
+          test "$(grep -Ec '^TARBALL=/[^[:cntrl:]]+$' "$env_receipt")" = "1"
+          test "$(grep -Ec '^TARBALL_SHA256=[0-9a-f]{64}$' "$env_receipt")" = "1"
+          test "$(grep -Ec '^RELEASE_NATIVE_DIR=/[^[:cntrl:]]+$' "$env_receipt")" = "1"
+          cat "$env_receipt" >> "$GITHUB_ENV"
+
+      - name: Classify exact release retry state
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          NPM_DIST_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
           pkg_name="$(node -p "require('./package.json').name")"
           release_tag="v${RELEASE_VERSION}"
-          dry_run="$DRY_RUN"
+          local_integrity="$(node -e 'const report=require("./pack.json"); if (report.length !== 1) process.exit(1); process.stdout.write(report[0].integrity)')"
+
+          npm_state=fresh
+          if npm view "${pkg_name}@${RELEASE_VERSION}" version >/dev/null 2>&1; then
+            remote_integrity="$(npm view "${pkg_name}@${RELEASE_VERSION}" dist.integrity)"
+            tagged_version="$(npm view "$pkg_name" "dist-tags.${NPM_DIST_TAG}")"
+            if [ "$remote_integrity" != "$local_integrity" ] || [ "$tagged_version" != "$RELEASE_VERSION" ]; then
+              echo "::error::npm already contains ${pkg_name}@${RELEASE_VERSION}, but its integrity or ${NPM_DIST_TAG} dist-tag conflicts with this archive"
+              exit 1
+            fi
+            npm_state=exact
+          fi
 
           git fetch --force --tags origin
-
           existing_tag_sha="$(git rev-parse -q --verify "refs/tags/${release_tag}^{commit}" || true)"
           if [ -n "$existing_tag_sha" ] && [ "$existing_tag_sha" != "$GITHUB_SHA" ]; then
             echo "::error::${release_tag} already points at ${existing_tag_sha}, not ${GITHUB_SHA}"
             exit 1
           fi
 
-          if [ -n "$existing_tag_sha" ]; then
-            if [ "$dry_run" = "true" ]; then
-              echo "::notice::${release_tag} already exists at this commit; dry-run only"
-            else
-              echo "::error::${release_tag} already exists. Refusing to publish a version with pre-existing Git metadata."
-              exit 1
-            fi
-          fi
-
+          github_candidate=absent
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            if [ "$dry_run" = "true" ]; then
-              echo "::notice::GitHub Release ${release_tag} already exists; dry-run only"
-            else
-              echo "::error::GitHub Release ${release_tag} already exists. Choose the next unused patch version."
+            if [ -z "$existing_tag_sha" ]; then
+              echo "::error::GitHub Release ${release_tag} exists without a local same-SHA tag"
               exit 1
             fi
+            github_candidate=present
           fi
 
-          if npm view "${pkg_name}@${RELEASE_VERSION}" version >/dev/null 2>&1; then
-            if [ "$dry_run" = "true" ]; then
-              echo "::notice::${pkg_name}@${RELEASE_VERSION} already exists on npm; dry-run only"
-            else
-              echo "::error::${pkg_name}@${RELEASE_VERSION} already exists on npm. Choose the next unused patch version."
-              exit 1
-            fi
-          fi
+          {
+            printf 'NPM_RELEASE_STATE=%s\n' "$npm_state"
+            printf 'NPM_EXPECTED_INTEGRITY=%s\n' "$local_integrity"
+            printf 'GITHUB_RELEASE_CANDIDATE=%s\n' "$github_candidate"
+            printf 'RELEASE_TAG_EXISTING=%s\n' "$([ -n "$existing_tag_sha" ] && printf true || printf false)"
+          } >> "$GITHUB_ENV"
 
       # The versioned GitHub release is also the stable Windows delivery path.
       # Prepare the exact npm payload and validate its installer before npm can
@@ -293,7 +369,6 @@ jobs:
 
       - name: Publish (or dry-run)
         env:
-          DRY_RUN: ${{ inputs.dry-run }}
           NPM_DIST_TAG: ${{ inputs.tag }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
@@ -308,22 +383,35 @@ jobs:
         if: ${{ inputs.dry-run != true }}
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+          NPM_DIST_TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
           for attempt in $(seq 1 30); do
             if VERSION=$(npm view "@bitkyc08/opencodex@${RELEASE_VERSION}" version 2>/dev/null); then
               echo "registry version=$VERSION"
               test "$VERSION" = "$RELEASE_VERSION"
-              npm dist-tag ls @bitkyc08/opencodex
-              exit 0
+              remote_integrity="$(npm view "@bitkyc08/opencodex@${RELEASE_VERSION}" dist.integrity)"
+              if [ "$remote_integrity" != "$NPM_EXPECTED_INTEGRITY" ]; then
+                echo "::error::npm immutable integrity differs from the retained archive"
+                exit 1
+              fi
+              tagged_version="$(npm view @bitkyc08/opencodex "dist-tags.${NPM_DIST_TAG}" 2>/dev/null || true)"
+              if [ "$tagged_version" = "$RELEASE_VERSION" ]; then
+                echo "registry integrity=${remote_integrity}  ${NPM_DIST_TAG}=${tagged_version}"
+                exit 0
+              fi
+              echo "::notice::npm dist-tag ${NPM_DIST_TAG} is ${tagged_version:-absent}, waiting for ${RELEASE_VERSION} (attempt $attempt/30)"
+            else
+              echo "::notice::@bitkyc08/opencodex@${RELEASE_VERSION} not visible in npm registry yet (attempt $attempt/30)"
             fi
-            echo "::notice::@bitkyc08/opencodex@${RELEASE_VERSION} not visible in npm registry yet (attempt $attempt/30)"
             sleep 10
           done
           echo "::error::npm registry smoke failed after 30 attempts"
-          npm view @bitkyc08/opencodex versions dist-tags --json || true
+          npm view "@bitkyc08/opencodex@${RELEASE_VERSION}" version dist.integrity --json || true
+          npm view @bitkyc08/opencodex dist-tags --json || true
           exit 1
 
-      - name: Create GitHub release
+      - name: Create/reconcile GitHub release
         if: ${{ inputs.dry-run != true }}
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -334,12 +422,6 @@ jobs:
           release_tag="v${RELEASE_VERSION}"
 
           git fetch --force --tags origin
-
-          existing_tag_sha="$(git rev-parse -q --verify "refs/tags/${release_tag}^{commit}" || true)"
-          if [ -n "$existing_tag_sha" ] && [ "$existing_tag_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::${release_tag} already points at ${existing_tag_sha}, not ${GITHUB_SHA}"
-            exit 1
-          fi
 
           # Channel previous tag for Full Changelog + default notes baseline.
           # Preview baselines any prior release; stable baselines prior stable only.
@@ -356,10 +438,9 @@ jobs:
             prerelease_flag="--prerelease"
           fi
 
-          # Build notes before tagging: if generate-notes fails after a tag push, preflight
-          # blocks retries because the tag already exists. API uses target_commitish, so the
-          # tag need not exist yet. Preflight already rejects an existing GitHub Release for
-          # non-dry runs, so this step only creates.
+          # Build notes before any tag/release mutation. Exact retries compare this body and
+          # all immutable metadata before repairing only missing or mismatched native assets.
+          # API uses target_commitish, so the tag need not exist yet.
           notes_file="$(mktemp)"
           carried_file="$(mktemp)"
           delta_file="$(mktemp)"

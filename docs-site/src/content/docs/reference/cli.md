@@ -60,6 +60,12 @@ the launcher falls back to bundled Bun. This check does not verify binary identi
 signature. See [Bun Startup Crash Recovery on
 Windows](/troubleshooting/bun-startup-crashes/).
 
+A healthy owner is identity-checked before stale journal recovery, so a dead launcher PID cannot
+make a live proxy lose its injected Codex state. On the TypeScript fallback, the external Node
+launcher retries `start` once only for an abnormal exit carrying Bun's official crash marker;
+ordinary command failures are never retried. The packaged Go runtime does not invoke Bun for its
+native proxy process. See [Bun Startup Crashes on Windows](/troubleshooting/bun-startup-crashes/).
+
 ```bash
 ocx start
 ocx start --port 8080
