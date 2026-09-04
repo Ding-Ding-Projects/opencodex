@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { ProviderAdapter, IncomingMeta } from "../../src/adapters/base";
 import type { AdapterEvent, OcxParsedRequest } from "../../src/types";
 import type { ImageBridgePlan, ImageCallResult } from "../../src/images/types";
+import type { OAuthAccessSnapshot } from "../../src/oauth";
 
 const PREV_HOME = process.env.OPENCODEX_HOME;
 let runWithImageBridge: typeof import("../../src/images/loop")["runWithImageBridge"];
@@ -355,11 +356,22 @@ describe("runWithImageBridge", () => {
     let fetchCalls = 0;
     let rotations = 0;
     let activeAdapter: ProviderAdapter | undefined;
+    const snapshotA: OAuthAccessSnapshot = {
+      provider: "google-antigravity", accountId: "account-a", generation: "generation-a",
+      accessToken: "test-token-a", projectId: "project-a", destination: "https://daily-cloudcode-pa.googleapis.com",
+    };
+    const snapshotB: OAuthAccessSnapshot = {
+      provider: "google-antigravity", accountId: "account-b", generation: "generation-b",
+      accessToken: "test-token-b", projectId: "project-b", destination: "https://daily-cloudcode-pa.googleapis.com",
+    };
+    let activeOAuth = { accountId: "account-a", oauthSnapshot: snapshotA };
+    const dispatches: { accountId?: string; generation?: string }[] = [];
     const makeRotatingAdapter = (label: string): ProviderAdapter => ({
       name: label,
       buildRequest: async () => ({ url: "https://test/v1/chat", method: "POST", headers: {}, body: "{}" }),
-      fetchResponse: async () => {
+      fetchResponse: async (_request, ctx) => {
         fetchCalls++;
+        dispatches.push({ accountId: ctx?.accountId, generation: ctx?.oauthSnapshot?.generation });
         if (fetchCalls === 1) return new Response("rate limited", { status: 429, headers: { "retry-after": "1" } });
         streamQueue = [[{ type: "text_delta", text: "after rotate" }, { type: "done" }]];
         return new Response("{}", { status: 200 });
@@ -376,8 +388,10 @@ describe("runWithImageBridge", () => {
       parsed: makeParsed(),
       adapter: firstAdapter,
       plan,
+      getOAuthDispatchContext: () => activeOAuth,
       on429: () => {
         rotations++;
+        activeOAuth = { accountId: "account-b", oauthSnapshot: snapshotB };
         activeAdapter = secondAdapter;
         return secondAdapter;
       },
@@ -386,6 +400,10 @@ describe("runWithImageBridge", () => {
     expect(rotations).toBe(1);
     expect(fetchCalls).toBe(2);
     expect(activeAdapter).toBe(secondAdapter);
+    expect(dispatches).toEqual([
+      { accountId: "account-a", generation: "generation-a" },
+      { accountId: "account-b", generation: "generation-b" },
+    ]);
     expect(sse).toContain("after rotate");
   });
 });

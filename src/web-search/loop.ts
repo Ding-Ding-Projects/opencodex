@@ -1,5 +1,6 @@
 import type { AdapterRequest, ProviderAdapter } from "../adapters/base";
 import type { AdapterEvent, OcxMessage, OcxParsedRequest, OcxProviderConfig, OcxThinkingContent, OcxUsage } from "../types";
+import type { OAuthAccessSnapshot } from "../oauth";
 import { namespacedToolName } from "../types";
 import { bridgeToResponsesSSE } from "../bridge";
 import { runWebSearch, type SidecarOutcome, type SidecarOutcomeRecorder, type SidecarSettings } from "./executor";
@@ -162,6 +163,10 @@ class LoopError extends Error {
 }
 
 export interface WebSearchLoopDeps {
+  /** OAuth account identity for provider-local cooldown selection. */
+  accountId?: string;
+  oauthSnapshot?: OAuthAccessSnapshot;
+  getOAuthDispatchContext?: () => { accountId?: string; oauthSnapshot?: OAuthAccessSnapshot };
   parsed: OcxParsedRequest;
   adapter: ProviderAdapter;
   /** Which executor runs searches. Defaults to "openai" so existing callers keep the ChatGPT path (audit F4). */
@@ -197,7 +202,7 @@ export interface WebSearchLoopDeps {
    * 429 key-failover hook: rotate the provider's active pool key and return a rebuilt adapter,
    * or null when the pool is exhausted (same semantics as the normal routed path).
    */
-  on429?: (retryAfterHeader: string | null) => ProviderAdapter | null;
+  on429?: (retryAfterHeader: string | null) => ProviderAdapter | null | Promise<ProviderAdapter | null>;
 }
 
 /**
@@ -284,6 +289,8 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
               timeoutMs: connectTimeoutMs,
               returnRawErrors: true,
               stream: true,
+              ...(deps.getOAuthDispatchContext?.().accountId ?? deps.accountId ? { accountId: deps.getOAuthDispatchContext?.().accountId ?? deps.accountId } : {}),
+              ...(deps.getOAuthDispatchContext?.().oauthSnapshot ?? deps.oauthSnapshot ? { oauthSnapshot: deps.getOAuthDispatchContext?.().oauthSnapshot ?? deps.oauthSnapshot } : {}),
             })
           : await fetchWithResetRetry(
               () => {
@@ -305,7 +312,7 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
       // 429 key-failover parity with the normal routed path: rotate pool keys until one responds
       // or the pool is exhausted (deps.on429 returns null — cooldown map guarantees termination).
       while (prepared.response.status === 429 && deps.on429) {
-        const rotated = deps.on429(prepared.response.headers.get("retry-after"));
+        const rotated = await deps.on429(prepared.response.headers.get("retry-after"));
         if (!rotated) break;
         // Never let a broken body's cancel promise outlive the cumulative header deadline. Observe
         // it, but proceed immediately to the rotated fetch under the SAME deadline signal.

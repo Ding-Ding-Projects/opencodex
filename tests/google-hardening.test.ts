@@ -85,9 +85,7 @@ describe("google provider hardening", () => {
     const flatPayload = { candidates: [{ content: { parts: [{ text: "unexpected" }] } }] };
 
     const streamEvents = await collect(adapter.parseStream(sseResponse([flatPayload])));
-    const responseEvents = await adapter.parseResponse!(
-      new Response(JSON.stringify(flatPayload), { status: 200 }),
-    );
+    const responseEvents = await adapter.parseResponse!(sseResponse([flatPayload]));
 
     const expected = [{
       type: "error",

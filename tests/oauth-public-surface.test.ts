@@ -386,7 +386,7 @@ describe("legacy ChatGPT OAuth public-surface exclusion", () => {
       });
       const status = await waitForOAuthDone("xai");
       expect(status.done).toBe(true);
-      expect(status.error).toBe("browser flow aborted");
+      expect(status.error).toBe("OAuth login failed; retry or cancel this attempt");
     } finally {
       OAUTH_PROVIDERS.xai.login = originalLogin;
       clearLoginState("xai");
@@ -415,7 +415,7 @@ describe("legacy ChatGPT OAuth public-surface exclusion", () => {
       });
       const status = await waitForOAuthDone("xai");
       expect(status.done).toBe(true);
-      expect(status.error).toBe("runtime reconciliation failed");
+      expect(status.error).toBe("OAuth login failed; retry or cancel this attempt");
     } finally {
       OAUTH_PROVIDERS.xai.login = originalLogin;
       clearLoginState("xai");
@@ -473,7 +473,7 @@ describe("legacy ChatGPT OAuth public-surface exclusion", () => {
 
       const status = await waitForOAuthDone("xai");
       expect(status.loggedIn).toBe(true);
-      expect(status.error).toMatch(/credential for "xai" was saved, but the provider entry was not written/);
+      expect(status.error).toBe("OAuth login failed; retry or cancel this attempt");
       expect(getCredential("xai")?.access).toBe("route-collision-access");
       expect(liveConfig).toMatchObject({
         defaultProvider: "concurrent",

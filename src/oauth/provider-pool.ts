@@ -323,13 +323,17 @@ function isCooled(provider: string, accountId: string, now: number): boolean {
   return getOAuthAccountHealthSnapshot(provider, accountId, now) !== null;
 }
 
-function hasKnownUsage(provider: string, accountId: string): boolean {
-  const quota = getCachedProviderAccountQuota(provider, accountId);
+function accountQuotaDestination(config: OcxConfig, provider: string): string | undefined {
+  return provider === "google-antigravity" ? config.providers?.[provider]?.baseUrl : undefined;
+}
+
+function hasKnownUsage(config: OcxConfig, provider: string, accountId: string): boolean {
+  const quota = getCachedProviderAccountQuota(provider, accountId, accountQuotaDestination(config, provider));
   return typeof quota?.fiveHourPercent === "number" && Number.isFinite(quota.fiveHourPercent);
 }
 
-function usageScore(provider: string, accountId: string): number {
-  const quota = getCachedProviderAccountQuota(provider, accountId);
+function usageScore(config: OcxConfig, provider: string, accountId: string): number {
+  const quota = getCachedProviderAccountQuota(provider, accountId, accountQuotaDestination(config, provider));
   if (!quota || typeof quota.fiveHourPercent !== "number" || !Number.isFinite(quota.fiveHourPercent)) {
     return UNKNOWN_USAGE_SCORE;
   }
@@ -374,14 +378,14 @@ export function getOAuthPoolRetryAfterSeconds(provider: string, now = Date.now()
 // Strategy picks
 // ---------------------------------------------------------------------------
 
-function pickLowestUsage(provider: string, excludeId: string | undefined, now: number): string | null {
+function pickLowestUsage(config: OcxConfig, provider: string, excludeId: string | undefined, now: number): string | null {
   const eligible = getEligibleOAuthAccounts(provider, now).filter(id => id !== excludeId);
   if (eligible.length === 0) return null;
   let best = eligible[0]!;
-  let bestScore = usageScore(provider, best);
+  let bestScore = usageScore(config, provider, best);
   for (let i = 1; i < eligible.length; i++) {
     const id = eligible[i]!;
-    const score = usageScore(provider, id);
+    const score = usageScore(config, provider, id);
     if (score < bestScore) {
       best = id;
       bestScore = score;
@@ -398,8 +402,8 @@ function isActiveUnderFillFirstThreshold(config: OcxConfig, provider: string, ac
   // 429s, then advance" — deliberately NOT degraded to round-robin like quota is: draining
   // one account before moving on is exactly what fill-first was asked to do, and a 429 is
   // the only drain evidence such a provider ever gives us (see rotateOAuthAccountOn429).
-  if (!hasKnownUsage(provider, accountId)) return true;
-  return usageScore(provider, accountId) < threshold;
+  if (!hasKnownUsage(config, provider, accountId)) return true;
+  return usageScore(config, provider, accountId) < threshold;
 }
 
 /** Next eligible account in stable order after `afterId` (wrapping). */
@@ -472,7 +476,7 @@ function pickAlternateAccount(
   if (strategy === "fill-first") {
     return pickNextFillFirstAccount(config, provider, excludeId, eligible);
   }
-  return pickLowestUsage(provider, excludeId, now);
+  return pickLowestUsage(config, provider, excludeId, now);
 }
 
 /**
@@ -608,11 +612,11 @@ export function resolveOAuthAccountForSession(
 
   if (threshold > 0) {
     // Unknown usage must NOT force a switch away from the healthy active account.
-    if (activeOk && (!hasKnownUsage(provider, set.activeAccountId) || usageScore(provider, set.activeAccountId) < threshold)) {
+    if (activeOk && (!hasKnownUsage(config, provider, set.activeAccountId) || usageScore(config, provider, set.activeAccountId) < threshold)) {
       accountId = set.activeAccountId;
       reason = "active";
     } else {
-      const picked = pickLowestUsage(provider, undefined, now);
+      const picked = pickLowestUsage(config, provider, undefined, now);
       if (picked) {
         accountId = picked;
         reason = activeOk && picked === set.activeAccountId ? "active" : "lowest-usage";
@@ -625,7 +629,7 @@ export function resolveOAuthAccountForSession(
     accountId = set.activeAccountId;
     reason = "active";
   } else {
-    const picked = pickLowestUsage(provider, set.activeAccountId, now);
+    const picked = pickLowestUsage(config, provider, set.activeAccountId, now);
     if (picked) {
       accountId = picked;
       reason = "only-eligible";
@@ -727,7 +731,7 @@ export function canRefreshOAuthPoolAccount(provider: string, accountId: string):
  * project id, the generation used for 401 replay). A pooled request that carries
  * account B's bearer alongside account A's metadata authenticates as B and routes as A.
  */
-export async function getOAuthPoolAccessSnapshot(provider: string, accountId: string): Promise<OAuthAccessSnapshot> {
+export async function getOAuthPoolAccessSnapshot(provider: string, accountId: string, destination?: string): Promise<OAuthAccessSnapshot> {
   const stored = getAccountCredential(provider, accountId);
   if (!stored) {
     const { OAuthLoginRequiredError } = await import("./index");
@@ -735,13 +739,13 @@ export async function getOAuthPoolAccessSnapshot(provider: string, accountId: st
   }
   const { storedAccessSnapshot, getAccessSnapshotForAccount } = await import("./index");
   if (stored.expires > Date.now() + TOKEN_SKEW_MS) {
-    const snapshot = storedAccessSnapshot(provider, accountId);
+    const snapshot = storedAccessSnapshot(provider, accountId, destination);
     if (snapshot) return snapshot;
   }
   if (!canRefreshOAuthPoolAccount(provider, accountId)) {
     throw new Error("background local-cli token expired; refuse CLI-adopting refresh for pool");
   }
-  return getAccessSnapshotForAccount(provider, accountId);
+  return getAccessSnapshotForAccount(provider, accountId, destination);
 }
 
 /** Bearer-only convenience wrapper over {@link getOAuthPoolAccessSnapshot}. */

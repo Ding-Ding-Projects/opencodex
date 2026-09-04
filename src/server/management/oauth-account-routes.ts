@@ -21,6 +21,7 @@ import {
   listOAuthProviders,
   startLoginFlow,
   submitManualLoginCode,
+  OAUTH_LOGIN_FAILURE_COPY,
 } from "../../oauth";
 import { removeCredential } from "../../oauth/store";
 import { providerDestinationResolvedError } from "../../lib/destination-policy";
@@ -69,6 +70,7 @@ import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, C
 import type { ManagementContext } from "./context";
 import { codexAccountNamespaceProviderCollisionError } from "../../codex/account-namespace-match";
 import { DEBUG_SANDBOX_ENV, announceDebugSandboxOnce, debugSandboxEnabled } from "../../lib/debug-sandbox";
+import { buildAccountQuotaSummary } from "../../oauth/account-quota-summary";
 
 export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config, deps, refreshCodexCatalogBestEffort, syncClaudeAgentDefsBestEffort } = ctx;
@@ -106,7 +108,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       // request may already have mutated live config and yielded before its save.
       const persistedBaseline = readConfigDiagnostics().config;
       // addAccount / reauth forces a fresh browser identity (skips local-CLI token import).
-      const { url: authUrl, instructions, deviceCode } = await startLoginFlow(provider, {
+      const { url: authUrl, instructions, deviceCode, attemptId } = await startLoginFlow(provider, {
         forceLogin: body.addAccount === true || reauth,
         ...(accountId ? { reauthAccountId: accountId } : {}),
       }, {
@@ -121,34 +123,35 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         const { openUrl } = await import("../../lib/open-url");
         openUrl(authUrl);
       }
-      return jsonResponse({ url: authUrl, instructions, deviceCode });
+      return jsonResponse({ url: authUrl, instructions, deviceCode, attemptId });
     } catch (err) {
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 409);
+      return jsonResponse({ error: OAUTH_LOGIN_FAILURE_COPY, code: "oauth_login_failed" }, 409);
     }
   }
 
   // Cancel an in-progress browser/device OAuth login (GUI "Cancel" / modal close). Guarded by
   // the same public predicate as /api/oauth/login — only publicly startable flows are cancellable.
   if (url.pathname === "/api/oauth/login/cancel" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { provider?: string };
+    const body = await req.json().catch(() => ({})) as { provider?: string; attemptId?: string };
     const provider = (body.provider ?? "").trim().toLowerCase();
     if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
     const { cancelLoginFlow } = await import("../../oauth");
-    const cancelled = cancelLoginFlow(provider);
+    const cancelled = cancelLoginFlow(provider, body.attemptId);
     return jsonResponse({ ok: true, cancelled });
   }
 
   // Manual fallback for browser OAuth: paste the final redirect URL (or authorization code)
   // when the browser cannot reach the loopback callback (remote/SSH/blocked localhost).
   if (url.pathname === "/api/oauth/login/code" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as { provider?: string; input?: string; code?: string };
+    const body = await req.json().catch(() => ({})) as { provider?: string; input?: string; code?: string; attemptId?: string };
     const provider = (body.provider ?? "").trim().toLowerCase();
     if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
     const input = typeof body.input === "string" ? body.input : typeof body.code === "string" ? body.code : "";
     // Authorization responses are measured in hundreds of bytes; never accept the
     // generic management-body allowance here.
     if (input.length > 4096) return jsonResponse({ error: "input too long" }, 400);
-    const result = submitManualLoginCode(provider, input);
+    if (typeof body.attemptId !== "string" || !body.attemptId.trim()) return jsonResponse({ error: "missing login attempt" }, 409);
+    const result = submitManualLoginCode(provider, input, body.attemptId);
     if (!result.ok) return jsonResponse({ error: result.error }, 409);
     return jsonResponse({ ok: true });
   }
@@ -208,11 +211,29 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const forceRefresh = url.searchParams.get("refresh") === "1";
     // Probing may refresh the active credential and mark needsReauth — project health
     // from the post-probe store so the response is not stale.
-    const rows = await fetchProviderAccountQuotas(provider, forceRefresh);
+    const rows = await fetchProviderAccountQuotas(provider, forceRefresh, config.providers[provider]?.baseUrl);
     const byId = new Map(rows.map(row => [row.accountId, row]));
     const projected = projectAccounts();
+    const quotaAccounts = projected.accounts.map(account => {
+      const row = byId.get(account.id);
+      return {
+        account,
+        row,
+        known: !!row?.quota && !row.unavailable,
+      };
+    });
+    const quotaSummary = buildAccountQuotaSummary(
+      quotaAccounts.map(({ account, row }) => ({
+        accountId: account.id,
+        health: account.health,
+        quota: row?.quota,
+        unavailable: row?.unavailable,
+      })),
+      projected.activeAccountId,
+    );
     return jsonResponse({
       activeAccountId: projected.activeAccountId,
+      quotaSummary,
       accounts: projected.accounts.map(account => {
         const row = byId.get(account.id);
         if (!row) return account;

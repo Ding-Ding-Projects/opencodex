@@ -8,6 +8,7 @@ import { antigravityUserAgent } from "../adapters/client-fingerprint";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "./registry";
 import type { OcxConfig, OcxProviderConfig } from "../types";
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "./openai-tiers";
+import { fetchAntigravityAccountQuota, fetchAntigravityLiveQuota, isTerminalAntigravityQuotaStatus, AntigravityQuotaRpcError } from "./antigravity-quota";
 
 /** Match oauth/index REFRESH_SKEW_MS — use stored access without refresh when still fresh. */
 const ACCOUNT_TOKEN_SKEW_MS = 60_000;
@@ -46,6 +47,8 @@ export interface ProviderQuotaReport {
   quota: ProviderQuota;
   updatedAt: number;
   reverseEngineered?: boolean;
+  /** Terminal credential/quota response: suppress any preserved last-good row. */
+  terminal?: true;
 }
 
 export interface ProviderQuotaResponse {
@@ -336,9 +339,10 @@ async function fetchAnthropicQuota(provider: string): Promise<ProviderQuotaRepor
   // Share the active-account probe with the per-account cache so Providers-page
   // loads do not double-hit Anthropic's rate-limited usage endpoint.
   if (probedAccountId) {
-    const stillOwnsToken = getAccountCredential("anthropic", probedAccountId)?.access === accessToken;
+    const owner = getAccountCredential("anthropic", probedAccountId);
+    const stillOwnsToken = owner?.access === accessToken;
     if (stillOwnsToken) {
-      accountQuotaCache.set(accountCacheKey("anthropic", probedAccountId), { ts: Date.now(), quota });
+      accountQuotaCache.set(accountCacheKey("anthropic", probedAccountId, "", credentialGeneration(owner!)), { ts: Date.now(), quota });
     }
   }
   return report(provider, "anthropic:oauth-usage", quota);
@@ -385,20 +389,41 @@ export interface ProviderAccountQuota {
  * the probe path in the same change, or the pool will rank every account as unknown.
  */
 export function supportsPerAccountQuota(provider: string): boolean {
-  return provider === "anthropic";
+  return provider === "anthropic" || provider === "google-antigravity";
 }
 
-function accountCacheKey(provider: string, accountId: string): string {
-  return `${provider}\u0000${accountId}`;
+function normalizeAntigravityDestination(baseUrl?: string): string {
+  const raw = baseUrl?.trim() || "https://daily-cloudcode-pa.googleapis.com";
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || url.search || url.hash) return "!invalid!";
+    return `${url.origin.toLowerCase()}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "!invalid!";
+  }
+}
+
+function accountCacheKey(provider: string, accountId: string, destination = "", generation = ""): string {
+  if (!destination) return generation ? `${provider}\u0000${accountId}\u0000${generation}` : `${provider}\u0000${accountId}`;
+  return `${provider}\u0000${accountId}\u0000${destination}\u0000${generation}`;
 }
 
 /**
  * Synchronous last-good per-account quota read for routing. Never probes the network.
  * Returns null when nothing is cached (or the cached row has no bars).
  */
-export function getCachedProviderAccountQuota(provider: string, accountId: string): ProviderQuota | null {
-  const entry = accountQuotaCache.get(accountCacheKey(provider, accountId));
-  return entry?.quota ?? null;
+export function getCachedProviderAccountQuota(provider: string, accountId: string, baseUrl?: string): ProviderQuota | null {
+  const current = getAccountCredential(provider, accountId);
+  if (!current) return null;
+  const generation = credentialGeneration(current);
+  const prefix = `${provider}\u0000${accountId}\u0000`;
+  const destination = provider === "google-antigravity" ? normalizeAntigravityDestination(baseUrl) : "";
+  const expected = destination ? `${prefix}${destination}\u0000${generation}` : `${prefix}${generation}`;
+  for (const [key, entry] of accountQuotaCache) {
+    if (key !== expected) continue;
+    return entry.quota ?? null;
+  }
+  return null;
 }
 
 /** Test-only: seed or clear the per-account quota cache without probing upstream. */
@@ -406,8 +431,11 @@ export function setCachedProviderAccountQuotaForTests(
   provider: string,
   accountId: string,
   quota: ProviderQuota | null,
+  baseUrl?: string,
 ): void {
-  const key = accountCacheKey(provider, accountId);
+  const credential = getAccountCredential(provider, accountId);
+  const destination = provider === "google-antigravity" ? normalizeAntigravityDestination(baseUrl) : "";
+  const key = accountCacheKey(provider, accountId, destination, credential ? credentialGeneration(credential) : "");
   if (quota === null) {
     accountQuotaCache.delete(key);
     return;
@@ -454,42 +482,102 @@ async function getTokenForAccountQuotaProbe(provider: string, accountId: string)
   return getValidAccessTokenForAccount(provider, accountId);
 }
 
+/**
+ * Capture the complete account tuple after any refresh has settled. Reading the bearer and
+ * project from separate credential reads lets rotation publish a mixed request; the equality
+ * check plus the dispatch-time validator make the tuple immutable from capture through fetch.
+ */
+async function captureAccountQuotaSnapshot(
+  provider: string,
+  accountId: string,
+  destination: string,
+): Promise<OAuthAccessSnapshot> {
+  const accessToken = await getTokenForAccountQuotaProbe(provider, accountId);
+  const credential = getAccountCredential(provider, accountId);
+  if (!credential || credential.access !== accessToken) {
+    throw new Error("OAuth account credential rotated during quota refresh");
+  }
+  const snapshot: OAuthAccessSnapshot = {
+    provider,
+    accountId,
+    generation: credentialGeneration(credential),
+    accessToken,
+    ...(credential.projectId ? { projectId: credential.projectId } : {}),
+    ...(destination ? { destination } : {}),
+  };
+  assertOAuthAccessSnapshotCurrent(snapshot, destination || undefined);
+  return snapshot;
+}
+
 async function fetchAccountQuota(
   provider: string,
   accountId: string,
   forceRefresh: boolean,
+  baseUrl?: string,
 ): Promise<AccountQuotaCacheEntry> {
-  const key = accountCacheKey(provider, accountId);
+  const destination = provider === "google-antigravity" ? normalizeAntigravityDestination(baseUrl) : "";
+  const credential = getAccountCredential(provider, accountId);
+  if (!credential) return { ts: Date.now(), quota: null, unavailable: true };
+  const generation = credentialGeneration(credential);
+  const key = accountCacheKey(provider, accountId, destination, generation);
   const cached = accountQuotaCache.get(key);
   if (!forceRefresh && cached && Date.now() - cached.ts < ACCOUNT_QUOTA_TTL_MS) return cached;
   const joinable = accountQuotaInflight.get(key);
   if (joinable) return joinable;
 
+  let writeGeneration = generation;
+  let writeKey = key;
   const probe = (async (): Promise<AccountQuotaCacheEntry> => {
     try {
-      const token = await getTokenForAccountQuotaProbe(provider, accountId);
-      const quota = await fetchAnthropicUsageQuota(token);
+      const snapshot = provider === "google-antigravity"
+        ? await captureAccountQuotaSnapshot(provider, accountId, baseUrl || "https://daily-cloudcode-pa.googleapis.com")
+        : null;
+      const token = snapshot?.accessToken ?? await getTokenForAccountQuotaProbe(provider, accountId);
+      // A refresh may legitimately advance the generation while the probe is in flight. Write
+      // only under the captured generation's key; the old key is never repopulated by a late
+      // writer, and routing reads the same destination+account+generation identity.
+      writeGeneration = snapshot?.generation ?? generation;
+      writeKey = accountCacheKey(provider, accountId, destination, writeGeneration);
+      const priorQuota = writeGeneration === generation ? cached?.quota ?? null : null;
+      const tupleIsCurrent = (): boolean => {
+        const latest = getAccountCredential(provider, accountId);
+        return !!latest && credentialGeneration(latest) === writeGeneration;
+      };
+      const quota = provider === "google-antigravity"
+        ? await (async () => {
+            if (!snapshot?.projectId || destination === "!invalid!") return null;
+            return fetchAntigravityAccountQuota({
+              accessToken: snapshot.accessToken,
+              projectId: snapshot.projectId,
+              baseUrl: baseUrl || "https://daily-cloudcode-pa.googleapis.com",
+              timeoutMs: REQUEST_TIMEOUT_MS,
+              snapshotValidator: actualDestination => assertOAuthAccessSnapshotCurrent(snapshot, actualDestination),
+            });
+          })()
+        : await fetchAnthropicUsageQuota(token);
       if (!quota) {
         // Preserve last-good bars and mark unavailable; advance TTL so failures
         // negative-cache instead of re-probing on every GUI poll.
         const entry: AccountQuotaCacheEntry = {
           ts: Date.now(),
-          quota: cached?.quota ?? null,
+          quota: priorQuota,
           unavailable: true,
         };
-        accountQuotaCache.set(key, entry);
+        if (tupleIsCurrent()) accountQuotaCache.set(writeKey, entry);
         return entry;
       }
       const entry: AccountQuotaCacheEntry = { ts: Date.now(), quota };
-      accountQuotaCache.set(key, entry);
+      if (tupleIsCurrent()) accountQuotaCache.set(writeKey, entry);
       return entry;
-    } catch {
+    } catch (error) {
+      const terminal = error instanceof AntigravityQuotaRpcError && isTerminalAntigravityQuotaStatus(error.status);
       const entry: AccountQuotaCacheEntry = {
         ts: Date.now(),
-        quota: cached?.quota ?? null,
+        quota: terminal ? null : (writeGeneration === generation ? cached?.quota ?? null : null),
         unavailable: true,
       };
-      accountQuotaCache.set(key, entry);
+      const latest = getAccountCredential(provider, accountId);
+      if (latest && credentialGeneration(latest) === writeGeneration) accountQuotaCache.set(writeKey, entry);
       return entry;
     }
   })().finally(() => {
@@ -506,12 +594,13 @@ async function fetchAccountQuota(
 export async function fetchProviderAccountQuotas(
   provider: string,
   forceRefresh = false,
+  baseUrl?: string,
 ): Promise<ProviderAccountQuota[]> {
   if (!supportsPerAccountQuota(provider)) return [];
   const set = getAccountSet(provider);
   if (!set) return [];
   return await Promise.all(set.accounts.map(async account => {
-    const entry = await fetchAccountQuota(provider, account.id, forceRefresh);
+    const entry = await fetchAccountQuota(provider, account.id, forceRefresh, baseUrl);
     return {
       accountId: account.id,
       quota: entry.quota,
@@ -872,57 +961,27 @@ function antigravityUsedPercent(quotaInfo: Record<string, unknown>): number | un
 }
 
 async function fetchAntigravityQuota(provider: string, config: OcxProviderConfig): Promise<ProviderQuotaReport | null> {
-  const credential = getCredential("google-antigravity");
-  if (!credential?.projectId) return null;
-  let accessToken: string;
+  const baseUrl = (config.baseUrl || "https://daily-cloudcode-pa.googleapis.com").replace(/\/+$/, "");
+  let snapshot: OAuthAccessSnapshot;
   try {
-    accessToken = await getValidAccessToken("google-antigravity");
+    snapshot = await getValidAccessTokenSnapshot("google-antigravity", baseUrl);
   } catch {
     return null;
   }
-  const baseUrl = (config.baseUrl || "https://daily-cloudcode-pa.googleapis.com").replace(/\/+$/, "");
-  const response = await fetch(`${baseUrl}/v1internal:fetchAvailableModels`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "User-Agent": antigravityUserAgent(),
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ project: credential.projectId }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!response.ok) return null;
-  const body = asRecord(await response.json().catch(() => null));
-  const models = asRecord(body?.models);
-  if (!models) return null;
-
-  const windows = new Map<string, ProviderQuotaWindow>();
-  for (const [modelId, rawModelInfo] of Object.entries(models)) {
-    const modelInfo = asRecord(rawModelInfo);
-    if (!modelInfo) continue;
-    for (const quotaInfo of quotaInfoEntries(modelInfo)) {
-      const label = classifyAntigravityFamily(modelId, modelInfo, quotaInfo);
-      if (!label || windows.has(label)) continue;
-      const percent = antigravityUsedPercent(quotaInfo);
-      if (percent === undefined) continue;
-      windows.set(label, {
-        label,
-        percent,
-        ...(normalizeResetAt(quotaInfo.resetTime) !== undefined ? { resetAt: normalizeResetAt(quotaInfo.resetTime) } : {}),
-      });
+  if (!snapshot.projectId) return null;
+  try {
+    assertOAuthAccessSnapshotCurrent(snapshot, baseUrl);
+    const snapshotValidator = (actualDestination: string) => assertOAuthAccessSnapshotCurrent(snapshot, actualDestination);
+    const live = await fetchAntigravityLiveQuota({ accessToken: snapshot.accessToken, projectId: snapshot.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS, snapshotValidator });
+    const quota = live ?? await fetchAntigravityAccountQuota({ accessToken: snapshot.accessToken, projectId: snapshot.projectId, baseUrl, timeoutMs: REQUEST_TIMEOUT_MS, snapshotValidator });
+    return quota ? report(provider, live ? "google-antigravity:retrieveUserQuota" : "google-antigravity:fetchAvailableModels", quota) : null;
+  } catch (error) {
+    // Terminal auth/quota/geoblock responses must not preserve stale rows or retry on a peer.
+    if (error instanceof AntigravityQuotaRpcError && isTerminalAntigravityQuotaStatus(error.status)) {
+      return { provider, label: providerLabel(provider), source: "google-antigravity:terminal", quota: { updatedAt: Date.now() }, updatedAt: Date.now(), terminal: true };
     }
+    return null;
   }
-
-  const customWindows = ["Gem", "Cla"].flatMap(label => {
-    const window = windows.get(label);
-    return window ? [window] : [];
-  });
-  if (customWindows.length === 0) return null;
-  return report(provider, "google-antigravity:fetchAvailableModels", {
-    customWindows,
-    updatedAt: Date.now(),
-  });
 }
 
 async function maybeFetchProviderQuota(
@@ -969,9 +1028,11 @@ export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh 
 
   const promise = (async (): Promise<ProviderQuotaResponse> => {
     const previous = cache && cache.key === key ? cache.response.reports : [];
-    const fresh = (await Promise.all(
+    const probed = (await Promise.all(
       Object.entries(config.providers).map(([name, provider]) => maybeFetchProviderQuota(name, provider, config, forceRefresh)),
     )).filter((item): item is ProviderQuotaReport => item !== null);
+    const terminalProviders = new Set(probed.filter(item => item.terminal === true).map(item => item.provider));
+    const fresh = probed.filter(item => item.terminal !== true);
 
     // Keep bounded last-good rows when a probe fails (e.g. transient upstream flake); never
     // re-stamp their timestamps, and drop rows older than LAST_GOOD_MAX_AGE_MS.
@@ -981,6 +1042,7 @@ export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh 
     const cutoff = Date.now() - LAST_GOOD_MAX_AGE_MS;
     const byProvider = new Map<string, ProviderQuotaReport>();
     for (const item of previous) {
+      if (terminalProviders.has(item.provider)) continue;
       if (item.updatedAt >= cutoff) byProvider.set(item.provider, item);
     }
     for (const item of fresh) byProvider.set(item.provider, item);
