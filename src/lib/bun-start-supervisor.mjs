@@ -40,6 +40,41 @@ class BoundedStderr {
   }
 }
 
+/**
+ * Bounded stderr tail plus an attempt-local exact crash-marker latch.
+ *
+ * Shared by every launch route that classifies Bun panics: `tail` keeps at
+ * most 64 KiB for diagnostics while `matched` remembers the exact
+ * "oh no: Bun has crashed" marker even if later stderr evicts it. Each
+ * launch attempt must construct a fresh latch so output from one crash can
+ * never classify an ordinary later failure.
+ */
+export function createBunCrashLatch() {
+  const tail = new BoundedStderr();
+  const marker = Buffer.from(BUN_CRASH_MARKER);
+  let carry = Buffer.alloc(0);
+  let matched = false;
+  return {
+    append(chunk) {
+      tail.append(chunk);
+      if (matched) return;
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const window = carry.length > 0 ? Buffer.concat([carry, bytes]) : bytes;
+      matched = window.indexOf(marker) !== -1;
+      if (!matched) {
+        const carryLength = Math.min(marker.length - 1, window.length);
+        carry = Buffer.from(window.subarray(window.length - carryLength));
+      }
+    },
+    get matched() {
+      return matched;
+    },
+    toString() {
+      return tail.toString();
+    },
+  };
+}
+
 function isAbnormalExit(code, signal) {
   return signal !== null || (code !== null && code !== 0);
 }
@@ -104,10 +139,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
       if (finished) return;
       let spawnError = null;
       let closed = false;
-      const stderrTail = new BoundedStderr();
-      const marker = Buffer.from(BUN_CRASH_MARKER);
-      let markerCarry = Buffer.alloc(0);
-      let sawExactMarker = false;
+      const latch = createBunCrashLatch();
       let resumeAfterDrain = null;
       try {
         child = spawnImpl(command, args, {
@@ -130,16 +162,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
 
       if (stderrStream && typeof stderrStream.on === "function") {
         stderrStream.on("data", chunk => {
-          stderrTail.append(chunk);
-          if (!sawExactMarker) {
-            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-            const window = markerCarry.length > 0 ? Buffer.concat([markerCarry, bytes]) : bytes;
-            sawExactMarker = window.indexOf(marker) !== -1;
-            if (!sawExactMarker) {
-              const carryLength = Math.min(marker.length - 1, window.length);
-              markerCarry = Buffer.from(window.subarray(window.length - carryLength));
-            }
-          }
+          latch.append(chunk);
 
           try {
             const forwarded = writeStderr(chunk);
@@ -173,7 +196,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
         }
         const effectiveSignal = parentSignal ?? signal ?? null;
         const abnormal = parentSignal === null && isAbnormalExit(code, signal);
-        const panic = abnormal && sawExactMarker;
+        const panic = abnormal && latch.matched;
         if (panic) panicQualifiedAttempts += 1;
         if (panic && retryCount < retries) {
           retryCount += 1;
@@ -189,7 +212,7 @@ export function runBunWithCrashRetry(command, args, options = {}) {
         finish({
           code: parentSignal ? null : (code ?? null),
           signal: effectiveSignal,
-          stderrTail: stderrTail.toString(),
+          stderrTail: latch.toString(),
         });
       };
 

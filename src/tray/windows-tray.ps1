@@ -68,6 +68,7 @@ if (-not $createdNew) {
 
 $heartbeatPath = Join-Path $OpenCodexHome "tray-heartbeat.json"
 $actionLogPath = Join-Path $OpenCodexHome "tray-actions.log"
+$crashRecordPath = Join-Path $OpenCodexHome "tray-crash.json"
 
 function Write-ActionLog([string]$Message) {
   $line = "[$([DateTimeOffset]::Now.ToString('o'))] $Message"
@@ -93,13 +94,70 @@ function Start-OcxCommand([string[]]$CommandArgs) {
     $psi.EnvironmentVariables["CODEX_HOME"] = $CodexHome
     $psi.EnvironmentVariables["OPENCODEX_HOME"] = $OpenCodexHome
     $process = [System.Diagnostics.Process]::Start($psi)
-    if ($null -ne $process) { $process.Dispose() }
+    if ($null -ne $process) {
+      # Keep the handle alive so Reap-DispatchedCommands can observe how the
+      # command actually ended instead of discarding it unseen.
+      [void]$script:dispatched.Add($process)
+      [void]$script:dispatchedMeta.Add(@{
+        command = ($CommandArgs -join ' ')
+        startedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+      })
+      while ($script:dispatched.Count -gt 8) {
+        try { $script:dispatched[0].Dispose() } catch { }
+        $script:dispatched.RemoveAt(0)
+        $script:dispatchedMeta.RemoveAt(0)
+      }
+    }
     Write-ActionLog "dispatched $($CommandArgs -join ' ')"
     return $true
   } catch {
     Write-ActionLog "launch failed: $($_.Exception.GetType().Name)"
     $notify.ShowBalloonTip(5000, "opencodex action failed", "The action could not start. Open the logs folder or run ocx doctor.", [System.Windows.Forms.ToolTipIcon]::Error)
     return $false
+  }
+}
+
+function Write-CrashRecord([string]$Source, [string]$Command, [int]$ExitCode, [int]$ElapsedSeconds) {
+  try {
+    $entries = @()
+    if ([System.IO.File]::Exists($crashRecordPath)) {
+      try {
+        $existing = Get-Content -LiteralPath $crashRecordPath -Raw | ConvertFrom-Json
+        if ($null -ne $existing -and $existing.version -eq 1 -and $null -ne $existing.entries) { $entries = @($existing.entries) }
+      } catch { }
+    }
+    $entry = @{
+      at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+      source = $Source
+      command = $Command
+      exitCode = $ExitCode
+      elapsedSeconds = $ElapsedSeconds
+      panic = $false
+    }
+    $entries = @($entries) + @($entry)
+    if ($entries.Count -gt 8) { $entries = $entries[-8..-1] }
+    $payload = @{ version = 1; entries = $entries } | ConvertTo-Json -Compress -Depth 4
+    [System.IO.File]::WriteAllText($crashRecordPath, $payload, (New-Object System.Text.UTF8Encoding($false)))
+  } catch { }
+}
+
+function Reap-DispatchedCommands {
+  for ($i = $script:dispatched.Count - 1; $i -ge 0; $i--) {
+    $process = $script:dispatched[$i]
+    if (-not $process.HasExited) { continue }
+    $meta = $script:dispatchedMeta[$i]
+    $exitCode = 0
+    try { $exitCode = $process.ExitCode } catch { }
+    $elapsedSeconds = [int](([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [int64]$meta.startedAt) / 1000)
+    if ($exitCode -eq 0) {
+      Write-ActionLog "dispatched '$($meta.command)' exited cleanly after ${elapsedSeconds}s"
+    } else {
+      Write-ActionLog "dispatched '$($meta.command)' failed with exit code $exitCode after ${elapsedSeconds}s"
+      Write-CrashRecord "tray-dispatch" $meta.command $exitCode $elapsedSeconds
+    }
+    try { $process.Dispose() } catch { }
+    $script:dispatched.RemoveAt($i)
+    $script:dispatchedMeta.RemoveAt($i)
   }
 }
 
@@ -163,6 +221,8 @@ $script:pendingAction = $null
 $script:pendingStarted = 0L
 $script:pendingDeadline = 0L
 $script:pendingOldProxyPid = $null
+$script:dispatched = New-Object System.Collections.Generic.List[System.Diagnostics.Process]
+$script:dispatchedMeta = New-Object System.Collections.Generic.List[object]
 
 function Set-PendingAction([string]$Action, [int]$TimeoutSeconds) {
   $script:pendingAction = $Action
@@ -265,6 +325,7 @@ $timer.add_Tick({
     [System.Windows.Forms.Application]::Exit()
     return
   }
+  Reap-DispatchedCommands
   Update-TrayState
 })
 $notify.ContextMenuStrip = $menu
@@ -273,6 +334,7 @@ $notify.Visible = $true
 $notify.Text = "opencodex: Checking..."
 
 try {
+  Reap-DispatchedCommands
   Update-TrayState
   $timer.Start()
   [System.Windows.Forms.Application]::Run()

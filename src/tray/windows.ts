@@ -5,12 +5,15 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandUserPath, getConfigDir } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
+import { launchTrayHostWithCrashRetry } from "../lib/tray-host-supervisor.mjs";
 import { hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
 
 const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const RUN_PARENT_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion";
 const TRAY_STATE_VERSION = 1;
+const TRAY_CRASH_STATE_VERSION = 1;
+const TRAY_CRASH_EVIDENCE_MAX_ENTRIES = 8;
 const FOREIGN_RUN_VALUE = "<foreign-or-unreadable-registry-value>";
 const TRAY_ICON_FILES = [
   "opencodex-tray-online.ico",
@@ -33,12 +36,33 @@ interface WindowsTrayState extends WindowsTrayEntry {
   runCommand: string;
 }
 
+/** One observed tray failure, written by the host supervisor or the tray menu itself. */
+export interface TrayCrashEvidenceEntry {
+  at: number;
+  source: "host-launch" | "tray-dispatch";
+  command?: string;
+  exitCode: number | null;
+  signal?: string | null;
+  elapsedSeconds?: number;
+  panic: boolean;
+}
+
+/** The most recent recorded crash, attached to status when the tray is not running. */
+export interface WindowsTrayCrash {
+  at: number;
+  source: string;
+  command?: string;
+  exitCode: number | null;
+  panic: boolean;
+}
+
 export interface WindowsTrayStatus {
   supported: boolean;
   installed: boolean;
   running: boolean;
   stale: boolean;
   summary: string;
+  crash?: WindowsTrayCrash;
 }
 
 function trayStatePath(): string {
@@ -324,6 +348,104 @@ function readHeartbeat(): { pid: number; hostPid?: number; timestamp: number } |
   }
 }
 
+// Crash evidence survives tray exit on purpose: the heartbeat is deleted when
+// the tray leaves, so it can never explain why the tray is gone. The record
+// lives in its own bounded file that both the TypeScript supervisor and the
+// tray menu append to, and only trayStatusFrom reads.
+
+function trayCrashPath(): string {
+  return join(getConfigDir(), "tray-crash.json");
+}
+
+function parseTrayCrashEntry(value: unknown): TrayCrashEvidenceEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entry = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(entry.at) || (entry.at as number) <= 0) return null;
+  if (typeof entry.source !== "string" || entry.source.length === 0 || entry.source.length > 64) return null;
+  const command = typeof entry.command === "string" && entry.command.length > 0 && entry.command.length <= 64
+    ? entry.command
+    : undefined;
+  const signal = typeof entry.signal === "string" && entry.signal.length > 0 && entry.signal.length <= 32
+    ? entry.signal
+    : undefined;
+  const elapsedSeconds = Number.isSafeInteger(entry.elapsedSeconds) ? entry.elapsedSeconds as number : undefined;
+  return {
+    at: entry.at as number,
+    source: entry.source as TrayCrashEvidenceEntry["source"],
+    ...(command ? { command } : {}),
+    exitCode: Number.isSafeInteger(entry.exitCode) ? entry.exitCode as number : null,
+    ...(signal ? { signal } : {}),
+    ...(elapsedSeconds !== undefined ? { elapsedSeconds } : {}),
+    panic: entry.panic === true,
+  };
+}
+
+export function parseTrayCrashEvidence(raw: string): TrayCrashEvidenceEntry[] {
+  try {
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as { version?: unknown; entries?: unknown };
+    if (!parsed || typeof parsed !== "object" || parsed.version !== TRAY_CRASH_STATE_VERSION || !Array.isArray(parsed.entries)) {
+      return [];
+    }
+    // Newest last, capped: a hostile or runaway writer cannot grow this file forever.
+    return parsed.entries
+      .map(entry => parseTrayCrashEntry(entry))
+      .filter((entry): entry is TrayCrashEvidenceEntry => entry !== null)
+      .slice(-TRAY_CRASH_EVIDENCE_MAX_ENTRIES);
+  } catch {
+    return [];
+  }
+}
+
+export function readTrayCrashEvidence(path = trayCrashPath()): TrayCrashEvidenceEntry[] {
+  try {
+    return parseTrayCrashEvidence(readFileSync(path, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+export function recordTrayCrashEvidence(
+  entry: Omit<TrayCrashEvidenceEntry, "at"> & { at?: number },
+  path = trayCrashPath(),
+): void {
+  const normalized: TrayCrashEvidenceEntry = {
+    ...entry,
+    at: Number.isSafeInteger(entry.at) && (entry.at as number) > 0 ? entry.at as number : Date.now(),
+    exitCode: typeof entry.exitCode === "number" ? entry.exitCode : null,
+    panic: entry.panic === true,
+  };
+  const entries = [...readTrayCrashEvidence(path), normalized].slice(-TRAY_CRASH_EVIDENCE_MAX_ENTRIES);
+  replaceOwnedFile(path, `${JSON.stringify({ version: TRAY_CRASH_STATE_VERSION, entries }, null, 2)}\n`);
+}
+
+export function latestTrayCrash(entries = readTrayCrashEvidence()): TrayCrashEvidenceEntry | null {
+  let latest: TrayCrashEvidenceEntry | null = null;
+  for (const entry of entries) {
+    if (!latest || entry.at > latest.at) latest = entry;
+  }
+  return latest;
+}
+
+export function describeTrayCrash(crash: TrayCrashEvidenceEntry, now = Date.now()): string {
+  const ageMinutes = Math.max(0, Math.round((now - crash.at) / 60_000));
+  const ageText = ageMinutes < 1 ? "<1m ago" : `${ageMinutes}m ago`;
+  if (crash.source === "tray-dispatch") {
+    return `menu action ${crash.command ?? "(unknown)"} failed with exit code ${crash.exitCode ?? "unknown"} ${ageText}`;
+  }
+  const reason = crash.panic ? "native Bun crash marker" : `exit code ${crash.exitCode ?? "unknown"}`;
+  return `tray host crashed during launch (${reason}) ${ageText}`;
+}
+
+function trayCrashStatusField(crash: TrayCrashEvidenceEntry): WindowsTrayCrash {
+  return {
+    at: crash.at,
+    source: crash.source,
+    ...(crash.command ? { command: crash.command } : {}),
+    exitCode: crash.exitCode,
+    panic: crash.panic,
+  };
+}
+
 function processAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
@@ -384,14 +506,25 @@ function trayStatusFrom(registered: string | null): WindowsTrayStatus {
     heartbeatFresh: Boolean(heartbeat && Date.now() - heartbeat.timestamp <= 15_000),
   });
   const installed = registered !== null && state !== null && registered === state.runCommand && !stale;
+  // A crash record explains a dead tray without touching registration health:
+  // staleness stays about foreign or missing registration, never about crashes.
+  const lastCrash = latestTrayCrash();
+  const crashNote = running || !lastCrash ? null : describeTrayCrash(lastCrash);
   const summary = registered === null
     ? running ? "unregistered tray process is still running" : "not installed"
     : stale
       ? "startup registration is foreign, stale, or points to missing package files"
       : running
         ? "installed and running"
-        : "installed, not currently running";
-  return { supported: true, installed, running, stale, summary };
+        : `installed, not currently running${crashNote ? ` — ${crashNote}` : ""}`;
+  return {
+    supported: true,
+    installed,
+    running,
+    stale,
+    summary,
+    ...(lastCrash && crashNote ? { crash: trayCrashStatusField(lastCrash) } : {}),
+  };
 }
 
 export function getWindowsTrayStatus(): WindowsTrayStatus {
@@ -414,17 +547,37 @@ function assertWindows(): void {
   if (process.platform !== "win32") throw new Error(`The opencodex tray is Windows-only (current platform: ${process.platform}).`);
 }
 
-function spawnTray(state: WindowsTrayEntry): void {
-  const child = spawn(state.bun, [state.cli, "__tray-host"], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
+/**
+ * Launch the detached tray host under crash-retry supervision.
+ *
+ * The supervision promise is deliberately not awaited: callers follow with
+ * waitForHeartbeat(true), which owns the overall verdict inside its existing
+ * budget. The supervisor observes only the launch window, so a native Bun
+ * panic during launch earns one bounded retry instead of an invisible death,
+ * and every abnormal early exit lands in tray-crash.json where
+ * trayStatusFrom can surface the reason.
+ */
+function spawnTray(entry: WindowsTrayEntry): void {
+  void launchTrayHostWithCrashRetry({
+    command: entry.bun,
+    args: [entry.cli, "__tray-host"],
     env: {
       ...process.env,
-      OCX_TRAY_ENTRY_B64: Buffer.from(JSON.stringify(state), "utf8").toString("base64"),
+      OCX_TRAY_ENTRY_B64: Buffer.from(JSON.stringify(entry), "utf8").toString("base64"),
+    },
+    heartbeatFresh: () => heartbeatRunning(),
+    onEvidence: evidence => {
+      try {
+        recordTrayCrashEvidence({
+          at: evidence.timestampMs,
+          source: "host-launch",
+          exitCode: typeof evidence.exitCode === "number" ? evidence.exitCode : null,
+          signal: typeof evidence.signal === "string" ? evidence.signal : null,
+          panic: evidence.panic === true,
+        });
+      } catch { /* diagnostics must not change install semantics */ }
     },
   });
-  child.unref();
 }
 
 function parseTrayHostEntry(): WindowsTrayEntry {
