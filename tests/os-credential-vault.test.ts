@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import {
   CredentialVaultError,
   assertValidTokenRef,
@@ -9,6 +10,7 @@ import {
   hasVaultSecret,
   readVaultSecret,
   storeVaultSecret,
+  setCredentialVaultSpawnForTests,
 } from "../src/lib/os-credential-vault";
 import { removeTempDir } from "./helpers/temp-dir";
 
@@ -34,6 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setCredentialVaultSpawnForTests(null);
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
   removeTempDir(testDir);
@@ -121,6 +124,24 @@ describe("bounds", () => {
     expect(() => hasVaultSecret("bad ref")).toThrow(CredentialVaultError);
     expect(() => deleteVaultSecret("bad ref")).toThrow(CredentialVaultError);
   });
+});
+
+test("async vault rejects oversized child output and cancels the child", async () => {
+  if (process.platform !== "win32") return;
+  const child = new EventEmitter() as EventEmitter & {
+    stdin: { end: () => void; destroy: () => void };
+    stdout: EventEmitter & { setEncoding: () => void; destroy: () => void };
+    stderr: EventEmitter & { setEncoding: () => void; destroy: () => void };
+    kill: () => void;
+  };
+  let killed = false;
+  child.stdin = { end: () => child.stdout.emit("data", "x".repeat(70_000)), destroy: () => undefined };
+  child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => undefined, destroy: () => undefined });
+  child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => undefined, destroy: () => undefined });
+  child.kill = () => { killed = true; };
+  setCredentialVaultSpawnForTests(() => child as never);
+  await expect(storeVaultSecret("oversized-output", "value")).rejects.toThrow(/too much stdout output/);
+  expect(killed).toBe(true);
 });
 
 describe("corrupt storage fails closed", () => {

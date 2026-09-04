@@ -110,11 +110,12 @@ const helpEntries: Record<string, HelpEntry> = {
   },
   export: {
     usage: "ocx export <path> --yes | ocx export --history [--json] | ocx export data <dataset> [--format <format>] [--out <path>] [--list]",
-    summary: "Export data or a full state backup; full state exports contain plaintext secrets.",
+    summary: "Export data or a full state backup; vault mode refuses incomplete full-state backups.",
     details: [
       "data <dataset>    Export a redacted dashboard dataset; use --list to see datasets and formats.",
       "--history         List local account/config snapshots.",
-      "<path> --yes      Export complete config, account, and auth state, including plaintext secrets.",
+      "<path> --yes      Export complete config, account, and auth state in ordinary mode (plaintext secrets included);",
+      "                  providerApiKeyVault=windows refuses because vault ciphertext is omitted.",
       "",
       "The full-state form requires a private mode-0600 file and cannot write to stdout.",
       "Store its output encrypted and never commit or upload it.",
@@ -179,7 +180,7 @@ const helpEntries: Record<string, HelpEntry> = {
       "remove <provider> <id> --yes  Remove a stored account or key after an existence check.",
       "add-key <provider> [--label <label>]  Add a key read only from piped stdin.",
       "login/reauth/code/cancel  Run browser or manual-code auth from a headless shell.",
-      "reset-credits <id|main> [--consume --yes]  Inspect or consume Codex reset credits.",
+      "reset-credits <id|main> [--consume --yes] [--operation-id <uuid>]  Inspect or consume Codex reset credits.",
       "Codex pool switches apply to new sessions; running threads keep their account.",
     ],
   },
@@ -498,9 +499,11 @@ Usage:
   ocx host <sub>              Expose the proxy to other devices on your network
   ocx launch [target]         Open an agent CLI or desktop app (Codex, Grok, Claude)
   ocx terminal <sub>          Run a command in an opencodex terminal session (list|run)
-  ocx export <path> --yes     Full state backup — config, accounts, auth (secrets included)
+  ocx export <path> --yes     Full state backup — ordinary mode includes secrets; vault mode refuses incomplete backup
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export
+                              Network fields include bounded noProxy and opt-in static systemProxy;
+                              providerApiKeyVault refuses full-state export because vault ciphertext is omitted
   ocx codex [args...]         Start if needed and launch Codex through the proxy
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile

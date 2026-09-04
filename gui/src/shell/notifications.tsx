@@ -26,11 +26,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<Notice[]>([]);
   const [history, setHistory] = useState<Notice[]>(readHistory);
   const seq = useRef(0);
+  const mounted = useRef(true);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   useEffect(() => {
     const pending = timers.current;
-    return () => { pending.forEach(clearTimeout); };
+    return () => {
+      mounted.current = false;
+      pending.forEach(clearTimeout);
+      pending.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -44,6 +49,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const notify = useCallback((input: Omit<Notice, "id" | "at" | "read">) => {
+    if (!mounted.current) return "";
     const id = `n${++seq.current}-${Date.now()}`;
     // The screen this notice belongs to, unless the caller already named one:
     // almost none do, so this is what lets the notification centre show a

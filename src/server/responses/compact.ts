@@ -5,6 +5,7 @@ import {
   multiAgentGuidanceEnabled,
   resolveEnvValue,
 } from "../../config";
+import { resolveProviderCredential } from "../../lib/provider-credentials";
 import { parseRequest } from "../../responses/parser";
 import { buildCompactV1Output, COMPACT_PROMPT, decodeCompactionSummary, extractCompactUserMessages } from "../../responses/compaction";
 import { FORWARD_HEADERS, sanitizeReasoningInputContent } from "../../adapters/openai-responses";
@@ -54,6 +55,7 @@ import {
   codexProbeQuotaScope,
   type CodexAuthContext,
 } from "../../codex/auth-context";
+import { forceRefreshMainAccountToken } from "../../codex/main-account";
 import {
   formatCodexProviderForLog,
   recordCodexUpstreamOutcome,
@@ -247,7 +249,8 @@ export async function handleResponsesCompact(
       throw err;
     }
     const base = (compactProvider.baseUrl ?? "").replace(/\/$/, "");
-    if (compactProvider.apiKey) headers.set("authorization", `Bearer ${resolveEnvValue(compactProvider.apiKey)}`);
+    const compactApiKey = resolveProviderCredential(resolveEnvValue(compactProvider.apiKey));
+    if (compactApiKey) headers.set("authorization", `Bearer ${compactApiKey}`);
     const { reasoning: _reasoning, ...compactBodyRaw } = raw as typeof raw & { reasoning?: unknown };
     // The regular /v1/responses path applies sanitizeReasoningInputContent via the adapter's
     // buildRequest, but the compact endpoint forwards directly. Apply the same sanitizer here
@@ -298,6 +301,31 @@ export async function handleResponsesCompact(
       const outcome = err instanceof Error && err.name === "TimeoutError" ? "timeout" : "connect_error";
       recordCompactPoolOutcome(outcome);
       return formatErrorResponse(502, "upstream_error", "Failed to connect to compact upstream");
+    }
+    if (upstream.status === 401 && authCtx.kind === "main-pool") {
+      try {
+        const refreshed = await forceRefreshMainAccountToken(authCtx.accessToken, { signal: req.signal });
+        if (refreshed) {
+          authCtx = { ...authCtx, accessToken: refreshed.accessToken, chatgptAccountId: refreshed.chatgptAccountId };
+          const refreshedHeaders = headersForCodexAuthContext(req.headers, authCtx);
+          for (const name of FORWARD_HEADERS) {
+            const value = refreshedHeaders.get(name);
+            if (value) headers.set(name, value);
+          }
+          headers.set("authorization", `Bearer ${refreshed.accessToken}`);
+          headers.set("chatgpt-account-id", refreshed.chatgptAccountId);
+          upstream = await fetchWithHeaderTimeout(
+            compactUrl,
+            { method: "POST", headers, body: JSON.stringify({ ...compactBody, model: route.modelId }) },
+            req.signal,
+            connectMs,
+            false,
+            providerFetch(compactProvider),
+          );
+        }
+      } catch {
+        return formatErrorResponse(401, "authentication_error", "Selected Codex account needs reauthentication");
+      }
     }
     const retryAfter = upstream.headers.get("retry-after");
     const resetAt = [

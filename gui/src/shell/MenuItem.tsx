@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components -- shortcut helpers are the shared contract used by the component and its menus. */
+
 /**
  * The one menu row in this app, and the shortcut column it carries.
  *

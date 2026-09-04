@@ -369,6 +369,7 @@ export default function QuickRestore({ apiBase }: { apiBase: string }) {
               */
               aria-disabled={inert || undefined}
               aria-describedby={reason ? `quick-restore-reason-${action.tool}` : undefined}
+              // eslint-disable-next-line react-hooks/refs -- this is an event handler; run's ref is intentionally read only on click.
               onClick={() => { if (inert) return; void run(action.tool); }}
               aria-label={action.aria}
               title={reason ?? action.aria}

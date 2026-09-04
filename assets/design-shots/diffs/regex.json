@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "design-parity-diff/v1",
+  "id": "regex",
+  "inputs": {
+    "reference": {
+      "path": "assets/design-shots/regex.png",
+      "sha256": "15f2bf9f1f29395f75021736d7cbc1104b33ad7d2a27cc8c1b4cfab50cd2a797",
+      "width": 2880,
+      "height": 1800
+    },
+    "built": {
+      "path": "assets/shots/regex.png",
+      "sha256": "01f324200af25698e420a35a9f917bf4a354ac2675042a49d8924e03398c65e0",
+      "width": 2880,
+      "height": 1800
+    }
+  },
+  "comparison": {
+    "tool": "Pillow ImageChops.difference",
+    "mode": "RGB",
+    "threshold": 0,
+    "changedPixels": 1021701,
+    "totalPixels": 5184000,
+    "changedPixelRatio": 0.19708738425925926,
+    "meanAbsoluteChannelDifference": 9.228036265432099,
+    "rmsChannelDifference": 34.40010506975743,
+    "maxChannelDifference": 247
+  },
+  "tuple": {
+    "screen": "regex",
+    "state": "historical-seeded-default",
+    "theme": "light",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "locale": "en-US"
+  },
+  "reviewVerdict": "not-approved",
+  "reviewReason": "Metrics prioritize review; they do not approve visual parity."
+}

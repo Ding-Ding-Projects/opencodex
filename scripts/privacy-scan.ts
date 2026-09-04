@@ -6,6 +6,7 @@ import {
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { KNOWN_AGENT_IDENTITIES } from "./line-attribution";
 
 export type Finding = {
   file: string;
@@ -463,8 +464,12 @@ function lineNumber(text: string, index: number): number {
 
 function isAllowedEmail(file: string, email: string): boolean {
   if (file === "scripts/privacy-scan.ts" && email === "a@b.com") return true;
-  const domain = email.split("@").at(1)?.toLowerCase() ?? "";
-  if (domain === "example.test" || domain === "example.com" || domain === "test.com" || domain.endsWith(".test")) {
+  const normalized = email.toLowerCase();
+  if (file === "scripts/line-attribution.ts" && KNOWN_AGENT_IDENTITIES.some(identity => identity.email.toLowerCase() === normalized)) {
+    return true;
+  }
+  const domain = normalized.split("@").at(1) ?? "";
+  if (domain === "example.test" || domain === "example.com" || domain === "test.com" || domain === "invalid" || domain.endsWith(".test") || domain.endsWith(".invalid")) {
     return true;
   }
   // URL-userinfo fixtures (https://user:pw@host/...) read as "pw@host" — not emails.

@@ -245,6 +245,8 @@ export const de: Record<TKey, string> = {
   "dash.updateStatus.restarting": "Update installiert. Proxy wird neu gestartet.",
   "dash.updateStatus.succeeded": "Update abgeschlossen.",
   "dash.updateStatus.failed": "Update fehlgeschlagen.",
+  "dash.updateStatus.cancelled": "Update abgebrochen.",
+  "dash.updateManualRestart": "Starte den Proxy manuell neu, um die neue Version zu verwenden.",
   "prov.subtitle": "Konfiguriere die Upstream-Anbieter, die opencodex in Codex routet. Melde dich mit einem Konto an, füge einen Anbieter hinzu oder bearbeite die Rohkonfiguration.",
   "prov.add": "Anbieter hinzufügen",
   "prov.editJson": "JSON bearbeiten",

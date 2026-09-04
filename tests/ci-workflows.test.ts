@@ -334,7 +334,7 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
-  test("release workflow gates the exact SHA, channel, and service surface without injection", async () => {
+  test("release workflow publishes the exact SHA and channel without quality-gate waits or injection", async () => {
     const workflow = await readText(".github/workflows/release.yml");
 
     // Least privilege + never cancel a publish mid-flight.
@@ -347,6 +347,15 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toMatch(/dry-run:[\s\S]*?default: true/);
     expect(workflow).not.toContain("secrets.NPM_TOKEN");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN:");
+    expect(workflow).toContain(
+      "secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN",
+    );
+
+    // Every real publish is pinned to an explicitly supplied immutable commit.
+    expect(workflow).toMatch(/expected-sha:[\s\S]*?required: true/);
+    expect(workflow).toContain("ref: ${{ inputs.expected-sha }}");
+    expect(workflow).toContain('checked_out_sha="$(git rev-parse HEAD)"');
+    expect(workflow).toContain('gh release create "$release_tag" --target "$GITHUB_SHA"');
 
     // Immutable action references.
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
@@ -362,43 +371,9 @@ describe("GitHub Actions hardening", () => {
       expect(runSource).not.toContain("${{ inputs.");
     }
 
-    // The service gate must cover the post-restructure service surface and stay
-    // in sync with every service-lifecycle.yml push trigger path.
-    const gateMatch = workflow.match(/grep -Eq '(\^\([^']+\)\$)'/);
-    expect(gateMatch).not.toBeNull();
-    const gate = new RegExp(gateMatch![1]!);
-    const lifecycle = await readText(".github/workflows/service-lifecycle.yml");
-    const pushPaths = lifecycle
-      .split("push:")[1]!
-      .split("workflow_dispatch:")[0]!
-      .split("\n")
-      .map(line => line.trim())
-      .filter(line => line.startsWith('- "'))
-      .map(line => line.slice(3, -1));
-    expect(pushPaths.length).toBeGreaterThanOrEqual(6);
-    for (const path of pushPaths) {
-      expect(gate.test(path)).toBe(true);
-    }
-    expect(gate.test("src/cli/index.ts")).toBe(true);
-    expect(gate.test("src/lib/bun-runtime.ts")).toBe(true);
-    expect(gate.test("src/cli.ts")).toBe(true);
-
-    // PR and push triggers must stay path-set identical, and both must cover the
-    // pre-restructure compat stub src/cli.ts that the release gate regex checks
-    // (devlog 260716_passthrough_followups/020 — a release whose only service change
-    // is src/cli.ts must auto-trigger service-lifecycle instead of dead-ending the gate).
-    const prPaths = lifecycle
-      .split("pull_request:")[1]!
-      .split("push:")[0]!
-      .split("\n")
-      .map(line => line.trim())
-      .filter(line => line.startsWith('- "'))
-      .map(line => line.slice(3, -1));
-    expect([...prPaths].sort()).toEqual([...pushPaths].sort());
-    expect(prPaths).toContain("src/cli.ts");
-    expect(pushPaths).toContain("src/cli.ts");
-    expect(gate.test("src/router.ts")).toBe(false);
-    expect(gate.test("docs-site/src/pages/index.astro")).toBe(false);
+    // Delivery never runs or waits for a code-quality workflow verdict.
+    expect(workflow).not.toMatch(/gh run (?:list|watch)[^\n]*(?:ci\.yml|service-lifecycle\.yml)/);
+    expect(workflow).not.toMatch(/(?:bun|npm|pnpm|yarn) (?:run )?(?:test|lint|typecheck)\b/);
 
     // Channel guards stay branch-exact.
     expect(workflow).toContain("Release must run from main or preview");
@@ -406,8 +381,7 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("preview releases must use a preview prerelease version");
 
     // Release notes must include PR categories and the full channel commit range
-    // (branch merges + direct commits). Preflight forbids an existing release, so
-    // only create (not edit) is wired. Stable releases also carry matching preview notes.
+    // (branch merges + direct commits). Stable releases also carry matching preview notes.
     expect(workflow).toContain("releases/generate-notes");
     expect(workflow).toContain("git log --pretty=format:'- %s (%h)'");
     expect(workflow).toContain('commit_range="${notes_range_start}..${GITHUB_SHA}"');
@@ -443,7 +417,9 @@ describe("GitHub Actions hardening", () => {
       expect(releaseNotesHelper).toContain(`"${cmd}"`);
     }
     expect(workflow).toMatch(/gh release create[\s\S]*?--notes-file "\$notes_file"/);
-    expect(workflow).not.toContain("gh release edit");
+    expect(count(workflow, "gh release create")).toBe(1);
+    expect(workflow).toContain('gh release edit "$release_tag" --notes-file "$notes_file"');
+    expect(workflow).toContain("Workflow duration");
     expect(workflow).not.toContain("--generate-notes");
     // Notes must be assembled before tagging so a notes API failure does not leave
     // a remote tag that blocks release retries at preflight.

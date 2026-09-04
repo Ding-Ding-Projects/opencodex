@@ -28,6 +28,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify exact source commit
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $env:GITHUB_SHA) {
+            throw "Checkout resolved to $actual instead of the requested workflow SHA $env:GITHUB_SHA."
+          }
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -78,23 +88,59 @@ jobs:
           CSC_KEY_PASSWORD: ""
           WIN_CSC_LINK: ""
           WIN_CSC_KEY_PASSWORD: ""
-        run: npx --yes electron-builder@26.15.3 --win --publish never
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath "dist-desktop") {
+            Remove-Item -LiteralPath "dist-desktop" -Recurse -Force
+          }
+          npx --yes electron-builder@26.15.3 --win squirrel --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder exited with code $LASTEXITCODE."
+          }
 
       - name: Verify unsigned Squirrel feed
         shell: pwsh
         run: |
-          $setups = @(Get-ChildItem -LiteralPath dist-desktop -Recurse -File -Filter "*.exe" | Where-Object { $_.Name -match "Setup" })
-          $releaseIndexes = @(Get-ChildItem -LiteralPath dist-desktop -Recurse -File | Where-Object { $_.Name -eq "RELEASES" })
-          $fullPackages = @(Get-ChildItem -LiteralPath dist-desktop -Recurse -File -Filter "*.nupkg" | Where-Object { $_.Name -notmatch "-delta\.nupkg$" })
-          if ($setups.Count -eq 0 -or $releaseIndexes.Count -eq 0 -or $fullPackages.Count -eq 0) {
-            throw "Squirrel packaging did not produce Setup.exe, RELEASES, and a full .nupkg."
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE "dist-desktop"
+          if (-not (Test-Path -LiteralPath $outputRoot -PathType Container)) {
+            throw "dist-desktop was not created."
           }
+
+          $setups = @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File -Filter "*Setup*.exe" | Where-Object { $_.Length -gt 0 })
+          $releaseIndexes = @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File -Filter "RELEASES" | Where-Object { $_.Length -gt 0 })
+          $fullPackages = @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File -Filter "*-full.nupkg" | Where-Object { $_.Length -gt 0 })
+          $deltaPackages = @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File -Filter "*-delta.nupkg" | Where-Object { $_.Length -gt 0 })
+          if ($setups.Count -ne 1) {
+            throw "Expected exactly one non-empty Squirrel Setup.exe, found $($setups.Count)."
+          }
+          if ($releaseIndexes.Count -ne 1) {
+            throw "Expected exactly one non-empty Squirrel RELEASES index, found $($releaseIndexes.Count)."
+          }
+          if ($fullPackages.Count -lt 1) {
+            throw "Squirrel packaging did not produce a non-empty full .nupkg."
+          }
+
+          $releaseText = Get-Content -LiteralPath $releaseIndexes[0].FullName -Raw
+          foreach ($package in @($fullPackages) + @($deltaPackages)) {
+            if ($releaseText -notmatch [regex]::Escape($package.Name)) {
+              throw "RELEASES does not reference produced package $($package.Name)."
+            }
+          }
+
+          $signatureEvidence = @()
           foreach ($setup in $setups) {
             $signature = Get-AuthenticodeSignature -LiteralPath $setup.FullName
             if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
               throw "Expected unsigned installer, but $($setup.Name) reported $($signature.Status)."
             }
+            $signatureEvidence += "installer=$($setup.Name)"
+            $signatureEvidence += "authenticode_status=$($signature.Status)"
+            $signatureEvidence += "sha256=$((Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
           }
+          $signatureEvidence += "distribution_warning=Unsigned installer; Windows may show an Unknown Publisher or SmartScreen warning."
+          $signatureEvidence += "full_packages=$($fullPackages.Count)"
+          $signatureEvidence += "delta_packages=$($deltaPackages.Count)"
+          $signatureEvidence | Set-Content -LiteralPath (Join-Path $outputRoot "unsigned-installer-evidence.txt") -Encoding utf8
 
       - name: List what was produced
         shell: bash
@@ -121,7 +167,9 @@ jobs:
           $safeCount = 0
           if (Test-Path -LiteralPath $sourceRoot -PathType Container) {
             Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object {
-              $_.Extension -in @(".exe", ".nupkg") -or $_.Name -eq "RELEASES"
+              $_.Name -eq "RELEASES" -or
+                $_.Name -eq "unsigned-installer-evidence.txt" -or
+                $_.Extension -in @(".exe", ".nupkg")
             } | ForEach-Object {
               $relative = $_.FullName.Substring($sourceRoot.Length).TrimStart([char]"\", [char]"/")
               $destination = Join-Path $root $relative
@@ -143,3 +191,4 @@ jobs:
           path: desktop-artifacts
           if-no-files-found: warn
           retention-days: 14
+          compression-level: 0 # Setup.exe and Squirrel packages are already compressed.

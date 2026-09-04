@@ -14,9 +14,12 @@ import { decodePng, ICON_DIGEST } from "../scripts/generate-windows-icon.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const YML = readFileSync(join(ROOT, "electron-builder.yml"), "utf8");
+// The content-addressed mark below stays committed and documented (README,
+// installation guide); the packaged/served icon contract itself moved to the
+// canonical generated derivatives — see tests/app-icon-contract.test.ts and
+// docs-site/src/content/docs/guides/branding-and-link-embeds.md.
 const ICON_RELATIVE_PATH = `assets/opencodex-${ICON_DIGEST}.ico`;
 const PUBLIC_ICON_RELATIVE_PATH = `docs-site/public/assets/opencodex-${ICON_DIGEST}.ico`;
-const ICON_URL = `https://opencodex.me/assets/opencodex-${ICON_DIGEST}.ico`;
 const PACKAGE = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
   name: string;
   bin: Record<string, string>;
@@ -44,8 +47,11 @@ describe("Windows installer branding contract", () => {
     expect(YML).toMatch(/^productName:\s*OpenCodex\s*$/m);
     expect(YML).toMatch(/^executableName:\s*opencodex\s*$/m);
     expect(YML).toMatch(/^appId:\s*com\.opencodex\.desktop\s*$/m);
-    expect(YML).toContain(`  icon: ${ICON_RELATIVE_PATH}`);
-    expect(YML).toContain(`  iconUrl: ${ICON_URL}`);
+    // Packaging consumes the canonical generated icon; the Squirrel metadata URL
+    // is the project-controlled HTTPS copy kept byte-identical to it by
+    // tests/app-icon-contract.test.ts.
+    expect(YML).toContain("  icon: gui/public/opencodex.ico");
+    expect(YML).toContain("  iconUrl: https://opencodex.me/opencodex.ico");
     expect(YML).toMatch(/^\s+name:\s*opencodex-desktop\s*$/m);
     expect(YML).toMatch(/^\s+forceCodeSigning:\s*false\s*$/m);
     expect(YML).toMatch(/^\s+signExecutable:\s*false\s*$/m);

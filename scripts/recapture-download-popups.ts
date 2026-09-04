@@ -52,9 +52,10 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { applyNeutralCaptureHome } from "./capture-env-privacy";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]):/, "$1:");
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const OUT = join(ROOT, "assets", "shots");
 const PS_TOOL = join(ROOT, "scripts", "window-tools.ps1");
 const PS_FIND = join(ROOT, "scripts", "popup-window-find.ps1");

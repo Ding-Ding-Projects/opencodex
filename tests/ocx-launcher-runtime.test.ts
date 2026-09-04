@@ -345,6 +345,30 @@ describe.skipIf(!nodeAvailable)("ocx npm launcher relative Bun override", () => 
       removeTree(root);
     }
   }, 60_000);
+
+  test("reports a Bun spawn error without exposing the accepted override path", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-launcher-spawn-error-"));
+    try {
+      const override = join(root, `unlaunchable-bun${process.platform === "win32" ? ".exe" : ""}`);
+      writeFileSync(override, Buffer.alloc(1_000_001, 0x20));
+      chmodSync(override, 0o644);
+
+      const result = spawnSync("node", [BIN_OCX, "--version"], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 30_000,
+        windowsHide: true,
+        env: isolatedLauncherEnv(root, override),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("opencodex: failed to launch Bun runtime (");
+      expect(result.stderr).not.toContain(root);
+      expect(result.stderr).not.toContain(override);
+    } finally {
+      removeTree(root);
+    }
+  }, 60_000);
 });
 
 describe.skipIf(!runnable)("ocx npm launcher effective Bun runtime", () => {

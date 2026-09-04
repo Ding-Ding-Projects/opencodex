@@ -34,7 +34,7 @@
  * instead) survives every rung, which is the actual promise being made.
  */
 
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { SearchBar } from "./RegexBuilder";
 import { useSearchQuery } from "../lib/use-search-query";
 import { Button, Chip } from "./ui";
@@ -62,6 +62,14 @@ import {
 import { DISHES, drawOnce } from "../lib/dimsum";
 import { haystackOf, searchSettings, type SettingOption } from "../lib/settings-search";
 import { useEffect } from "react";
+import { setSchoolModeActive } from "../lib/school-mode";
+import { useSchoolModeActive } from "../lib/use-school-mode";
+import {
+  clearVocabulary,
+  getVocabularySnapshot,
+  loadVocabularyFile,
+  subscribeVocabulary,
+} from "../lib/personal-vocabulary";
 
 type SectionId = "language" | "notifications" | "delight";
 
@@ -120,6 +128,7 @@ export default function Settings() {
   const [section, setSection] = useState<SectionId>("language");
   const search = useSearchQuery();
   const tabsId = useId();
+  const schoolModeActive = useSchoolModeActive();
 
   /* ------------------------------------------------------ notification prefs */
 
@@ -148,6 +157,27 @@ export default function Settings() {
 
   const items: Item[] = [
     {
+      id: "school-mode",
+      section: "language",
+      label: t("school.title"),
+      description: t("school.description"),
+      value: schoolModeActive ? t("school.on") : t("school.off"),
+      body: (
+        <>
+          <div className="m3-row">
+            <Switch
+              on={schoolModeActive}
+              onChange={setSchoolModeActive}
+              label={schoolModeActive ? t("school.turnOff") : t("school.turnOn")}
+            />
+            <span>{schoolModeActive ? t("school.on") : t("school.off")}</span>
+          </div>
+          <p className="m3-field-hint">{schoolModeActive ? t("school.languageForced") : t("school.description")}</p>
+          <p className="m3-field-hint">{t("school.resetHint")}</p>
+        </>
+      ),
+    },
+    {
       id: "lang-mode",
       section: "language",
       label: t("lang.mode"),
@@ -155,20 +185,26 @@ export default function Settings() {
       value: `${modeName(ui.mode)}${ui.mode === "auto" ? ` — ${MODE_LABELS[ui.resolved]}` : ""}`,
       body: (
         <>
-          <div className="m3-row ocx-mode-chips" role="group" aria-label={t("lang.mode")}>
-            {UI_MODES.map(mode => (
-              <Chip key={mode} selected={ui.mode === mode} onClick={() => ui.setMode(mode)}>
-                {modeName(mode)}
-              </Chip>
-            ))}
-          </div>
-          <p className="m3-field-hint">
-            {ui.mode === "auto" ? `${t("lang.autoHint")} ${t("lang.resolved", { mode: MODE_LABELS[ui.resolved] })}` : t("lang.resolved", { mode: MODE_LABELS[ui.resolved] })}
-          </p>
+          {schoolModeActive ? (
+            <p className="m3-field-hint">{t("school.languageForced")}</p>
+          ) : (
+            <>
+              <div className="m3-row ocx-mode-chips" role="group" aria-label={t("lang.mode")}>
+                {UI_MODES.map(mode => (
+                  <Chip key={mode} selected={ui.mode === mode} onClick={() => ui.setMode(mode)}>
+                    {modeName(mode)}
+                  </Chip>
+                ))}
+              </div>
+              <p className="m3-field-hint">
+                {ui.mode === "auto" ? `${t("lang.autoHint")} ${t("lang.resolved", { mode: MODE_LABELS[ui.resolved] })}` : t("lang.resolved", { mode: MODE_LABELS[ui.resolved] })}
+              </p>
+            </>
+          )}
         </>
       ),
     },
-    {
+    ...(!schoolModeActive ? [{
       id: "funny",
       section: "language",
       label: t("funny.title"),
@@ -217,7 +253,16 @@ export default function Settings() {
           </details>
         </>
       ),
-    },
+    }] : []),
+    ...(!schoolModeActive ? [{
+      id: "vocabulary",
+      section: "language",
+      label: t("vocab.title"),
+      description: `${t("vocab.description")} ${t("vocab.fileHint")}`,
+      value: "",
+      body: <VocabularyCard />,
+    }] : []),
+    ...[
     {
       id: "notif-delay",
       section: "notifications",
@@ -272,9 +317,10 @@ export default function Settings() {
         </Button>
       ),
     },
-    {
+    ],
+    ...(!schoolModeActive ? [{
       id: "dimsum",
-      section: "delight",
+      section: "delight" as const,
       label: t("dimsumpref.enabled"),
       description: t("dimsumpref.hint"),
       value: t("dimsumpref.always"),
@@ -294,7 +340,7 @@ export default function Settings() {
           </Button>
         </>
       ),
-    },
+    }] : []),
   ];
 
   /* --------------------------------------------------------------- search */
@@ -320,6 +366,10 @@ export default function Settings() {
   }));
   const result = searchSettings(options, search.matcher, tabNameOf(section));
   const matchedIds = new Set([...result.matches, ...result.elsewhere].map(option => option.id));
+  // School mode must remain reachable even while the query hides every other
+  // language row; otherwise the visitor could turn the mode on and then lose
+  // the only control that turns it off.
+  if (schoolModeActive) matchedIds.add("school-mode");
   const inSection = items.filter(item => item.section === section && matchedIds.has(item.id));
   const searching = search.matcher.ok;
 
@@ -421,6 +471,47 @@ export default function Settings() {
       <div className="m3-row ocx-settings-foot">
         <Button variant="outlined" onClick={resetSection}>{t("settings.reset")}</Button>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------- personal vocabulary -- */
+
+function VocabularyCard() {
+  const t = useUi().t;
+  const inputId = useId();
+  const vocabulary = useSyncExternalStore(subscribeVocabulary, getVocabularySnapshot, getVocabularySnapshot);
+  const [busy, setBusy] = useState(false);
+
+  const chooseFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!picked) return;
+    setBusy(true);
+    try { await loadVocabularyFile(picked); }
+    finally { setBusy(false); }
+  };
+
+  const reason = vocabulary.lastRejection?.reason;
+  return (
+    <div className="ocx-vocabulary-card">
+      <p className="m3-field-hint">{t("vocab.description")}</p>
+      <p className="m3-field-hint">{t("vocab.fileHint")}</p>
+      <label className="m3-field-label" htmlFor={inputId}>{vocabulary.doc ? t("vocab.replace") : t("vocab.choose")}</label>
+      <input
+        id={inputId}
+        className="m3-input"
+        type="file"
+        accept="application/json,.json"
+        onChange={chooseFile}
+        disabled={busy}
+        aria-describedby={`${inputId}-status`}
+      />
+      <p id={`${inputId}-status`} className="m3-field-hint" role="status" aria-live="polite">
+        {busy ? t("vocab.loading") : vocabulary.doc ? t("vocab.loaded") : reason ? t("vocab.invalidReason", { reason }) : t("vocab.noFile")}
+      </p>
+      {vocabulary.doc ? <Button variant="outlined" onClick={() => clearVocabulary()}>{t("vocab.clear")}</Button> : null}
+      <p className="m3-field-hint">{t("vocab.searchHint")}</p>
     </div>
   );
 }

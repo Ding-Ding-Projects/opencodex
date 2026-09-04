@@ -11,12 +11,13 @@ import {
   type CliStdin,
   type RuntimeApiDeps,
 } from "./runtime-api";
+import { randomUUID } from "node:crypto";
 
 const USAGE = `Usage:
   ocx account login <provider> [--id <account-id>] [--reauth] [--code -] [--no-wait] [--json]
   ocx account code <provider> [--flow <flow-id>] [--json]   (reads the code from stdin)
   ocx account cancel <provider> [--flow <flow-id>] [--json]
-  ocx account reset-credits <account-id|main> [--consume --yes] [--json]
+  ocx account reset-credits <account-id|main> [--consume --yes] [--operation-id <uuid>] [--json]
 
 The redirect URL or authorization code is a short-lived credential. Pipe it in
 rather than passing it as an argument, where it lands in shell history and is
@@ -200,12 +201,13 @@ async function resetCredits(argv: string[], deps: RuntimeApiDeps): Promise<void>
   const wantsJson = takeFlag(args, "--json");
   const consume = takeFlag(args, "--consume");
   const yes = takeFlag(args, "--yes");
+  const operationId = takeOption(args, "--operation-id") ?? randomUUID();
   if (!rawId) throw new CliUsageError("account id is required", USAGE);
   if (consume && !yes) throw new CliUsageError("consuming a reset credit requires --yes", USAGE);
   rejectArgs(args, USAGE);
   const accountId = rawId === "main" ? "__main__" : rawId;
   const result = consume
-    ? await runtimeRequest("/api/codex-auth/reset-credits/consume", { method: "POST", body: JSON.stringify({ accountId }) }, deps)
+    ? await runtimeRequest("/api/codex-auth/reset-credits/consume", { method: "POST", body: JSON.stringify({ accountId, operationId }) }, deps)
     : await runtimeRequest(`/api/codex-auth/reset-credits?accountId=${encodeURIComponent(accountId)}`, {}, deps);
   printData(result, wantsJson);
 }

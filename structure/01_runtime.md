@@ -56,6 +56,13 @@ authoritative, and a second qualified crash prints the
 `OPENCODEX_BUN_PATH` recovery hint before propagating the real exit. Parent termination and ordinary
 CLI failures are never retried.
 
+That supervisor boundary is specific to the published npm `bin` path. Services and Codex autostart
+shims do not recursively invoke `bin/ocx.mjs`: their generated artifacts bake the result of
+`durableBunPath()` beside the TypeScript CLI entry and execute Bun directly. The Codex shim retains
+its existing best-effort two-attempt `ensure` sequence, while service restart behavior remains owned
+by launchd, systemd, or Task Scheduler. Neither path inherits or stacks the npm launcher's
+panic-marker classifier, bounded stderr tail, live stderr forwarding, or second-crash hint.
+
 An installed Codex shim is checked on ordinary CLI startup with a regular-file/1 MiB state bound plus
 bounded metadata and prefix reads. A complete replacement must produce identical fingerprints and
 prefixes across a 100 ms observation interval; changing launchers are silently deferred, while mixed

@@ -1,5 +1,64 @@
 # Handoff
 
+## Proxy-start panic supervision extended to package scripts — 2026-08-22, `dev`
+
+Reported defect: `ocx start` dying immediately after the stale-journal recovery warning with a Bun
+native panic (`Segmentation fault at address 0xFFFFFFFFFFFFFFFF`, `oh no: Bun has crashed`).
+Investigation found no deterministic opencodex startup defect: eight reproduction attempts — including
+an armed stale-journal restore with a provably dead owner and the journaled original config restored
+into place, run through both the installed desktop launcher and a checkout of the same version — all
+reached a healthy listening proxy. The panic matches the known transient Bun Windows native family
+tracked by `src/lib/bun-stream-caps.ts` (`MIN_FIXED_BUN_VERSION` remains `null`; no released Bun is
+proven to carry the upstream fix).
+
+The shipped change closes the gap that turned a transient panic into a permanent refusal on visible
+terminals: `start`, `dev`, and `dev:proxy` now route through the supervised launcher
+(`bun bin/ocx.mjs start`) and inherit the one bounded marker-qualified retry plus signal forwarding.
+`tests/proxy-start-supervision.test.ts` pins the wiring with exact-boundary assertions and was
+verified red with the old direct-spawn scripts restored and green again after re-applying them.
+Focused evidence: `bun test tests/proxy-start-supervision.test.ts tests/bun-start-supervisor.test.ts
+tests/ocx-launcher-source.test.ts` at the integration tip — 23 passed, 0 failed. The troubleshooting
+article gained a route-by-route coverage table (npm bins and package scripts supervised; service
+loop reruns after nonzero exits; shims attempt ensure twice; the tray host remains unsupervised with hidden
+stdio) plus the field-evidence paragraph; the in-app bundle was regenerated.
+
+Open items: the upstream Bun runtime fix remains unshipped (`OPENCODEX_BUN_PATH` override and the
+documented canary guidance are the user-side escape hatch); the tray `__tray-host` route is still
+unsupervised by design and reports liveness through status staleness; the parallel-session
+preservation branch `preserve/proxy-start-supervision` (`63837acec`) holds the same change and is
+content-contained but not yet ancestry-proven into `dev`.
+
+## Current integration closeout — 2026-08-21, source integration tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`
+
+The primary integration checkout is clean. This handoff is a documentation-only descendant of
+source integration tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`; the current `dev` ref is the
+source of truth for later documentation records. This closeout removed the interactive GitHub-star
+prompt and its `gh` mutation path, regenerated the in-app documentation bundle from all 40
+English Markdown articles, repaired the GUI lint baseline, and integrated the ready recovery,
+vocabulary, design-route, dashboard, updater, build/bootstrap, branding/embed, release-workflow,
+account-lifecycle, package-contract, line-attribution, docs-site, and network-safety lanes into
+`dev`. The task-owned merged branches and linked worktrees were removed only after clean-tree and
+ancestry proofs; active Go-port, unfinished, legacy, and ownership-uncertain work was retained.
+
+### Verified local evidence
+
+- Star-prompt/link/package focused checks: 20 passed, 0 failed, 64 assertions; GUI app-name/docs checks: 39 passed, 0 failed, 464 assertions.
+- Generated documentation bundle check: 6 passed, 0 failed, 410 assertions; the bundle now contains 40 articles, including `guides/branding-and-link-embeds`, with current frontmatter titles.
+- Final merged GUI checks: `bun run lint` completed with 0 errors and 0 warnings; `bun test tests` completed with 1,642 passed, 0 failed, 14,427 assertions across 197 files; `bun run build` completed successfully with only the existing large-chunk advisory.
+- Recovery focused batch: 68 passed, 0 failed, 268 assertions.
+- Docs vocabulary/School mode: 21 passed, 0 failed, 75 assertions; app vocabulary/i18n: 69 passed, 0 failed, 3,750 assertions.
+- Design determinism/routes/parity: 16 passed, 0 failed, 1,055 assertions; parity remains `stale-evidence` until the approved real built-artifact capture route supplies fresh receipts.
+- Dashboard/updater: 23 passed, 0 failed, 132 assertions; bootstrap: 22 passed, 0 failed, 87 assertions; workflow/release: 77 passed, 0 failed, 999 assertions.
+- Auth/account lifecycle: 159 passed, 0 failed, 526 assertions; OAuth/network/export/config: 172 passed, 0 failed, 718 assertions; docs-site: 290 passed, 1 skipped, 0 failed, 2,449 assertions.
+- Root typecheck and privacy scan passed at the final integrated tip. The root whole-suite run was stopped after the known `tests/count-lines-attribution.test.ts` stall and has no aggregate verdict; two host-bound ACL fixtures also require per-user NTFS ACL support unavailable in the local environment, so no root-suite green claim is made.
+
+### External and retained state
+
+- Dashboard preview run `32546729592` passed for the preceding `a291d442a95f718abfd207589950d7d8fd725633` tree; it is superseded by later documentation-only descendants. The final exact-tip Der Machine runs from the current `dev` ref remain queued at handoff time, so their terminal conclusions are not claimed here.
+- Two host-bound live-process runtime probes remain unverified because `Get-CimInstance` could not inspect the spawned process on this host; source/archive/service checks are green.
+- UI parity, fresh installer execution, exact release publication, and approved headless real-capture evidence remain open. No release is claimed from this closeout.
+- The retained non-task branches are `codex/port-antigravity`, `codex/port-architecture-foundations`, `codex/port-go-parity`, `codex/forward-bun-proxy-startup-dev2-go`, and the older recovery/shortcut branches. Network/security work is integrated; provider-specific, unfinished architecture, and Go-port work remain preserved in clean worktrees or clean local branches.
+
 ## Backend recovery closeout — 2026-08-21
 
 The task-owned integration branch is `codex/backend-recovery-integration` at `a3b7aba42992cb0183c14da7483b5d79c977cd87`. At the time this handoff was written it was local and had not yet been pushed or merged into the default branch.
@@ -55,27 +114,27 @@ Deferred items are deliberate: #2295 depends on the active `port-architecture-fo
 
 ## Bun crash-resilient startup — 2026-08-20, integration branch `codex/fix-bun-proxy-startup`
 
-This work is implemented and locally verified but is not yet claimed as merged, pushed, or released.
-It addresses the Windows sequence where a stale-session recovery warning is followed by Bun's native
-`0xFFFFFFFFFFFFFFFF` segmentation-fault report.
+The source-line fix is implemented at exact snapshot
+`8924132d9021458bdb4dfbc220b6b3a5780204a6` and is present on the branch for pull request #37.
+It is not merged or released. Exact-head CI is currently red, and external review remains unresolved.
 
-| Area | Current integration state |
+| Area | Current source state |
 | --- | --- |
 | Owner ordering | `start` and `ensure` identity-probe persisted PID and runtime owners before journal recovery. A healthy owner keeps its injected Codex files and journal. Dead-state removal compares both complete snapshots, removes only matching stale records, and refuses journal reconciliation if a concurrent owner publishes either record. |
 | Journal restoration | Startup uses the async hardened atomic-write path. A retry recognizes exact original bytes already committed before a partial restore and finishes the remaining profile restoration. The synchronous exit-safe restore remains available. |
 | Native-crash boundary | The Node npm launcher retains a 64 KiB diagnostic tail, latches Bun's exact marker independently so later stderr cannot evict the classification, and applies writable backpressure while forwarding raw stderr. It retries only `start` / `ensure`, once, after an abnormal marker-qualified exit. A fresh per-attempt latch prevents stale output from poisoning the retry. The journal warning alone, ordinary failures, and parent signals are never retried; this does not claim to fix Bun itself. |
 | Codex shims | Unix, CMD, and PowerShell shims run at most two synchronous `ensure` attempts and then always launch the real Codex command. |
-| Runtime escape hatch | Direct and durable runtime selection now honor a validated, normalized `OPENCODEX_BUN_PATH`; invalid overrides warn without printing the rejected path and fall back to the bundled runtime. |
-| Missing launcher | `src/cli/codex.ts` restores the already-documented `ocx codex` command with healthy-owner adoption, exact-child readiness, live-port sync, trusted runtime selection, transparent argv/stdio, signal forwarding, and exit mirroring. |
+| Codex launcher | `src/cli/codex.ts` supplies the documented `ocx codex` command with healthy-owner adoption, exact-child readiness, live-port sync, trusted runtime selection, transparent argv and stdio, signal forwarding, and exit mirroring. |
 
-Local combined evidence at `ca66bd939`: **112 passed, 3 platform skips, 0 failed, 563 assertions**;
-root TypeScript passed and `git diff --check` passed. The first combined run lacked the worktree's
-dependency tree and was invalid; after `bun install --frozen-lockfile`, the identical command produced
-the green result above. Full-suite, docs-build, privacy, packaging, exact-commit CI, integration-line,
-release, and cleanup evidence remain pending and must not be inferred from this checkpoint.
+### Deterministic evidence and current external state
 
-The focused crash fixture prints the reporter's exact warning, panic, and Bun-crash lines, then calls
-`process.exit(139)`. It never triggers a real segfault, abort, or core dump.
+- Exact-tip recorded local checks at `8924132d9`: `bun test tests/bun-runtime.test.ts tests/update-job.test.ts` completed with **76 passed, 0 failed, 215 assertions**, and `bun run typecheck` passed.
+- Focused deterministic subprocess and fixture coverage lives in `tests/bun-start-supervisor.test.ts`, `tests/cli-start-journal-order.test.ts`, and `tests/bun-runtime.test.ts`. The crash fixture writes the exact warning, panic, and marker text and exits with code 139. It does not manufacture a real native crash, segmentation fault, abort, or core dump.
+- Earlier combined evidence at ancestor `ca66bd939` completed with **112 passed, 3 platform skips, 0 failed, 563 assertions** after `bun install --frozen-lockfile`; that result is useful focused evidence but is not exact-tip CI evidence.
+- No UI or screenshot evidence was produced because this is a CLI process-lifecycle fix with no visible product surface.
+- Pull request #37 is open against `dev` at exact head `8924132d9021458bdb4dfbc220b6b3a5780204a6`. Its latest exact-head run, `32421625042` (job `96594693735`), is red with **7,629 passed, 3 skipped, 1 failed**. The single failure is `ocx.mjs npm launcher (source invariants) > shares the Node-safe Bun binary validator across both runtime paths` at `tests/ocx-launcher-source.test.ts:84`: the source-text invariant still expects `isRealBunBinary(path)` with a direct `statSync(path)` call, while the exact-head implementation deliberately accepts an injectable `stat = statSync` and calls `stat(path)` so directory-shaped fixtures can be tested. This is the exact-head CI blocker; current evidence does not identify it as a runtime regression.
+- Pull requests #37 and #38 have zero submitted reviews and pending review requests for DingDingChae and MatDayProjects. Pull request #38 remains open and red at head `99ee1697b34a585725c7cce1753964732fcd0b99` with aggregate run `32347209263`.
+- External maintainer and security review, green exact-head CI, integration into `dev` and `dev2-go`, release, and cleanup remain unresolved. No merge, release, or cleanup is claimed by this handoff.
 
 ## Session close — 2026-08-16, tip `316ff9a5b`
 
@@ -148,7 +207,7 @@ purpose, since a launcher accepting an unvalidated argument is worse than none.
   normalizes on read — but a test that reads the working tree will fail. Write binary, or pass
   `newline=""`.
 
-### Two retained jers, deliberately
+### Two retained branches, deliberately
 
 `feat/w2-schoolmode` and `feat/w3-shortcuts` each hold one commit that is **not** an ancestor of
 `main`. Both are preservation checkpoints, and their own commit messages say so. Their diffs against
@@ -649,8 +708,8 @@ is the result, not a failure to do the work.
 > [!NOTE]
 > One command drops that last branch if you want it gone, now that the analysis
 > is written down: `git branch -D claude/keen-dijkstra-a12563 && git push origin --delete claude/keen-dijkstra-a12563`.
-> I did not run it, because deleting unmerged work is the one thing `mat day`
-> does not make safe.
+> I did not run it, because deleting unmerged work is unsafe even when a cleanup
+> pass has been explicitly authorized.
 
 ---
 

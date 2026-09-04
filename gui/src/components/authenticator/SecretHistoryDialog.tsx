@@ -41,7 +41,7 @@
  * than not having the feature.
  */
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   Banner, Button, Chip, Dialog, Empty, Field, TextInput,
 } from "../../shell/m3-ui";
@@ -207,7 +207,7 @@ export default function SecretHistoryDialog({ apiBase, onClose, onTotpRestored }
   const [to, setTo] = useState("");
   const [actionFilter, setActionFilter] = useState<Set<string>>(new Set());
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
     try {
@@ -220,9 +220,16 @@ export default function SecretHistoryDialog({ apiBase, onClose, onTotpRestored }
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiBase]);
 
-  useEffect(() => { if (unlockedOnce) void load(); }, [unlockedOnce]);
+  useEffect(() => {
+    if (unlockedOnce) {
+      // Loading is an asynchronous external-system synchronization; the
+      // helper updates state when its response settles.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      void load();
+    }
+  }, [load, unlockedOnce]);
 
   const distinctActions = useMemo(() => [...new Set(entries.map(e => e.action))], [entries]);
 
@@ -357,6 +364,7 @@ export default function SecretHistoryDialog({ apiBase, onClose, onTotpRestored }
 
       {wizardOpen && (
         <LockWizard
+          // eslint-disable-next-line react-hooks/refs -- the wizard needs the current DOM anchor, not rendered data.
           anchor={anchorRef.current}
           kind="element"
           targetId={HISTORY_LOCK_ID}

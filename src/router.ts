@@ -7,6 +7,7 @@ import { PROVIDER_REGISTRY, providerCodexAccountMode } from "./providers/registr
 import { LEGACY_CHATGPT_PROVIDER_ID, LEGACY_OPENAI_MULTI_PROVIDER_ID, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "./providers/openai-tiers";
 import { decodeRoutedModelId, encodeRoutedModelId } from "./providers/slug-codec";
 import { getStaleCached } from "./codex/model-cache";
+import { resolveProviderCredential } from "./lib/provider-credentials";
 
 export interface RouteResult {
   providerName: string;
@@ -186,7 +187,7 @@ function warnIfBaseUrlDiscarded(providerName: string, userBaseUrl: string, effec
 }
 
 function usableResolvedApiKey(apiKey: string | undefined): string | undefined {
-  const resolved = resolveEnvValue(apiKey);
+  const resolved = resolveProviderCredential(resolveEnvValue(apiKey));
   return typeof resolved === "string" && resolved.trim().length > 0 ? resolved : undefined;
 }
 

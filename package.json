@@ -34,10 +34,10 @@
     "bun"
   ],
   "scripts": {
-    "dev": "bun run src/cli/index.ts start",
-    "dev:proxy": "bun run src/cli/index.ts start",
+    "dev": "bun bin/ocx.mjs start",
+    "dev:proxy": "bun bin/ocx.mjs start",
     "dev:gui": "cd gui && bun run dev",
-    "start": "bun run src/cli/index.ts start",
+    "start": "bun bin/ocx.mjs start",
     "test": "bun scripts/test.ts",
     "typecheck": "bun x tsc --noEmit",
     "privacy:scan": "bun scripts/privacy-scan.ts",

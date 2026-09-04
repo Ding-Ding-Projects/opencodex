@@ -23,6 +23,17 @@ opencodex 的命令行工具是 `ocx`。运行 `ocx help`（或 `--help` / `-h`�
 会固定已捕获的实时端口。启动过程会使用跨进程锁并等待稳定的 OpenCodex identity health，而不只
 相信 PID/TCP，因此并发启动不会产生重复 daemon。
 
+`start` 和 `ensure` 会在恢复旧 journal 前，检查现有健康代理所有者的 identity。因此，过期的
+launcher PID 不会导致仍在运行的代理失去其 Codex 状态。上一会话警告只表示执行了恢复，并不是 Bun
+崩溃分类条件。
+
+外部 Node npm launcher 只监督直接调用的 `start` 和 `ensure`。它会逐字节原样转发 Bun stderr，同时只
+为每次尝试保留最后 64 KiB 用于分类。只有子进程异常终止且该末尾包含精确的
+`oh no: Bun has crashed` 标记时，才会恰好重试一次；普通失败不会重试。仅当
+`OPENCODEX_BUN_PATH` 指向可读取、大小至少为 1,000,000 字节（约 1 MiB）的普通文件时才会采用它；
+被拒绝的路径不会被输出，launcher 会回退到随附的 Bun。此检查不会验证二进制文件 identity 或发布者签名。详见
+[Windows 上的 Bun 启动崩溃恢复](/troubleshooting/bun-startup-crashes/)。
+
 ```bash
 ocx start
 ocx start --port 8080
@@ -72,6 +83,8 @@ ocx eject back
 
 以幂等方式确保后台代理正在运行，然后同步其实时模型目录。如果 `codexAutoStart` 为 `false`，
 命令只会提示自动启动已禁用，不执行其他操作。
+外部 launcher 会对 `ensure` 使用 `start` 中描述的同一异常终止和精确标记条件，最多重试一次；普通非零
+结果不会重试。
 
 ### `ocx status [--json]`
 

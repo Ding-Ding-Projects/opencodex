@@ -19,8 +19,21 @@ async function readLogs(): Promise<Array<Record<string, any>>> {
   return await response!.json() as Array<Record<string, any>>;
 }
 
+/**
+ * This file must not assume the request-log ring holds only its own entries:
+ * another test file's servers can still be draining and append a real logged
+ * request after our afterEach clear. Every assertion therefore addresses the
+ * entry it seeded by requestId instead of trusting index [0].
+ */
+let currentRequestId = "";
+async function readMine(): Promise<Record<string, any>> {
+  const dto = (await readLogs()).find(row => row.requestId === currentRequestId);
+  expect(dto).toBeTruthy();
+  return dto!;
+}
+
 function baseEntry(overrides: Partial<RequestLogEntry>): RequestLogEntry {
-  return {
+  const entry: RequestLogEntry = {
     requestId: `req-${Math.random().toString(36).slice(2)}`,
     timestamp: Date.now(),
     model: "claude-opus-5",
@@ -31,6 +44,8 @@ function baseEntry(overrides: Partial<RequestLogEntry>): RequestLogEntry {
     usageStatus: "reported",
     ...overrides,
   };
+  currentRequestId = entry.requestId;
+  return entry;
 }
 
 describe("GET /api/logs display metrics", () => {
@@ -38,7 +53,7 @@ describe("GET /api/logs display metrics", () => {
     addRequestLog(baseEntry({
       usage: { inputTokens: 1000, outputTokens: 240 },
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.tokPerSecond).toEqual({ kind: "value", value: 120, estimated: false });
     expect(dto!.displayMetrics.cost.kind).toBe("value");
     expect(dto!.displayMetrics.cost.estimate.cost.total).toBeGreaterThan(0);
@@ -49,7 +64,7 @@ describe("GET /api/logs display metrics", () => {
       sourceRef: "https://platform.claude.com/docs/en/about-claude/pricing",
     });
     // stored entry stays clean
-    expect(Object.hasOwn(getRequestLogEntries()[0]!, "displayMetrics")).toBe(false);
+    expect(Object.hasOwn(getRequestLogEntries().find(row => row.requestId === currentRequestId)!, "displayMetrics")).toBe(false);
   });
 
   test("estimated positive output marks tok/s estimated and keeps cost value", async () => {
@@ -57,7 +72,7 @@ describe("GET /api/logs display metrics", () => {
       usageStatus: "estimated",
       usage: { inputTokens: 500, outputTokens: 25, estimated: true },
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.tokPerSecond).toEqual({ kind: "value", value: 12.5, estimated: true });
     expect(dto!.displayMetrics.cost.kind).toBe("value");
     expect(dto!.displayMetrics.cost.estimate.estimated).toBe(true);
@@ -71,7 +86,7 @@ describe("GET /api/logs display metrics", () => {
       model: "no-such-model",
       usage: { inputTokens: 100, outputTokens: 10 },
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.tokPerSecond.kind).toBe("value");
     expect(dto!.displayMetrics.cost).toEqual({
       kind: "unavailable",
@@ -86,7 +101,7 @@ describe("GET /api/logs display metrics", () => {
       model: "claude-opus-5",
       usage: { inputTokens: 100, outputTokens: 10 },
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
       reason: "price_unmatched",
@@ -109,7 +124,7 @@ describe("GET /api/logs display metrics", () => {
       cacheRetention: undefined,
       usage: { inputTokens: 100, outputTokens: 10, cacheCreationInputTokens: 50 },
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
       reason: "price_unmatched",
@@ -126,7 +141,7 @@ describe("GET /api/logs display metrics", () => {
         model: "claude-sonnet-5",
         usage: { inputTokens: 100, outputTokens: 10 },
       }));
-      const [dto] = await readLogs();
+      const dto = await readMine();
       expect(dto!.displayMetrics.cost).toMatchObject({
         kind: "unavailable",
         reason: "price_unmatched",
@@ -144,7 +159,7 @@ describe("GET /api/logs display metrics", () => {
     for (const [usage, reason] of cases) {
       clearRequestLogsForTests();
       addRequestLog(baseEntry({ usage: usage as RequestLogEntry["usage"] }));
-      const [dto] = await readLogs();
+      const dto = await readMine();
       expect(dto!.displayMetrics.cost).toMatchObject({
         kind: "unavailable",
         reason,
@@ -176,7 +191,7 @@ describe("GET /api/logs display metrics", () => {
           ...(usage ? { usage } : {}),
         }],
       }));
-      const [dto] = await readLogs();
+      const dto = await readMine();
       expect(dto!.displayMetrics.cost.kind).toBe("unavailable");
       expect(dto!.displayMetrics.cost).not.toHaveProperty("pricingReason");
     }
@@ -184,7 +199,7 @@ describe("GET /api/logs display metrics", () => {
 
   test("usage-missing rows are unavailable for both metrics", async () => {
     addRequestLog(baseEntry({ usageStatus: "unreported", usage: undefined }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.tokPerSecond).toEqual({ kind: "unavailable", reason: "usage_missing" });
     expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
@@ -196,7 +211,7 @@ describe("GET /api/logs display metrics", () => {
 
   test("zero output is output_missing, not 0 tok/s", async () => {
     addRequestLog(baseEntry({ usage: { inputTokens: 100, outputTokens: 0 } }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.tokPerSecond).toEqual({ kind: "unavailable", reason: "output_missing" });
   });
 
@@ -232,7 +247,7 @@ describe("GET /api/logs display metrics", () => {
         },
       ],
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
       reason: "combo_attempt_unavailable",
@@ -255,7 +270,7 @@ describe("GET /api/logs display metrics", () => {
     addRequestLog(baseEntry({
       usage: { inputTokens: 70, outputTokens: 10, cachedInputTokens: 60, cacheCreationInputTokens: 20 },
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.cost.kind).toBe("value");
   });
 
@@ -263,7 +278,7 @@ describe("GET /api/logs display metrics", () => {
     addRequestLog(baseEntry({
       usage: { inputTokens: 50, outputTokens: 10, cachedInputTokens: 60, cacheCreationInputTokens: 20 },
     }));
-    const [dto] = await readLogs();
+    const dto = await readMine();
     expect(dto!.displayMetrics.cost).toMatchObject({
       kind: "unavailable",
       reason: "invalid_cache_breakdown",

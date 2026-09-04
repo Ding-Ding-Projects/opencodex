@@ -20,7 +20,7 @@
  *
  * ## What is counted
  *
- * `git ls-files` only, so nothing untracked and nothing ignored is included —
+ * The tracked blobs at the resolved revision only, so nothing untracked and nothing ignored is included —
  * `node_modules`, `dist`, `gui/dist` and build output are excluded because git
  * does not track them, not because a pattern here happens to catch them. Binary
  * and asset files are excluded by extension and reported as a count of files
@@ -32,10 +32,13 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
+const MAX_TRACKED_FILES = 10_000;
+const MAX_FILE_BYTES = 8 << 20;
+const GIT_TIMEOUT_MS = 120_000;
+const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 /** Extensions that have lines worth counting. Everything else is an asset. */
 const CODE_EXTENSIONS = new Set([
@@ -73,36 +76,74 @@ const BUCKETS: { name: string; match: (path: string) => boolean }[] = [
   { name: "Config & manifests", match: () => true },
 ];
 
-interface Row { name: string; files: number; total: number; code: number }
+export interface Row { name: string; files: number; total: number; code: number }
 
-function trackedFiles(): string[] {
-  const out = spawnSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "buffer", maxBuffer: 64 << 20 });
-  if (out.status !== 0) throw new Error(`git ls-files failed: ${out.stderr?.toString() ?? "unknown"}`);
-  return out.stdout.toString("utf8").split("\0").filter(Boolean);
+export interface CountedFile {
+  path: string;
+  name: string;
+  total: number;
+  code: number;
+}
+
+function trackedFiles(revision: string): string[] {
+  const out = spawnSync("git", ["ls-tree", "-r", "-z", "--name-only", revision], {
+    cwd: ROOT,
+    encoding: "buffer",
+    maxBuffer: 64 << 20,
+    timeout: GIT_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  if (out.status !== 0 || out.error) {
+    throw new Error(`git ls-tree failed for ${JSON.stringify(revision)}: ${out.error?.message ?? out.stderr?.toString() ?? "unknown"}`);
+  }
+  const paths = out.stdout.toString("utf8").split("\0").filter(Boolean);
+  if (paths.length > MAX_TRACKED_FILES) {
+    throw new Error(`refusing to count ${paths.length} tracked files; limit is ${MAX_TRACKED_FILES}`);
+  }
+  return paths;
 }
 
 /** Total lines and non-blank lines. A file with no trailing newline still counts its last line. */
-function measure(path: string): { total: number; code: number } | null {
+function measure(path: string, revision: string): { total: number; code: number } | null {
+  const out = spawnSync("git", ["show", `${revision}:${path}`], {
+    cwd: ROOT,
+    encoding: "buffer",
+    maxBuffer: MAX_FILE_BYTES + 1,
+    timeout: GIT_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  if (out.status !== 0 || out.error || out.stdout.length > MAX_FILE_BYTES || out.stdout.includes(0)) return null;
+  let text: string;
   try {
-    if (statSync(join(ROOT, path)).size > 8 << 20) return null;
-    const text = readFileSync(join(ROOT, path), "utf8");
-    if (text.includes("\0")) return null;
-    const lines = text.split("\n");
-    if (lines.length && lines[lines.length - 1] === "") lines.pop();
-    return { total: lines.length, code: lines.filter(l => l.trim() !== "").length };
+    text = utf8.decode(out.stdout);
   } catch {
     return null;
   }
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return { total: lines.length, code: lines.filter(line => line.trim() !== "").length };
 }
 
-export function countLines() {
+export function countLines(revision = "HEAD") {
+  const resolved = spawnSync("git", ["rev-parse", "--verify", `${revision}^{commit}`], {
+    cwd: ROOT,
+    encoding: "utf8",
+    maxBuffer: 1024,
+    timeout: GIT_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  if (resolved.status !== 0 || resolved.error) {
+    throw new Error(`cannot resolve ${JSON.stringify(revision)} to a commit: ${resolved.error?.message ?? resolved.stderr.trim()}`);
+  }
+  const target = resolved.stdout.trim();
   const rows = new Map<string, Row>(BUCKETS.map(b => [b.name, { name: b.name, files: 0, total: 0, code: 0 }]));
+  const entries: CountedFile[] = [];
   let assets = 0;
   let unreadable = 0;
 
-  for (const path of trackedFiles()) {
+  for (const path of trackedFiles(target)) {
     if (!CODE_EXTENSIONS.has(extname(path).toLowerCase())) { assets += 1; continue; }
-    const counted = measure(path);
+    const counted = measure(path, target);
     if (!counted) { unreadable += 1; continue; }
     // The catch-all guarantees this find always succeeds; the assertion below
     // proves the sum, so a bucket that silently stopped matching is a failure
@@ -112,6 +153,7 @@ export function countLines() {
     row.files += 1;
     row.total += counted.total;
     row.code += counted.code;
+    entries.push({ path, name: bucket.name, total: counted.total, code: counted.code });
   }
 
   const list = [...rows.values()].filter(r => r.files > 0);
@@ -120,32 +162,16 @@ export function countLines() {
     totals: list.reduce((acc, r) => ({
       files: acc.files + r.files, total: acc.total + r.total, code: acc.code + r.code,
     }), { files: 0, total: 0, code: 0 }),
+    entries,
     assets,
     unreadable,
+    revision: target,
   };
 }
 
-function table(): string {
-  const { rows, totals, assets, unreadable } = countLines();
-  const n = (v: number) => v.toLocaleString("en-US");
-  const lines = [
-    "| Area | Files | Lines | Non-blank |",
-    "| --- | ---: | ---: | ---: |",
-    ...rows.map(r => `| ${r.name} | ${n(r.files)} | ${n(r.total)} | ${n(r.code)} |`),
-    `| **Total** | **${n(totals.files)}** | **${n(totals.total)}** | **${n(totals.code)}** |`,
-  ];
-  lines.push("");
-  lines.push(
-    `Counted with \`bun run scripts/count-lines.ts\` over \`git ls-files\`, so nothing`
-    + ` untracked or ignored is included — no \`node_modules\`, no build output, no`
-    + ` lockfile-adjacent generated trees. ${n(assets)} tracked files are images, fonts`
-    + ` and other binaries and have no line count`
-    + `${unreadable ? `; ${n(unreadable)} were unreadable as text` : ""}.`,
-  );
-  return lines.join("\n");
-}
-
 if (import.meta.main) {
-  if (process.argv.includes("--json")) console.log(JSON.stringify(countLines(), null, 2));
-  else console.log(table());
+  const { countLinesWithAttribution, formatLineAttributionTable } = await import("./line-attribution");
+  const report = countLinesWithAttribution();
+  if (process.argv.includes("--json")) console.log(JSON.stringify(report, null, 2));
+  else console.log(formatLineAttributionTable(report));
 }

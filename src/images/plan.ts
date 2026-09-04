@@ -1,6 +1,7 @@
 import type { OcxConfig, OcxParsedRequest, OcxProviderConfig } from "../types";
 import type { ImageBridgePlan, VideoBridgePlan } from "./types";
 import { resolveEnvValue } from "../config";
+import { resolveProviderCredential } from "../lib/provider-credentials";
 import { getProviderRegistryEntry } from "../providers/registry";
 import { IMAGE_GEN_TOOL_NAME, VIDEO_GEN_TOOL_NAME, isVideoGenName } from "./synthetic-tool";
 
@@ -35,7 +36,7 @@ export function findXaiProvider(config: OcxConfig): { name: string; provider: Oc
  */
 export function resolveXaiImageApiKey(provider: OcxProviderConfig): string | undefined {
   if (provider.authMode === "oauth") return undefined;
-  const apiKey = resolveEnvValue(provider.apiKey)?.trim();
+  const apiKey = resolveProviderCredential(resolveEnvValue(provider.apiKey))?.trim();
   return apiKey || undefined;
 }
 

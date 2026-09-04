@@ -5,7 +5,7 @@
  * Usage:
  *   bun scripts/release.ts <version> [--tag latest|preview] [--publish]
  *       Preflight (clean tree + typecheck + tests + privacy scan) → bump package.json → commit → push →
- *       wait for CI → dispatch the Release workflow → watch it.
+ *       verify the immutable remote candidate → dispatch the Release workflow → watch it.
  *       The version bump commit/push is real; the Release workflow publish step is dry-run by default.
  *       Pass --publish to publish.
  *   bun scripts/release.ts watch
@@ -16,7 +16,8 @@
  *
  * Requires: gh CLI (authed). Publishing is tokenless via Trusted Publishing (OIDC) — no NPM_TOKEN.
  */
-import { $ } from "bun";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const args = process.argv.slice(2);
 interface GhRun {
@@ -34,19 +35,30 @@ interface CommandResult {
   stderr: string;
 }
 
-const CI_WORKFLOW = "ci.yml";
-const SERVICE_WORKFLOW = "service-lifecycle.yml";
-const CI_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
-const CI_POLL_MS = 10 * 1000;
-
 async function runQuiet(command: string[]): Promise<CommandResult> {
-  const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+  const fakeLog = process.env.FAKE_RELEASE_LOG;
+  const executable = fakeLog && command[0]
+    ? join(dirname(fakeLog), `${command[0]}.js`)
+    : null;
+  const argv = executable && existsSync(executable)
+    ? [process.execPath, executable, ...command.slice(1)]
+    : command;
+  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
   return { exitCode, stdout: stdout.trim(), stderr: stderr.trim() };
+}
+
+async function runRequired(command: string[], label = command.join(" ")): Promise<string> {
+  const result = await runQuiet(command);
+  if (result.exitCode !== 0) {
+    console.error(`✗ ${label} failed${result.stderr ? `: ${result.stderr}` : ""}`);
+    process.exit(result.exitCode || 1);
+  }
+  return result.stdout;
 }
 
 async function readPackageName(): Promise<string> {
@@ -124,21 +136,21 @@ async function assertUnusedReleaseVersion(packageName: string, version: string):
 }
 
 async function watchLatest(): Promise<void> {
-  const id = (await $`gh run list --workflow release.yml --limit 1 --json databaseId -q '.[0].databaseId'`.text()).trim();
-  if (!id) { console.error("No Release runs found yet."); process.exit(1); }
-  await watchRun(id);
+  const id = (await runRequired(["gh", "run", "list", "--workflow", "release.yml", "--limit", "1", "--json", "databaseId", "-q", ".[0].databaseId"])).trim();
+ if (!id) { console.error("No Release runs found yet."); process.exit(1); }
+ await watchRun(id);
 }
 
 async function watchRun(id: string | number): Promise<void> {
   console.log(`→ watching Release run ${id}`);
-  await $`gh run watch ${String(id)} --exit-status --interval 10`;
+  await runRequired(["gh", "run", "watch", String(id), "--exit-status", "--interval", "10"]);
 }
 
 async function waitForReleaseWorkflowRun(sha: string, branch: string, createdAfterIso: string): Promise<GhRun> {
   const deadline = Date.now() + 2 * 60 * 1000;
   let attempt = 1;
   while (Date.now() < deadline) {
-    const raw = await $`gh run list --workflow release.yml --branch ${branch} --commit ${sha} --limit 20 --json createdAt,databaseId,headSha,status,url`.text();
+    const raw = await runRequired(["gh", "run", "list", "--workflow", "release.yml", "--branch", branch, "--commit", sha, "--limit", "20", "--json", "createdAt,databaseId,headSha,status,url"]);
     const runs = (JSON.parse(raw) as GhRun[])
       .filter(run => run.headSha === sha)
       .filter(run => !run.createdAt || run.createdAt >= createdAfterIso)
@@ -156,43 +168,8 @@ async function waitForReleaseWorkflowRun(sha: string, branch: string, createdAft
   process.exit(1);
 }
 
-async function listCiRuns(sha: string, workflow: string = CI_WORKFLOW): Promise<GhRun[]> {
-  const raw = await $`gh run list --workflow ${workflow} --commit ${sha} --limit 20 --json conclusion,databaseId,headSha,status,url`.text();
-  const runs = JSON.parse(raw) as GhRun[];
-  return runs.filter(run => run.headSha === sha);
-}
-
-async function waitForSuccessfulCi(sha: string, workflow: string = CI_WORKFLOW, label = "CI"): Promise<GhRun> {
-  const deadline = Date.now() + CI_WAIT_TIMEOUT_MS;
-  let attempt = 1;
-  while (Date.now() < deadline) {
-    const runs = await listCiRuns(sha, workflow);
-    const successful = runs.find(run => run.status === "completed" && run.conclusion === "success");
-    if (successful) {
-      console.log(`→ ${label} passed: ${successful.url}`);
-      return successful;
-    }
-
-    const failed = runs.find(run => run.status === "completed" && run.conclusion && run.conclusion !== "success");
-    if (failed) {
-      console.error(`✗ ${label} failed for ${sha}: ${failed.url}`);
-      process.exit(1);
-    }
-
-    const state = runs.length > 0
-      ? runs.map(run => `${run.status}${run.conclusion ? `/${run.conclusion}` : ""}`).join(", ")
-      : "not started yet";
-    console.log(`→ waiting for ${label} (${sha.slice(0, 7)}) attempt ${attempt}: ${state}`);
-    attempt += 1;
-    await Bun.sleep(CI_POLL_MS);
-  }
-
-  console.error(`✗ timed out waiting for ${label} on ${sha}`);
-  process.exit(1);
-}
-
 async function _remoteMainSha(): Promise<string> {
-  const out = (await $`git ls-remote origin refs/heads/main`.text()).trim();
+  const out = (await runRequired(["git", "ls-remote", "origin", "refs/heads/main"])).trim();
   const [sha] = out.split(/\s+/);
   if (!sha) {
     console.error("✗ could not resolve origin/main");
@@ -203,7 +180,7 @@ async function _remoteMainSha(): Promise<string> {
 
 /** Live (network) head of a remote branch — never the local remote-tracking ref. */
 async function remoteBranchHead(branch: string): Promise<string> {
-  const out = (await $`git ls-remote origin refs/heads/${branch}`.text()).trim();
+  const out = (await runRequired(["git", "ls-remote", "origin", `refs/heads/${branch}`])).trim();
   const [sha] = out.split(/\s+/);
   if (!sha) {
     console.error(`✗ could not resolve origin/${branch}`);
@@ -225,7 +202,7 @@ if (!version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
 const dryRun = !args.includes("--publish");
 
 // 1. Preflight — must be on main or preview, and local verification must pass.
-const branch = (await $`git rev-parse --abbrev-ref HEAD`.text()).trim();
+const branch = (await runRequired(["git", "rev-parse", "--abbrev-ref", "HEAD"])).trim();
 const allowedBranches = ["main", "preview"];
 const expectedTag = branch === "preview" ? "preview" : "latest";
 const tag = args.includes("--tag") ? (args[args.indexOf("--tag") + 1] ?? expectedTag) : expectedTag;
@@ -242,39 +219,29 @@ if (branch === "main" && version.includes("-")) {
   process.exit(1);
 }
 if (!allowedBranches.includes(branch)) { console.error(`✗ must be on ${allowedBranches.join(" or ")} (currently ${branch}).`); process.exit(1); }
-if ((await $`git status --porcelain`.text()).trim()) { console.error("✗ working tree not clean — commit or stash first."); process.exit(1); }
+if ((await runRequired(["git", "status", "--porcelain"])).trim()) { console.error("✗ working tree not clean — commit or stash first."); process.exit(1); }
 const packageName = await readPackageName();
 console.log(`→ release metadata preflight (${packageName}@${version})`);
 await assertUnusedReleaseVersion(packageName, version);
 console.log("→ typecheck");
-await $`bun x tsc --noEmit`;
+await runRequired(["bun", "x", "tsc", "--noEmit"], "typecheck");
 console.log("→ test suite");
-await $`bun test --isolate tests`;
+await runRequired(["bun", "test", "--isolate", "tests"], "test suite");
 console.log("→ privacy scan");
-await $`bun run privacy:scan`;
+await runRequired(["bun", "run", "privacy:scan"], "privacy scan");
 
 // 2. Bump package.json only; the workflow creates the version tag after npm publish.
 console.log(`→ bump package.json → ${version}`);
-await $`npm version ${version} --no-git-tag-version`;
+await runRequired(["npm", "version", version, "--no-git-tag-version"]);
 
 // 3. Commit + push the version bump.
-await $`git add package.json`;
-await $`git commit -m ${`release: v${version}`}`;
-const releaseSha = (await $`git rev-parse HEAD`.text()).trim();
+await runRequired(["git", "add", "package.json"]);
+await runRequired(["git", "commit", "-m", `release: v${version}`]);
+const releaseSha = (await runRequired(["git", "rev-parse", "HEAD"])).trim();
 console.log(`→ push origin ${branch}`);
-await $`git push origin ${branch}`;
+await runRequired(["git", "push", "origin", branch]);
 
-// 4. Wait for the pushed release commit to pass CI, then dispatch the Release workflow.
-console.log(`→ wait for CI (${releaseSha})`);
-await waitForSuccessfulCi(releaseSha);
-
-// The release bump always touches package.json, which is a service-lifecycle trigger path —
-// and release.yml's service gate requires an already-successful Service lifecycle run for
-// the release SHA. Wait for it too, or the dispatch races the still-running workflow.
-console.log(`→ wait for Service lifecycle (${releaseSha})`);
-await waitForSuccessfulCi(releaseSha, SERVICE_WORKFLOW, "Service lifecycle");
-
-// Live-remote guard: re-read the actual remote head over the network immediately
+// 4. Live-remote guard: re-read the actual remote head over the network immediately
 // before dispatch. The local remote-tracking ref can be minutes stale, and the
 // workflow_dispatch below resolves a mutable branch — so this is the last chance
 // to refuse publishing an unaudited newer commit.
@@ -286,7 +253,7 @@ if (liveOriginSha !== releaseSha) {
 
 console.log(`→ dispatch Release (tag=${tag}, dry-run=${dryRun})`);
 const dispatchStartedAt = new Date(Date.now() - 5_000).toISOString();
-await $`gh workflow run release.yml --ref ${branch} -f version=${version} -f tag=${tag} -f expected-sha=${releaseSha} -f dry-run=${String(dryRun)}`;
+await runRequired(["gh", "workflow", "run", "release.yml", "--ref", branch, "-f", `version=${version}`, "-f", `tag=${tag}`, "-f", `expected-sha=${releaseSha}`, "-f", `dry-run=${String(dryRun)}`]);
 
 // 5. Watch it.
 const releaseRun = await waitForReleaseWorkflowRun(releaseSha, branch, dispatchStartedAt);

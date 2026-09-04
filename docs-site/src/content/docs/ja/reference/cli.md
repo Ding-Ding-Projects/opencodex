@@ -23,6 +23,18 @@ opencodex CLI は `ocx` です。最上位の使い方は `ocx help`（または
 更新ハンドオフとダッシュボード再起動も取得済みの実行中ポートを固定します。起動は PID/TCP だけでなく
 安定した OpenCodex identity health とプロセス間ロックを確認するため、同時起動で重複 daemon は作られません。
 
+`start` と `ensure` は古い journal を復旧する前に、既存の正常なプロキシ所有者の identity を確認します。
+そのため、古い launcher PID だけを理由に実行中のプロキシの Codex 状態を復元しません。以前のセッションに
+関する警告は復旧の報告であり、Bun クラッシュの判定条件ではありません。
+
+外部 Node npm ランチャーが監視するのは直接の `start` と `ensure` だけです。Bun の stderr は 1 バイトも
+変更せず転送し、判定用には試行ごとに最大 64 KiB の末尾だけを保持します。子プロセスが異常終了し、その
+末尾に正確な `oh no: Bun has crashed` マーカーがある場合に限り、ちょうど 1 回だけ再試行します。通常の失敗は
+再試行しません。`OPENCODEX_BUN_PATH` は読み取り可能な通常ファイルで、1,000,000 バイト（約 1 MiB）以上の場合だけ
+使用されます。拒否されたパスは出力されず、同梱の Bun にフォールバックします。この検査はバイナリの identity や
+発行元の署名を検証しません。詳しくは
+[Windows での Bun 起動クラッシュ復旧](/troubleshooting/bun-startup-crashes/)を参照してください。
+
 ```bash
 ocx start
 ocx start --port 8080
@@ -72,6 +84,8 @@ ocx eject back
 
 バックグラウンドプロキシが実行中かを冪等に確認し、リアルタイムモデルカタログを同期します。
 `codexAutoStart` が `false` なら自動起動がオフである旨のメッセージだけを出力し、何もしません。
+外部ランチャーは `start` で説明した同じ異常終了と正確なマーカーの条件で `ensure` を 1 回だけ再試行し、
+通常の非ゼロ終了は再試行しません。
 
 ### `ocx status [--json]`
 

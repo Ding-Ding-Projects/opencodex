@@ -97,6 +97,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { delimiter, join } from "node:path";
 import { applyNeutralCaptureHome } from "./capture-env-privacy";
 import { type Rect, toDevicePixels, transientOutOfBounds } from "./capture-transient-bounds";
+import { DESIGN_CAPTURE_TUPLE, DESIGN_PAGE_CAPTURE_ROUTES } from "./design-route-registry";
 
 const ROOT = join(import.meta.dir, "..");
 const OUT = join(ROOT, "assets", "shots");
@@ -182,8 +183,8 @@ function ensureOcxShim(): void {
  * refresh on someone else's display produces the same images rather than a
  * whole-tree diff nobody can account for.
  */
-const DESKTOP = { css: [1440, 900], scale: 2 } as const;
-const PHONE = { css: [393, 852], scale: 3 } as const;
+const DESKTOP = { css: [DESIGN_CAPTURE_TUPLE.desktop.width, DESIGN_CAPTURE_TUPLE.desktop.height], scale: DESIGN_CAPTURE_TUPLE.desktop.scale } as const;
+const PHONE = { css: [DESIGN_CAPTURE_TUPLE.phone.width, DESIGN_CAPTURE_TUPLE.phone.height], scale: DESIGN_CAPTURE_TUPLE.phone.scale } as const;
 type Viewport = typeof DESKTOP | typeof PHONE;
 const pixels = (v: Viewport) => [v.css[0] * v.scale, v.css[1] * v.scale] as const;
 
@@ -608,6 +609,7 @@ const ONBOARDING_KEY = "ocx-m3:onboarding";
  */
 const LANG_KEY = "ocx-lang";
 const CAPTURE_LOCALE = "bi";
+const PREFS_KEY = "ocx-m3:v1";
 
 /**
  * Everything the app must already believe before the first shutter.
@@ -622,6 +624,8 @@ async function primeProfile(): Promise<void> {
     (() => {
       localStorage.setItem(${JSON.stringify(ONBOARDING_KEY)}, JSON.stringify({ completed: true, at: 1 }));
       localStorage.setItem(${JSON.stringify(LANG_KEY)}, ${JSON.stringify(CAPTURE_LOCALE)});
+      const prefs = JSON.parse(localStorage.getItem(${JSON.stringify(PREFS_KEY)}) || "{}");
+      localStorage.setItem(${JSON.stringify(PREFS_KEY)}, JSON.stringify({ ...prefs, theme: "light" }));
       return true;
     })()`);
   // `ignoreCache: true`: defense in depth against a stale cached GET
@@ -679,43 +683,20 @@ async function clearOverlays(): Promise<void> {
 // ---------------------------------------------------------------- the targets
 
 /**
- * Every route in `gui/src/app-routing.ts`, with the heading it renders.
- *
- * These strings are the reference, written down rather than read back from the
- * app, so that a copy change breaks the run loudly instead of silently
- * redefining what each screenshot is allowed to contain.
+ * Every route in `gui/src/app-routing.ts` is represented by the pure
+ * hand-written registry. The route-completeness Chut compares that registry
+ * with `VALID_PAGES`; this harness consumes the same rows for real built-app
+ * captures, so adding a page cannot quietly leave the capture set behind.
  */
-const ROUTE_HEADINGS: Record<string, string> = {
-  dashboard: "Dashboard",
-  startup: "Startup",
-  providers: "Providers",
-  models: "Models",
-  combos: "Combos",
-  subagents: "Subagents",
-  logs: "Logs & Debug",
-  usage: "Usage",
-  storage: "Storage",
-  pdf: "PDF tools",
-  converter: "File converter",
-  ollama: "Ollama",
-  "ollama-chat": "Ollama Chat",
-  downloads: "Downloads",
-  "codex-auth": "Codex Auth",
-  api: "API",
-  claude: "Claude",
-  grok: "Grok",
-  appearance: "Appearance",
-  language: "Language & voice",
-  regex: "Regex builder",
-  changelog: "Changelog",
-  history: "Version history",
-  notifications: "Notifications",
-  network: "Remote access & backup",
-  settings: "Settings",
-  terminal: "Terminal",
-};
+const routes: Target[] = DESIGN_PAGE_CAPTURE_ROUTES.map(({ id, hash, screen }) => ({
+  id,
+  hash,
+  expect: { h1: screen },
+}));
 
-const routes: Target[] = Object.entries(ROUTE_HEADINGS).map(([id, h1]) => ({ id, hash: id, expect: { h1 } }));
+const docs = routes.find(t => t.id === "docs")!;
+docs.expect = { h1: "Installation", contains: ["Every feature article bundled"] };
+docs.note = "Deterministic offline docs state: the first bundled article is selected and read from the real built app.";
 
 /**
  * The Terminal documents an action rather than a panel: on arrival it is an

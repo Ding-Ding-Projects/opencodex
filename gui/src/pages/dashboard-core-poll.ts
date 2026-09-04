@@ -1,4 +1,6 @@
 import { readJsonIfOk } from "../fetch-json";
+import { createBoundedFetch } from "../bounded-fetch";
+import { isProviderConfigurationState } from "../provider-configuration";
 import {
   settingsPollMayCommit,
   beginPollEpochs,
@@ -49,11 +51,12 @@ export type EffortCapPoll = {
 
 export type DashboardCorePoll = {
   health: HealthData | null;
-  providers: ProviderInfo[];
-  settings: SettingsData | null;
+  /** Undefined means this optional resource failed; callers retain the prior snapshot. */
+  providers: ProviderInfo[] | undefined;
+  settings: SettingsData | undefined;
   /** Settings-derived seed payload; merge against latest startup-health at commit time. */
   startupHealthSeed: SettingsData["startupHealth"] | null | undefined;
-  sidecar: SidecarData | null;
+  sidecar: SidecarData | undefined;
   shadowCall: ShadowCallData | null | undefined;
   maMode: "v1" | "default" | "v2";
   maModeResolved: boolean;
@@ -71,6 +74,73 @@ export type DashboardEpochRefs = {
   shadowCallMutationEpochRef: { current: number };
   shadowCallMutationInFlightRef: { current: boolean };
 };
+
+const DASHBOARD_CORE_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Keep each core resource bounded while still honouring the client-resource abort.
+ * A stalled optional endpoint must not hold the health snapshot hostage forever.
+ */
+async function fetchCoreResource(url: string, parentSignal: AbortSignal): Promise<Response> {
+  const bounded = createBoundedFetch(DASHBOARD_CORE_REQUEST_TIMEOUT_MS);
+  const abort = () => bounded.controller.abort();
+  if (parentSignal.aborted) bounded.controller.abort();
+  else parentSignal.addEventListener("abort", abort, { once: true });
+  try {
+    return await fetch(url, { signal: bounded.signal });
+  } finally {
+    parentSignal.removeEventListener("abort", abort);
+    bounded.clear();
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+function isHealthData(value: unknown): value is HealthData {
+  return isRecord(value)
+    && value.status === "ok"
+    && typeof value.version === "string"
+    && value.version.length > 0
+    && typeof value.uptime === "number"
+    && Number.isFinite(value.uptime);
+}
+
+function isProviderInfoList(value: unknown): value is ProviderInfo[] {
+  return Array.isArray(value) && value.every(item => isRecord(item)
+    && typeof item.name === "string"
+    && typeof item.adapter === "string"
+    && typeof item.baseUrl === "string"
+    && typeof item.hasApiKey === "boolean"
+    && isProviderConfigurationState(item));
+}
+
+function isSettingsData(value: unknown): value is SettingsData {
+  return isRecord(value)
+    && typeof value.codexAutoStart === "boolean"
+    && typeof value.port === "number"
+    && Number.isFinite(value.port)
+    && typeof value.hostname === "string";
+}
+
+function isSidecarData(value: unknown): value is SidecarData {
+  if (!isRecord(value) || !isRecord(value.webSearch) || !isRecord(value.vision)) return false;
+  const validSetting = (setting: Record<string, unknown>) =>
+    typeof setting.model === "string"
+    && (setting.backend === undefined || setting.backend === "openai" || setting.backend === "anthropic");
+  return validSetting(value.webSearch) && validSetting(value.vision);
+}
+
+function isShadowCallData(value: unknown): value is ShadowCallData {
+  return isRecord(value) && typeof value.enabled === "boolean" && typeof value.model === "string";
+}
+
+async function readOptionalJson<T>(response: Response | null, isValid: (value: unknown) => value is T): Promise<T | undefined> {
+  if (!response) return undefined;
+  const data = await readJsonIfOk<unknown>(response);
+  return data !== null && data !== undefined && isValid(data) ? data : undefined;
+}
 
 export async function fetchStartupHealth(apiBase: string, signal: AbortSignal): Promise<StartupHealthStatus> {
   try {
@@ -131,10 +201,10 @@ export async function fetchDashboardCore(
 
   const empty: DashboardCorePoll = {
     health: null,
-    providers: [],
-    settings: null,
+    providers: undefined,
+    settings: undefined,
     startupHealthSeed: undefined,
-    sidecar: null,
+    sidecar: undefined,
     shadowCall: undefined,
     maMode: "default",
     maModeResolved: true,
@@ -144,18 +214,31 @@ export async function fetchDashboardCore(
   };
 
   try {
-    const [hRes, pRes, sRes, scRes, shRes] = await Promise.all([
-      fetch(`${apiBase}/healthz`, { signal }),
-      fetch(`${apiBase}/api/providers`, { signal }),
-      fetch(`${apiBase}/api/settings`, { signal }),
-      fetch(`${apiBase}/api/sidecar-settings`, { signal }),
-      fetch(`${apiBase}/api/shadow-call-settings`, { signal }),
+    const [hResult, pResult, sResult, scResult, shResult] = await Promise.allSettled([
+      fetchCoreResource(`${apiBase}/healthz`, signal),
+      fetchCoreResource(`${apiBase}/api/providers`, signal),
+      fetchCoreResource(`${apiBase}/api/settings`, signal),
+      fetchCoreResource(`${apiBase}/api/sidecar-settings`, signal),
+      fetchCoreResource(`${apiBase}/api/shadow-call-settings`, signal),
     ]);
+    const responseOrNull = (result: PromiseSettledResult<Response>) => result.status === "fulfilled" ? result.value : null;
+    const hRes = responseOrNull(hResult);
+    const pRes = responseOrNull(pResult);
+    const sRes = responseOrNull(sResult);
+    const scRes = responseOrNull(scResult);
+    const shRes = responseOrNull(shResult);
 
-    const health = await requireJson<HealthData>(hRes);
-    const providers = await requireJson<ProviderInfo[]>(pRes);
-    const nextSettings = await requireJson<SettingsData>(sRes);
-    let settings: SettingsData | null = null;
+    // Health is the only required resource: a missing or malformed probe must
+    // still produce the honest Offline/error state.
+    const health = hRes ? await requireJson<unknown>(hRes) : undefined;
+    if (!isHealthData(health)) throw new Error("invalid health response");
+
+    // These management resources are optional to the dashboard shell. A 503,
+    // rejected request, or malformed body is represented as absent so the hook
+    // keeps its last valid snapshot instead of turning a healthy proxy offline.
+    const providers = await readOptionalJson(pRes, isProviderInfoList);
+    const nextSettings = await readOptionalJson(sRes, isSettingsData);
+    let settings: SettingsData | undefined = undefined;
     let startupHealthSeed: SettingsData["startupHealth"] | null | undefined = undefined;
     if (settingsPollMayCommit(
       { request: settingsRequestEpoch, mutation: settingsMutationEpoch },
@@ -166,26 +249,22 @@ export async function fetchDashboardCore(
       },
     )) {
       settings = nextSettings;
-      startupHealthSeed = nextSettings.startupHealth;
+      startupHealthSeed = nextSettings?.startupHealth;
     }
 
-    const sidecar = await requireJson<SidecarData>(scRes);
+    const sidecar = await readOptionalJson(scRes, isSidecarData);
     let shadowCall: ShadowCallData | null | undefined = undefined;
-    try {
-      if (shRes.ok) {
-        const nextShadow = await shRes.json() as ShadowCallData;
-        if (settingsPollMayCommit(
-          { request: shadowRequestEpoch, mutation: shadowMutationEpoch },
-          {
-            request: epochs.shadowCallRequestEpochRef.current,
-            mutation: epochs.shadowCallMutationEpochRef.current,
-            mutationInFlight: epochs.shadowCallMutationInFlightRef.current,
-          },
-        )) {
-          shadowCall = nextShadow;
-        }
-      }
-    } catch {
+    const nextShadow = await readOptionalJson(shRes, isShadowCallData);
+    if (nextShadow && settingsPollMayCommit(
+      { request: shadowRequestEpoch, mutation: shadowMutationEpoch },
+      {
+        request: epochs.shadowCallRequestEpochRef.current,
+        mutation: epochs.shadowCallMutationEpochRef.current,
+        mutationInFlight: epochs.shadowCallMutationInFlightRef.current,
+      },
+    )) {
+      shadowCall = nextShadow;
+    } else if (!nextShadow) {
       if (settingsPollMayCommit(
         { request: shadowRequestEpoch, mutation: shadowMutationEpoch },
         {
@@ -194,7 +273,7 @@ export async function fetchDashboardCore(
           mutationInFlight: epochs.shadowCallMutationInFlightRef.current,
         },
       )) {
-        shadowCall = null;
+        shadowCall = undefined;
       }
     }
 

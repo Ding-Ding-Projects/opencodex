@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components -- the renderer exports its stable parser types/helpers for focused tests and link consumers. */
+
 /**
  * The app's one shared, isolated Markdown renderer.
  *

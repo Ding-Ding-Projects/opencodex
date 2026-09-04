@@ -4,10 +4,7 @@ import App from "./App";
 import DownloadPopup from "./pages/DownloadPopup";
 import { parseDownloadPopupHash } from "./download-popup-route";
 import { LanguageProvider } from "./i18n/provider";
-import { PrefsProvider } from "./theme/prefs";
 import { SettingsDraftProvider } from "./settings-drafts";
-import { NotificationsProvider } from "./shell/notifications";
-import { ConfirmProvider } from "./shell/confirm";
 import "./styles.css";
 
 /**
@@ -29,19 +26,25 @@ if (window.opencodexDesktop?.isDesktop) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <SettingsDraftProvider>
-      <LanguageProvider>
-        <PrefsProvider>
-          <NotificationsProvider>
-            {/* Inside the notifications provider so a confirmation renders above a
-                live snackbar rather than under it — the dialog is the thing the
-                user has to answer before anything else continues. */}
-            <ConfirmProvider>
-              {popupRoute ? <DownloadPopup route={popupRoute} /> : <App />}
-            </ConfirmProvider>
-          </NotificationsProvider>
-        </PrefsProvider>
-      </LanguageProvider>
-    </SettingsDraftProvider>
+    {popupRoute ? (
+      // The popup card reads `t()`, so it needs exactly the two providers the
+      // language layer sits on — `SettingsDraftProvider` outermost, because
+      // `LanguageProvider` reads its context. It uses no prefs, notifications
+      // or confirmations, so those providers are deliberately absent rather
+      // than mounted for show.
+      <SettingsDraftProvider>
+        <LanguageProvider>
+          <DownloadPopup route={popupRoute} />
+        </LanguageProvider>
+      </SettingsDraftProvider>
+    ) : (
+      // `App` mounts this same provider stack itself (see the note in
+      // tests/helpers/providers.tsx). Wrapping it again here used to give every
+      // consumer an inner store while the outer one sat above it running a second,
+      // invisible copy of everything — two schedule engines ticking, duplicated
+      // media-query and resize listeners, effects firing twice on mount. Exactly
+      // one coordinator, and `App` owns it.
+      <App />
+    )}
   </React.StrictMode>
 );

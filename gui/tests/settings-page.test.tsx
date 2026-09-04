@@ -53,6 +53,16 @@ let state: {
   rejectShadowCall: { status: number; error: string } | null;
 };
 
+/**
+ * The other two writable groups, stored and echoed so several endpoints can be
+ * changed at once and each answer can be told apart. Shapes match what the real
+ * routes keep, run through the same readers the page uses.
+ */
+let debugFlags: { enabled: boolean; usage: boolean; injection: boolean; claude: boolean };
+let caps: { effortCap: string; subagentEffortCap: string };
+/** When set, the debug route fails outright with this status — the write never lands. */
+let rejectDebug: { status: number; error: string } | null;
+
 let puts: Array<{ url: string; body: unknown }>;
 
 beforeEach(() => {
@@ -67,6 +77,9 @@ beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   state = { codexAutoStart: false, shadowCallEnabled: false, refuseShadowCall: false, rejectShadowCall: null };
+  debugFlags = { enabled: false, usage: false, injection: false, claude: false };
+  caps = { effortCap: "high", subagentEffortCap: "" };
+  rejectDebug = null;
   puts = [];
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -88,6 +101,22 @@ beforeEach(() => {
         if (!state.refuseShadowCall && typeof body?.enabled === "boolean") state.shadowCallEnabled = body.enabled;
         return Response.json({ ok: true, enabled: state.shadowCallEnabled, model: "gpt-5.6-luna" });
       }
+      if (url.includes("/api/effort-caps")) {
+        if (typeof body?.effortCap === "string") caps.effortCap = body.effortCap;
+        if (body && "subagentEffortCap" in body) {
+          caps.subagentEffortCap = typeof body.subagentEffortCap === "string" ? body.subagentEffortCap : "";
+        }
+        return Response.json(caps);
+      }
+      if (url.includes("/api/debug")) {
+        if (rejectDebug) {
+          return Response.json({ error: rejectDebug.error }, { status: rejectDebug.status });
+        }
+        for (const key of ["enabled", "usage", "injection", "claude"] as const) {
+          if (typeof body?.[key] === "boolean") debugFlags[key] = body[key] as boolean;
+        }
+        return Response.json(debugFlags);
+      }
       return new Response(null, { status: 404 });
     }
     if (url.includes("/api/settings")) {
@@ -101,7 +130,7 @@ beforeEach(() => {
         effort: "high",
       });
     }
-    if (url.includes("/api/effort-caps")) return Response.json({ effortCap: "high", subagentEffortCap: null });
+    if (url.includes("/api/effort-caps")) return Response.json(caps);
     if (url.includes("/api/v2")) return Response.json({ multiAgentMode: "default" });
     if (url.includes("/api/shadow-call-settings")) {
       return Response.json({ enabled: state.shadowCallEnabled, model: "gpt-5.6-luna" });
@@ -119,7 +148,7 @@ beforeEach(() => {
       });
     }
     if (url.includes("/api/debug")) {
-      return Response.json({ enabled: false, usage: false, injection: false, claude: false });
+      return Response.json(debugFlags);
     }
     return new Response(null, { status: 404 });
   }) as typeof fetch;
@@ -203,6 +232,22 @@ function switchFor(container: HTMLElement, label: string): HTMLButtonElement {
   const found = container.querySelector<HTMLButtonElement>(`button[role='switch'][aria-label='${label}']`);
   if (!found) throw new Error(label);
   return found;
+}
+
+function selectFor(container: HTMLElement, label: string): HTMLSelectElement {
+  const found = container.querySelector<HTMLSelectElement>(`select[aria-label='${label}']`);
+  if (!found) throw new Error(label);
+  return found;
+}
+
+/** Drives a `<select>` through its real value setter and change event. */
+async function chooseOption(el: HTMLSelectElement, value: string): Promise<void> {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value")!
+      .set!.call(el, value);
+    el.dispatchEvent(new testWindow.Event("change", { bubbles: true }) as never);
+  });
+  await settle();
 }
 
 async function click(el: Element): Promise<void> {
@@ -335,9 +380,96 @@ test("a write that never lands names the setting and quotes the server's own mes
   await act(async () => { root.unmount(); });
 });
 
-test("the search filters this surface and names the tab that owns a setting it does not carry", async () => {
+/** Stage one change in each of three endpoint groups: proxy, effort caps, debug. */
+async function stageThreeGroups(container: HTMLElement): Promise<void> {
+  await click(switchFor(container, "Start opencodex with Codex"));
+  // Both caps in one group — the coalescing under test is that a group with
+  // several changed fields still costs one PUT, not one per field.
+  await chooseOption(selectFor(container, "V2 ultra effort limit"), "medium");
+  await chooseOption(selectFor(container, "V2 sub-agent effort limit"), "low");
+  await click(switchFor(container, "Usage extraction"));
+}
+
+test("one save coalesces three changed endpoint groups into exactly one PUT each", async () => {
   const { container, root } = await mount();
 
+  await stageThreeGroups(container);
+
+  // Staging alone touches nothing: four dirty fields across three endpoints,
+  // and zero requests until Save.
+  expect(puts).toEqual([]);
+  expect(saveButton(container).textContent).toBe("4");
+
+  await click(saveButton(container));
+
+  // One PUT per changed endpoint — never one per field — each carrying only
+  // its own group's combined changes, in the order the coordinator walks them.
+  expect(puts.map(p => p.url)).toEqual(["/api/settings", "/api/effort-caps", "/api/debug"]);
+  expect(puts.map(p => p.body)).toEqual([
+    { codexAutoStart: true },
+    { effortCap: "medium", subagentEffortCap: "low" },
+    { usage: true },
+  ]);
+
+  // Every echo was accepted, so the draft clears and each change earns its own
+  // revision naming what moved.
+  expect(saveButton(container).textContent).toBe("0");
+  const revisions = readRevisions();
+  expect(revisions).toHaveLength(4);
+  for (const summary of [
+    "Start opencodex with Codex set to Enabled",
+    "V2 ultra effort limit set to medium",
+    "V2 sub-agent effort limit set to low",
+    "Usage extraction set to Enabled",
+  ]) {
+    expect(revisions.map(entry => entry.summary)).toContain(summary);
+  }
+  const saved = readHistory().filter(notice => notice.title === "Setting saved");
+  expect(saved).toHaveLength(1);
+
+  // And the fake proxy actually holds all three groups now.
+  expect(state.codexAutoStart).toBe(true);
+  expect(caps).toEqual({ effortCap: "medium", subagentEffortCap: "low" });
+  expect(debugFlags.usage).toBe(true);
+
+  await act(async () => { root.unmount(); });
+});
+
+test("a save where one endpoint fails keeps only the failed group staged and reports both halves", async () => {
+  rejectDebug = { status: 500, error: "debug capture worker is restarting" };
+  const { container, root } = await mount();
+
+  await stageThreeGroups(container);
+  await click(saveButton(container));
+
+  // The failing endpoint was still attempted, once, alongside the others.
+  expect(puts.map(p => p.url)).toEqual(["/api/settings", "/api/effort-caps", "/api/debug"]);
+
+  // The accepted half is durably applied: echoed into server state, baselined,
+  // and recorded — a failure elsewhere must not un-apply or un-log these.
+  expect(state.codexAutoStart).toBe(true);
+  expect(caps).toEqual({ effortCap: "medium", subagentEffortCap: "low" });
+  expect(readRevisions()).toHaveLength(3);
+
+  // The failed half never landed and is the only thing left staged.
+  expect(debugFlags.usage).toBe(false);
+  expect(switchFor(container, "Usage extraction").getAttribute("aria-checked")).toBe("true");
+  expect(saveButton(container).textContent).toBe("1");
+
+  // And both halves are said: half a save reported as a whole one (or as a
+  // whole failure) would be the same lie in either direction.
+  expect(readHistory().filter(notice => notice.title === "Setting saved")).toHaveLength(1);
+  const failures = readHistory().filter(notice => notice.title === "Could not save that setting");
+  expect(failures).toHaveLength(1);
+  expect(failures[0].body).toContain("Usage extraction");
+  expect(failures[0].body).toContain("debug capture worker is restarting");
+
+  await act(async () => { root.unmount(); });
+});
+
+
+test("the search filters this surface and names the tab that owns a setting it does not carry", async () => {
+  const { container, root } = await mount();
   const search = container.querySelector<HTMLInputElement>("input[aria-label='Search settings…']");
   expect(search).toBeTruthy();
 

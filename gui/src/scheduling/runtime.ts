@@ -242,8 +242,6 @@ export function useScheduleRuntime(apiBase: string): ScheduleRuntime {
   const lastFetchedRef = useRef(new Map<string, number>());
   const genRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  const rulesRef = useRef(rules);
-  rulesRef.current = rules;
 
   const setRules = useCallback((next: ScheduleRule[]) => {
     setRulesState(next);
@@ -265,7 +263,7 @@ export function useScheduleRuntime(apiBase: string): ScheduleRuntime {
     const controller = new AbortController();
     abortRef.current = controller;
     void resolveScheduleTick({
-      rules: rulesRef.current,
+      rules,
       now: new Date(),
       apiBase,
       cache: cacheRef.current,
@@ -286,7 +284,7 @@ export function useScheduleRuntime(apiBase: string): ScheduleRuntime {
       // current is expected to fail this way and is silently dropped by the
       // same generation check a successful-but-stale result would hit.
     });
-  }, [apiBase]);
+  }, [apiBase, rules]);
 
   useEffect(() => {
     runTick();
@@ -297,7 +295,7 @@ export function useScheduleRuntime(apiBase: string): ScheduleRuntime {
     };
     // Re-arms on every rule-list edit so a newly active rule (or a rule that
     // just stopped matching) is reflected without waiting up to TICK_MS.
-  }, [rules, runTick]);
+  }, [runTick]);
 
   return { rules, setRules, activeRuleId, override, failure, failureSeq, retry: runTick };
 }

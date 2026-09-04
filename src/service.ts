@@ -37,6 +37,7 @@ import { hardenSecretDir, hardenSecretPath } from "./lib/windows-secret-acl";
 import { windowsEnvIndirectBatchPathList, windowsEnvIndirectBatchValue } from "./lib/win-paths";
 import { recordOwnedConfigPath } from "./lib/config-ownership";
 import { servicePinnedPort, serviceStartArgv } from "./lib/proxy-launch";
+import { redactUserPath } from "./lib/redact";
 import { waitForProxyIdentity, type ProxyReadinessOptions } from "./cli/proxy-readiness";
 import { findLiveProxy, type LiveProxy } from "./server/proxy-liveness";
 import { revertSystemEnv } from "./server/system-env";
@@ -1517,7 +1518,7 @@ export function bakedServicePathsDiagnostic(): string | null {
   if (!state?.bunPath || !state?.cliPath) return null;
   const missing = [state.bunPath, state.cliPath].filter(path => !existsSync(path));
   if (missing.length === 0) return null;
-  return `STALE baked paths (missing: ${missing.join(", ")}) — run 'ocx service install' to re-bake`;
+  return `STALE baked paths (missing: ${missing.map(redactUserPath).join(", ")}) — run 'ocx service install' to re-bake`;
 }
 
 function serviceDiagnosticsSummary(): string {

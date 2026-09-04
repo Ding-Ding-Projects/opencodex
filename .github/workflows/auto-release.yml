@@ -1,10 +1,10 @@
 name: Auto release
 
-# Every commit on main that passes CI becomes an installable
-# GitHub release: the Windows installer plus the dashboard bundle, tagged
-# build-<run>. Gating on the CI run (workflow_run, not push) is the point —
-# a red commit never becomes a release, so "latest release" is always a
-# working version.
+# Every commit on main becomes one installable GitHub release: the Windows
+# installer plus the dashboard bundle, tagged build-<run>. This workflow does
+# not run or wait for tests, lint, type checks, static analysis, or any other
+# code-quality gate; local verification belongs before the push, while this
+# workflow is responsible only for building, packaging, and publishing.
 #
 # These are GitHub releases only. npm publishing stays in release.yml behind
 # its manual dispatch, version check and audit gates — automating that surface
@@ -12,14 +12,10 @@ name: Auto release
 # does not touch it.
 
 on:
-  # Every push to main builds an installer, full stop. This used to hang off
-  # `workflow_run: ["CI"]`, which meant a commit only ever got a build if a
-  # second workflow completed, matched by *name*, and reported success — three
-  # ways to get nothing, and all three happened in one evening: CI cancelled by
-  # a newer push, CI red on a stale assertion, and the name matched but the
-  # publish token was refused. Building on the push itself removes the
-  # dependency; the CI check moves to where it belongs, in front of the publish
-  # step alone.
+  # Every push to main builds and publishes an installer, full stop. This used
+  # to wait for a separate CI workflow, which allowed a test, lint, or other
+  # code-quality verdict to suppress a release. The delivery pipeline is now
+  # independent of those checks by design.
   push:
     branches: [main]
   # The manual door. When something is broken — a refused token, a transient API
@@ -235,51 +231,11 @@ jobs:
           retention-days: 30
           compression-level: 0 # A Squirrel installer and its nupkg are already compressed.
 
-      # Building on every push must not mean publishing on every push. The
-      # invariant that a red commit never becomes a release is unchanged; the
-      # check simply moved from "what triggered this job" to "may this job
-      # publish", which is where it was always doing its real work.
-      #
-      # Bounded on purpose. A CI run that hangs must not hold this job to its
-      # 45-minute ceiling, and a commit whose CI has already concluded without
-      # success is a definite no that there is no point waiting out.
-      - name: Require successful CI for this commit
-        id: ci
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for attempt in $(seq 1 40); do
-            url=$(gh run list --workflow ci.yml --commit "$SHA" --status success --limit 5 \
-                    --json url --jq '.[0].url // ""' 2>/dev/null || echo "")
-            if [ -n "$url" ]; then
-              echo "ok=true" >> "$GITHUB_OUTPUT"
-              echo "CI passed for ${SHA}: ${url}"
-              exit 0
-            fi
-
-            total=$(gh run list --workflow ci.yml --commit "$SHA" --limit 5 \
-                      --json status --jq 'length' 2>/dev/null || echo 0)
-            running=$(gh run list --workflow ci.yml --commit "$SHA" --limit 5 \
-                        --json status --jq '[.[]|select(.status != "completed")]|length' 2>/dev/null || echo 0)
-
-            # `total == 0` means CI has not registered a run yet, not that it
-            # failed — the push that started this job may still be propagating.
-            # Only a run that exists and has finished unsuccessfully is a no.
-            if [ "$total" != "0" ] && [ "$running" = "0" ]; then
-              echo "::warning::CI concluded without success for ${SHA} — building the artifact, but not publishing a release."
-              exit 1
-            fi
-            sleep 30
-          done
-          echo "::warning::Timed out waiting for CI on ${SHA} — the installer is attached to this run as an artifact."
-          exit 1
-
       - name: Create the release
         id: publish
-        # Green CI, and not a manual run that asked for the artifact alone.
-        if: ${{ steps.ci.outputs.ok == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
+        # Pushes always publish. Manual runs may explicitly request an
+        # artifact-only build.
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
         shell: bash
         env:
           # The workflow token is refused for release creation on this
@@ -289,10 +245,14 @@ jobs:
           # optional repo-scoped PAT ahead of it and the workflow token as a
           # last resort, so a fork with none of them still runs and fails
           # honestly rather than not running at all.
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           tag="build-${{ github.run_number }}"
           version=$(node -p "require('./package.json').version")
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::GitHub Release ${tag} already exists; refusing to recycle it."
+            exit 1
+          fi
 
           # Fail before creating anything if electron-builder produced no installer.
           # The GitHub CLI publishes the release first and uploads assets after,
@@ -388,7 +348,7 @@ jobs:
           preliminary_notes=$(cat <<NOTES
           $dish_section
 
-          Automated Windows build of \`${SHA:0:9}\` (v${version}), published because exact-commit Windows CI passed.
+          Automated Windows build of \`${SHA:0:9}\` (v${version}). This delivery workflow does not run or wait for tests, lint, type checks, or static analysis.
 
           > [!WARNING]
           > The Squirrel.Windows installer is intentionally unsigned and may show an Unknown Publisher or SmartScreen warning.
@@ -425,7 +385,7 @@ jobs:
           notes=$(cat <<NOTES
           $dish_section
 
-          Automated Windows build of \`${SHA:0:9}\` (v${version}), published because exact-commit Windows CI passed.
+          Automated Windows build of \`${SHA:0:9}\` (v${version}). This delivery workflow does not run or wait for tests, lint, type checks, or static analysis.
 
           > [!WARNING]
           > The Squirrel.Windows installer is intentionally unsigned and may show an Unknown Publisher or SmartScreen warning.
@@ -471,7 +431,7 @@ jobs:
         if: ${{ steps.publish.outcome == 'success' }}
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           # Only build-* releases are pruned; versioned releases are never touched.
           gh release list --limit 100 --json tagName \

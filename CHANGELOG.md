@@ -6,6 +6,8 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(docs): point `/troubleshooting` at `troubleshooting/bun-startup-crashes` so the redirect lands on the section's first sidebar entry instead of one article below it
+- fix(cli): route `start`, `dev`, and `dev:proxy` package scripts through the supervised npm launcher so every visible-terminal proxy start gets the one bounded Bun-crash retry instead of dying on the first native panic
 - fix(kiro): accept client parallel_tool_calls permission while retaining the parsed hint and omitting unsupported parallel fields from the CodeWhisperer wire
 - fix(cursor): settle clean Connect END_STREAM after ordered frame drain, fail-close open tools, finish drained client-tool finalizers, and prohibit terminal replay after accepted output
 - fix(responses): gate routed custom-tool lowering by destination capability and restore only authorized call pairing
@@ -26,6 +28,7 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 - fix(oauth): guard `expires_in` and the computed token expiry against `NaN`, `Infinity`/overflow, and negative values across the Anthropic, ChatGPT, Kimi, and Codex-account-store OAuth refresh paths, so a malformed token response cannot stamp a credential as valid forever or already-expired (ported from upstream lidge-jun/opencodex, three-commit chain ending 355b69e5b)
 - fix(redact): mask colon-labelled credentials echoed back by upstream error bodies (`x-api-key: <value>`), close the "prefix it with Bearer" smuggling hole that exemption first opened, and recognize quoted credential keys a serialized headers object uses (`{"x-api-key":"<value>"}`) that the prior pattern list did not cover (ported, intent merged rather than transplanted, from upstream lidge-jun/opencodex's redact.ts hardening arc)
 - fix(errors): classify local Windows NTFS/ACL hardening (`icacls`) failures as 503 server errors instead of 401 authentication errors, so a local filesystem permission problem is never reported to the user as an invalid credential (ported from upstream lidge-jun/opencodex#1296)
+- fix(startup): for both `start` and `ensure`, probe the live proxy owner before journal recovery so a healthy owner's Codex state remains untouched and only a stale session is recovered; supervise Bun from the external Node launcher, preserve stderr byte-for-byte, and retry exactly once only after an abnormal termination whose stderr contains the exact `oh no: Bun has crashed` marker; validate the emergency `OPENCODEX_BUN_PATH` override with regular-file and binary-size checks before use, falling back to the bundled runtime when invalid
 - fix(codex): stop the proxy from freezing solid when the dashboard's first mount fires its usual burst of `/api/*` requests, by warming every dynamically-imported module the burst reaches before the listener opens, and by throttling repeat passive WHAM usage fetches per account so a startup quota prime and the dashboard's own account poll can never both hit the network within a few seconds of each other
 - feat(auth): add a password/TOTP-protected, encrypted local history for TOTP-entry and display-name mutations
 - feat(pdf): inspect, split, merge, extract, reorder, rotate and edit metadata for local PDF files, with a bounded worker sandbox and post-write reopen validation

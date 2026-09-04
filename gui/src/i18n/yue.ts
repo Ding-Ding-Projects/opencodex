@@ -47,6 +47,23 @@ export const yue: Partial<Record<TKey, string>> = {
   "common.loading": "載入緊…",
   "common.retry": "再試一次",
 
+  // ---- desktop updater ----
+  "desktopUpdater.availableTitle": "桌面更新有喇",
+  "desktopUpdater.availableBody": "版本 {version} 而家可以下載。",
+  "desktopUpdater.downloadingTitle": "下載緊桌面更新",
+  "desktopUpdater.downloadingBody": "版本下載緊 {progress}%。",
+  "desktopUpdater.readyTitle": "桌面更新準備好喇",
+  "desktopUpdater.readyBody": "版本 {version} 準備好。要唔要重啟，由你揀先算。",
+  "desktopUpdater.unsignedWarning": "呢個 Squirrel.Windows 更新冇簽名，Windows 可能會彈未知發佈者或者 SmartScreen 警告。",
+  "desktopUpdater.releaseNotes": "睇版本說明",
+  "desktopUpdater.restart": "重啟嚟裝更新",
+  "desktopUpdater.later": "遲啲先",
+  "desktopUpdater.cancel": "取消下載",
+  "desktopUpdater.retry": "再試一次",
+  "desktopUpdater.failedTitle": "桌面更新要望一望",
+  "desktopUpdater.failedBody": "更新未搞掂：{error}",
+  "desktopUpdater.unknownError": "驗證唔到呢個更新。",
+
   // ---- app chrome ----
   "app.logoAria": "{name} 標誌",
   "app.claudeOn": "Claude 已開",
@@ -291,6 +308,8 @@ export const yue: Partial<Record<TKey, string>> = {
   "dash.updateStatus.restarting": "更新裝好咗。重啟緊 proxy。",
   "dash.updateStatus.succeeded": "更新完成。",
   "dash.updateStatus.failed": "更新失敗。",
+  "dash.updateStatus.cancelled": "更新取消咗。",
+  "dash.updateManualRestart": "要用新版本，請手動重啟 proxy。",
 
   // ---- providers ----
   "prov.subtitle": "設定 opencodex 路由入 Codex 嘅上游供應商。可以用帳戶登入、加供應商，或者直接改原始 config。",
@@ -2610,8 +2629,11 @@ export const yue: Partial<Record<TKey, string>> = {
   "vocab.loadedNotice": "詞彙已上傳",
   "vocab.loadedNoticeBody": "{count} 個詞而家喺成個 app 度生效緊。",
   "vocab.invalidNotice": "詞彙檔案俾拒絕咗",
+  "vocab.operationFailedNotice": "詞彙變更冇儲存到",
+  "vocab.operationFailedBody": "本機儲存拒絕咗呢次變更，所以而家生效緊嘅詞彙（如果有嘅話）保持不變。",
   "vocab.clearedNotice": "詞彙已清除",
   "vocab.clearedNoticeBody": "成個 app 已經返晒去原本嘅字眼。",
+  "vocab.stateOperationFailed": "詞彙變更未能喺本機儲存，生效緊嘅字眼保持不變。",
   "vocab.reason.emptyFile": "個檔案冇嘢喺入面。",
   "vocab.reason.tooLarge": "個檔案大過 {limit} KB 嘅上限。",
   "vocab.reason.malformedJson": "個檔案唔係有效嘅 JSON。",

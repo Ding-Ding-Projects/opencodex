@@ -23,7 +23,7 @@ import { useT, type TKey } from "../i18n/shared";
 import { usePrefs } from "../theme/prefs-context";
 import type { CostRange } from "../theme/prefs-context";
 import { fixedPanelStyle, useAnchoredPlacement } from "./use-anchored-placement";
-import { formatUsd } from "./cost-format";
+import { formatEstimatedUsdValue } from "../intl-formatters";
 import { resolveSummaryCost, type LaneBearingSummary, type ResolvedSummaryCost } from "../cost-lanes";
 import { useMenuFilter, focusMenuFilterField } from "./menu-filter";
 import { MenuFilterField, MenuFilterStatus } from "./MenuFilterField";
@@ -123,7 +123,14 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
 
   const rangeLabel = t(RANGES.find(r => r.range === range)?.tkey ?? "cost.rangeAll");
   const equivalent = cost.primary.kind === "api_equivalent";
-  const amount = formatUsd(cost.primary.total);
+  const amount = formatEstimatedUsdValue(cost.primary.total);
+  // The headline is a priced-lane subtotal, so it can exclude requests the
+  // lane could not price. When any were excluded, the count rides along in the
+  // accessible name — the same sentence the breakdown below shows — rather
+  // than letting the figure present itself as complete.
+  const unpricedNote = cost.primary.unpricedRequests > 0
+    ? t("usage.cost.unpricedNote", { count: cost.primary.unpricedRequests })
+    : null;
 
   return (
     <div ref={wrapRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
@@ -140,7 +147,10 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
         }}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        aria-label={t(equivalent ? "cost.lane.equivalentAria" : "cost.aria", { amount, range: rangeLabel })}
+        aria-label={[
+          t(equivalent ? "cost.lane.equivalentAria" : "cost.aria", { amount, range: rangeLabel }),
+          unpricedNote,
+        ].filter(Boolean).join(" ")}
         title={t(equivalent ? "cost.lane.equivalentTitle" : "cost.title", { range: rangeLabel })}
       >
         <span className="m3-cost-amount">{amount}</span>
@@ -162,7 +172,7 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
             {cost.direct && (
               <div className="m3-cost-lane">
                 <dt className="m3-cost-lane-label">{t("cost.lane.direct")}</dt>
-                <dd className="m3-cost-lane-value">{formatUsd(cost.direct.total)}</dd>
+                <dd className="m3-cost-lane-value">{formatEstimatedUsdValue(cost.direct.total)}</dd>
               </div>
             )}
             {cost.apiEquivalent && (
@@ -170,10 +180,23 @@ export default function CostMeter({ apiBase }: { apiBase: string }) {
                 <dt className="m3-cost-lane-label">
                   {t("cost.lane.equivalent")} · {t("cost.lane.equivalentTag")}
                 </dt>
-                <dd className="m3-cost-lane-value">{formatUsd(cost.apiEquivalent.total)}</dd>
+                <dd className="m3-cost-lane-value">{formatEstimatedUsdValue(cost.apiEquivalent.total)}</dd>
               </div>
             )}
           </dl>
+          {/* A priced subtotal can exclude requests its lane could not price, so
+              the count is stated beside the totals it qualifies — and in the
+              chip's accessible name above, not only here in colour or layout. */}
+          {cost.direct?.unpricedRequests ? (
+            <p className="m3-cost-lane-note">
+              {t("cost.lane.direct")} · {t("usage.cost.unpricedNote", { count: cost.direct.unpricedRequests })}
+            </p>
+          ) : null}
+          {cost.apiEquivalent?.unpricedRequests ? (
+            <p className="m3-cost-lane-note">
+              {t("cost.lane.equivalent")} · {t("usage.cost.unpricedNote", { count: cost.apiEquivalent.unpricedRequests })}
+            </p>
+          ) : null}
           {cost.apiEquivalent && (
             <p className="m3-cost-lane-note">{t("cost.lane.equivalentMeaning")}</p>
           )}

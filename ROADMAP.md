@@ -1,15 +1,26 @@
 # Roadmap
 
+## Current integration closeout — 2026-08-21
+
+- [x] Remove the interactive GitHub-star prompt, marker, startup call, and `gh` mutation route; retain no user-facing star prompt.
+- [x] Repair the stale in-app docs bundle, packaged icon stdout contamination, app-name identity assertion, parity evidence hashes, notification teardown race, and GUI lint baseline.
+- [x] Integrate the ready recovery, docs vocabulary/School mode, design-reference, dashboard/updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle, package-contract, line-attribution, docs-site, and network-safety lanes into `dev` at source integration tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`; later descendants only refresh public records. The generated-docs repair is `a291d442a95f718abfd207589950d7d8fd725633` and the GUI lint integration is `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`.
+- [x] Push `dev` and independently prove `origin/dev` contains the exact local tip.
+- [ ] Obtain terminal green Der Machine verdicts for the current `dev` ref; the final exact-tip Windows CI and Dashboard preview runs remain queued at this roadmap update. The root whole-suite run remains locally unverified after the bounded line-attribution stall and host-bound ACL fixtures.
+- [ ] Complete the 63 partial shared-contract rows, including documentation-site parity, real built-artifact interaction proof, and the required captures; do not promote a row from `partial` on source evidence alone.
+- [ ] Build/install/exercise the real unsigned Squirrel artifact and publish one new release only after exact-SHA CI, artifact hashes, release timing, line attribution, and public dim-sum metadata are verified.
+- [x] Complete ancestry-proven cleanup for only task-owned inactive merged branches/worktrees; retain active, unfinished, other-task, Go-port, and ownership-uncertain work.
+
 ## Backend recovery closeout — 2026-08-21
 
 - [x] Integrate source-verified startup recovery, forced native-config restore, owner-safe proxy handling, updater scheduling, installer branding/PATH, protocol/provider, service, observability, catalog, and collaboration backend batches.
 - [x] Preserve the first checked-in `design/` source and add exact manifest/tree/blob/hash/size/package/reparse privacy validation.
 - [x] Preserve every paused UI/design and unfinished backend lane on its owning branch for handoff.
-- [ ] Merge the backend integration into the default branch after the closeout preservation/dew pass.
+- [x] Merge the backend integration into the `dev` integration branch and dew the exact integrated tip; promotion to the release `main` jer remains a separate release action.
 - [ ] Reconcile the replacement UI and integrate the personal-vocabulary, updater UI, dashboard health, and design-parity checkpoints.
 - [ ] Finish native Go issue #17 parity and the remaining Antigravity, network/vault, architecture, and reset-credit review gaps.
 - [ ] Build and exercise the real unsigned Squirrel installer, then publish and verify a new release.
-- [ ] Capture the real built desktop through the required cheap headless route after UI work resumes.
+- [ ] Capture the real built desktop through the required approved headless route after UI work resumes.
 
 ## Service, remote-login, and ACL ports — 2026-08-21
 
@@ -122,10 +133,12 @@ out directly against the source.
 | Failure evidence | Every artifact producer defensively collects allowlisted outputs and run/SHA/job/runner metadata behind `always()` without masking the original failure. Step-specific YAML tests guard the collector, upload, and real release asset arguments. |
 | Verification | Typecheck, privacy, GUI lint/build, docs build, and focused workflow, Squirrel, export, and storage tests are green locally. Exact-commit GitHub Actions and release evidence remain pending until the integration commit lands. |
 
-## In progress — Bun crash-resilient startup (2026-08-20)
+## Source-line complete; integration pending — Bun crash-resilient startup (2026-08-20)
 
-The Windows startup repair is implemented on `codex/fix-bun-proxy-startup` and has passed its first
-combined local gate. It is not yet claimed as merged, pushed, released, or exact-commit-CI verified.
+The startup repair is complete in source at `8924132d9021458bdb4dfbc220b6b3a5780204a6`, which is
+present on the branch for open PR [#37](https://github.com/Ding-Ding-Projects/opencodex/pull/37),
+`codex/fix-bun-proxy-startup`, against `dev`. This records source-line completion only: the pull
+request is not merged or released, its exact-head CI run is red, and independent review remains unresolved.
 
 | Work | Current state |
 | --- | --- |
@@ -133,7 +146,27 @@ combined local gate. It is not yet claimed as merged, pushed, released, or exact
 | Bun native crash | The external Node launcher retries only `start` and `ensure`, once, after an abnormal exit with Bun's official crash marker. An attempt-local latch preserves that exact classification after tail eviction; retained diagnostics remain bounded to 64 KiB and raw forwarding honors writable backpressure. The journal warning alone never classifies a crash, and this does not claim to fix Bun itself. |
 | Runtime override | `OPENCODEX_BUN_PATH` is normalized, validated through the shared real-binary gate, and honored by both the direct launcher and durable service/shim selection. |
 | Codex path | The documented `ocx codex` dispatcher target exists again and is behavior-tested across startup races, runtime refusal, argument/stdio forwarding, signals, and Windows command shims. |
-| Local evidence | 112 passed, 3 platform skips, 0 failed, 563 assertions; root typecheck and diff hygiene passed after a locked dependency install. Full repository, docs, privacy, packaging, integration-line, remote CI, and release evidence remain pending. |
+| Deterministic crash evidence | Supervisor tests use a harmless child process that writes the exact crash text to stderr and exits nonzero. They exercise retry, no-retry, bounded-tail, signal, and stderr-preservation behavior without manufacturing a native segmentation fault, invalid memory access, or crash dump. |
+| Exact-base local evidence | The final exact-base commit records `bun test tests/bun-runtime.test.ts tests/update-job.test.ts` at 76 passed, 0 failed, and 215 expect calls, plus a passing root typecheck. The earlier 112-test combined result remains historical evidence for the preceding source tip; it is not represented as a fresh aggregate verdict for `8924132d9`. |
+| Exact-head CI blocker | Run [32421625042](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/32421625042) is red at 7,629 passed, 3 skipped, and 1 failed. Job [96594693735](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/32421625042/job/96594693735) fails the source-text invariant at `tests/ocx-launcher-source.test.ts:84`: it still expects `isRealBunBinary(path)` with a direct `statSync(path)` call, while `8924132d9` intentionally changed the validator to injectable `isRealBunBinary(path, stat = statSync)` and `stat(path)` so directory-shaped fixtures can be tested. This is the exact-head CI blocker, not evidence of a runtime regression; the run remains red until the stale invariant is repaired and rerun. |
+| Evidence boundary | This is non-visual CLI/runtime behavior. Source inspection, deterministic process tests, stderr/exit-status assertions, and exact-SHA command results are applicable evidence; screenshots or UI captures would not prove the recovery contract and are not claimed. |
+| Remaining external work | PR #37 has zero submitted reviews and pending requests for `DingDingChae` and `MatDayProjects`. The `dev2-go` carry, PR [#38](https://github.com/Ding-Ding-Projects/opencodex/pull/38), is also open with zero submitted reviews and the same pending reviewers at head `99ee1697b34a585725c7cce1753964732fcd0b99`; aggregate run [32347209263](https://github.com/Ding-Ding-Projects/opencodex/actions/runs/32347209263) remains red. `dev`/`dev2-go` integration, both review decisions, green aggregate exact-SHA CI, release publication, and post-release verification are still open. No source-line result in this section is evidence that any of those external stages completed. |
+
+## Completed on `dev` — supervised package-script proxy starts (2026-08-22)
+
+The visible-terminal refusal from a transient native Bun panic is closed for checkout users: the
+`start`, `dev`, and `dev:proxy` package scripts now launch through the supervised npm launcher
+(`bun bin/ocx.mjs start`) instead of spawning the CLI directly, so every such start carries the same
+one bounded crash retry as the installed `ocx` bins, including signal forwarding that direct spawns
+never had.
+
+| Work | Current state |
+| --- | --- |
+| Script rerouting | All three proxy-starting scripts point at `bin/ocx.mjs`; `tests/proxy-start-supervision.test.ts` pins each script to the exact supervised command, forbids any of them referencing `src/cli/index.ts` directly, asserts the launcher still dispatches through `runBunWithCrashRetry`, and checks supervisor command eligibility (`start`/`ensure` retryable; `update`/`__tray-host`/`status` not). The negative regression was watched failing with the old script text restored and green again after re-applying it. |
+| Live evidence | On this host, an armed stale-journal restore (dead-owner journal plus journaled original config restored into place) printed the recovery warning and reached a healthy listening proxy through both the installed desktop launcher and `bun bin/ocx.mjs start`; eight reproduction attempts of the reported segfault, including two concurrent-start races and the user-shaped leftover-state fixture, all completed cleanly. The panic is treated as the known transient Bun Windows native family tracked by `src/lib/bun-stream-caps.ts`, not as an opencodex startup defect. |
+| Coverage boundary | WinSW's native backend restarts via XML `onfailure`; the Task Scheduler wrapper's cmd loop reruns only after nonzero exits; Codex shims make two best-effort ensure attempts; the tray host remains unsupervised with hidden stdio and surfaces liveness through status staleness. These are recorded in the troubleshooting article's route table rather than silently claimed as covered. |
+| Documentation | `docs-site/.../troubleshooting/bun-startup-crashes.md` gained the route-by-route coverage table and the field-evidence paragraph; the in-app bundle was regenerated; CHANGELOG carries the fix under Unreleased. |
+| Preservation note | The work was found uncommitted by a parallel session mid-integration and preserved at `63837acec` on `preserve/proxy-start-supervision`, then cherry-picked onto `dev`; the preservation branch tip is contained by content but not by ancestry until the next merge-based integration pass. |
 
 ## Completed — plug-and-play local startup (2026-08-04)
 
@@ -184,12 +217,12 @@ uncommitted as of the 2026-07-30 sweep and have not been re-checked.
 | `ocx host` — reach the proxy and dashboard from other devices | `1a316b5f` |
 | `ocx changelog` and the in-app changelog viewer | `4c41de91` |
 | `ocx export` full-state bundle + local-only git history of account changes | `1b2558e0` |
-| Canonical `ocx memory-sync` adapter with read-only project-profile inventory | uncommitted |
+| Canonical `ocx memory-sync` adapter with read-only project-profile inventory | `4551ee40b` |
 | Home Assistant usage-meter integration; auto-release on green CI | `7a6cdd3a` |
 | Estimated API cost meter in the app bar | `34b1dea0` |
-| Published price bands — OpenAI Fast tier (×2, ×2.5 on `gpt-5.5`) and the >272,000-token long-context rate (×2 input, ×1.5 output), applied to both the direct and API-equivalent cost lanes and named beside the figure they multiplied. A request whose prompt size or served tier cannot decide a band is reported unpriced rather than estimated at the cheaper one | uncommitted |
-| App logs written to `~/.opencodex/logs/opencodex.log`, rotated at 2 MiB keeping 3 generations (8 MiB ceiling); clearing the logs commits them to the local git history first, and restoring appends rather than rewinds | uncommitted |
-| QR pairing for the mobile remote — one-click remote access that generates its own data-plane key, a QR carrying a single-use 5-minute pairing token, and a phone that claims it once and remembers the key. The claim route is deliberately unauthenticated and rate limited; `/api/host` now reports `restartPending` so the dashboard stops claiming a bind the socket has not taken yet | uncommitted |
+| Published price bands — OpenAI Fast tier (×2, ×2.5 on `gpt-5.5`) and the >272,000-token long-context rate (×2 input, ×1.5 output), applied to both the direct and API-equivalent cost lanes and named beside the figure they multiplied. A request whose prompt size or served tier cannot decide a band is reported unpriced rather than estimated at the cheaper one | `48e0f0c4e` |
+| App logs written to `~/.opencodex/logs/opencodex.log`, rotated at 2 MiB keeping 3 generations (8 MiB ceiling); clearing the logs commits them to the local git history first, and restoring appends rather than rewinds | `f7a10daa0` |
+| QR pairing for the mobile remote — one-click remote access that generates its own data-plane key, a QR carrying a single-use 5-minute pairing token, and a phone that claims it once and remembers the key. The claim route is deliberately unauthenticated and rate limited; `/api/host` now reports `restartPending` so the dashboard stops claiming a bind the socket has not taken yet | `62bcd591d` |
 
 ## Design parity with `design/`
 

@@ -39,7 +39,6 @@ import { installShellHook, uninstallShellHook } from "../server/system-env";
 import { startTokenGuardian } from "../oauth/token-guardian";
 import { startHistoryMigrationGuardian } from "../codex/history-migration-guardian";
 import { maybeAutoRestoreCodexShim } from "./codex-shim-autorestore";
-import { maybeShowStarPrompt } from "./star-prompt";
 import { maybeShowUpdatePrompt } from "../update/notify";
 import { syncModelsToCodex } from "../codex/sync";
 import { normalizeUpdateChannel, runGuiUpdateWorker } from "../update/job";
@@ -361,7 +360,6 @@ async function handleStart(options: { block?: boolean } = {}) {
   process.on("SIGHUP", shutdown);
   process.on("exit", syncCleanup);
 
-  await maybeShowStarPrompt(); // once-only Yes/No GitHub-star prompt on first interactive start
   if (!currentExternalCodexModelProvider() && !shouldInjectApiAuthHeader(config) && config.syncResumeHistory !== false) {
     historyGuardian = startHistoryMigrationGuardian();
   }
@@ -1155,11 +1153,6 @@ switch (command) {
     process.exitCode = await handleScheduleCommand(args.slice(1));
     break;
   }
-  case "school-mode": {
-    const { handleSchoolModeCommand } = await import("./school-mode");
-    process.exitCode = await handleSchoolModeCommand(args.slice(1));
-    break;
-  }
   case "pdf": {
     const { handlePdfCommand } = await import("./pdf");
     process.exitCode = await handlePdfCommand(args.slice(1));
@@ -1188,6 +1181,11 @@ switch (command) {
   case "grok": {
     const { handleGrokCommand } = await import("./integrations");
     process.exitCode = await handleGrokCommand(args.slice(1));
+    break;
+  }
+  case "school-mode": {
+    const { handleSchoolModeCommand } = await import("./school-mode");
+    process.exitCode = await handleSchoolModeCommand(args.slice(1));
     break;
   }
   case "changelog": {

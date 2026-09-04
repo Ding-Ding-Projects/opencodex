@@ -28,7 +28,7 @@ const ACCOUNT_USAGE = `Usage:
   ocx account login <provider> [--id <account-id>] [--reauth] [--code -] [--no-wait] [--json]
   ocx account code <provider> [--flow <flow-id>] [--json]   (reads the code from stdin)
   ocx account cancel <provider> [--flow <flow-id>] [--json]
-  ocx account reset-credits <account-id|main> [--consume --yes] [--json]
+  ocx account reset-credits <account-id|main> [--consume --yes] [--operation-id <uuid>] [--json]
 
 List and switch provider accounts and API-key pools (masked output only).
 'main' selects the Codex App login for the openai account pool.`;

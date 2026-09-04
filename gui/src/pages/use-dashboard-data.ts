@@ -46,6 +46,62 @@ import {
   useModalDialog,
 } from "./dashboard-shared";
 
+export type UpdatePollResult = {
+  job?: UpdateJob;
+  reconnecting: boolean;
+  reload?: boolean;
+};
+
+export function isTerminalUpdateJobStatus(status: UpdateJobStatus | undefined): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+export function shouldPollUpdateJob(job: UpdateJob | null): boolean {
+  return !!job?.id && !isTerminalUpdateJobStatus(job.status);
+}
+
+export function updateJobNotificationBody(job: UpdateJob, t: (key: TKey) => string): string | undefined {
+  return [
+    job.latestVersion ? `${job.currentVersion} -> ${job.latestVersion}` : "",
+    job.status === "succeeded" && !job.restart ? t("dash.updateManualRestart") : "",
+    job.error ?? "",
+  ].filter(Boolean).join(" ") || undefined;
+}
+
+export async function pollUpdateJob(
+  apiBase: string,
+  updateJob: UpdateJob,
+  signal: AbortSignal,
+): Promise<UpdatePollResult> {
+  const targetVersion = updateJob.latestVersion;
+  try {
+    const res = await fetch(`${apiBase}/api/update/status?jobId=${encodeURIComponent(updateJob.id)}`, { signal });
+    const statusData = await requireJson<{ job?: UpdateJob }>(res);
+    if (statusData.job) {
+      // A no-restart job still needs observation: restart controls the follow-up
+      // health/reload path, not whether the worker's terminal outcome is fetched.
+      if (statusData.job.status === "failed" || statusData.job.status === "cancelled" || !updateJob.restart) {
+        return { job: statusData.job, reconnecting: false };
+      }
+      if (targetVersion) {
+        try {
+          const healthRes = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal });
+          const healthData = await requireJson<HealthData>(healthRes);
+          if (healthData.version === targetVersion) {
+            return { job: statusData.job, reconnecting: false, reload: true };
+          }
+        } catch {
+          return { job: statusData.job, reconnecting: true };
+        }
+      }
+      return { job: statusData.job, reconnecting: false };
+    }
+  } catch {
+    return { reconnecting: true };
+  }
+  return { reconnecting: false };
+}
+
 export function useDashboardData(apiBase: string) {
   const { locale, t } = useI18n();
   const { notify } = useNotifications();
@@ -192,7 +248,7 @@ export function useDashboardData(apiBase: string) {
     const data = corePoll.data;
     if (!data) return;
     if (data.health) setHealth(data.health);
-    setProviders(data.providers);
+    if (data.providers) setProviders(data.providers);
     if (data.settings) setSettings(data.settings);
     // Latest-wins: only seed from settings when no newer dedicated probe has committed
     // while this core poll was in flight. Always merge against the live ref.
@@ -243,35 +299,13 @@ export function useDashboardData(apiBase: string) {
   }, []);
 
   const updatePoll = useKeyedClientResource(
-    updateJob?.id && updateJob.restart ? `update-job:${apiBase}:${updateJob.id}` : `update-job:idle:${apiBase}`,
+    updateJob?.id ? `update-job:${apiBase}:${updateJob.id}` : `update-job:idle:${apiBase}`,
     [apiBase, updateJob?.id, updateJob?.restart, updateJob?.latestVersion],
     async (signal) => {
-      if (!updateJob?.id || !updateJob.restart) return { reconnecting: false as const };
-      const targetVersion = updateJob.latestVersion;
-      try {
-        const res = await fetch(`${apiBase}/api/update/status?jobId=${encodeURIComponent(updateJob.id)}`, { signal });
-        const statusData = await requireJson<{ job?: UpdateJob }>(res);
-        if (statusData.job) {
-          if (statusData.job.status === "failed") return { job: statusData.job, reconnecting: false as const };
-          if (targetVersion) {
-            try {
-              const healthRes = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal });
-              const healthData = await requireJson<HealthData>(healthRes);
-              if (healthData.version === targetVersion) {
-                return { job: statusData.job, reconnecting: false as const, reload: true as const };
-              }
-            } catch {
-              return { job: statusData.job, reconnecting: true as const };
-            }
-          }
-          return { job: statusData.job, reconnecting: false as const };
-        }
-      } catch {
-        return { reconnecting: true as const };
-      }
-      return { reconnecting: false as const };
+      if (!updateJob?.id || isTerminalUpdateJobStatus(updateJob.status)) return { reconnecting: false };
+      return pollUpdateJob(apiBase, updateJob, signal);
     },
-    { pollMs: 1500, enabled: !!(updateJob?.id && updateJob.restart) },
+    { pollMs: 1500, enabled: shouldPollUpdateJob(updateJob) },
   );
 
   /* eslint-disable react-hooks/set-state-in-effect -- mirror update-job client-resource snapshot into local job UI state */
@@ -291,12 +325,9 @@ export function useDashboardData(apiBase: string) {
     if (!updateJob || notifiedUpdateStatusRef.current === updateJob.status) return;
     notifiedUpdateStatusRef.current = updateJob.status;
     notify({
-      tone: updateJob.status === "failed" ? "error" : updateJob.status === "succeeded" ? "success" : "info",
+      tone: updateJob.status === "failed" ? "error" : updateJob.status === "succeeded" ? "success" : updateJob.status === "cancelled" ? "warn" : "info",
       title: updateJobLabel(updateJob.status, t),
-      body: [
-        updateJob.latestVersion ? `${updateJob.currentVersion} -> ${updateJob.latestVersion}` : "",
-        updateJob.error ?? "",
-      ].filter(Boolean).join(" ") || undefined,
+      body: updateJobNotificationBody(updateJob, t),
     });
   }, [updateJob, notify, t]);
 

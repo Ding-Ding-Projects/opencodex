@@ -53,7 +53,9 @@ import {
   VOCAB_MAX_FILE_BYTES,
   VOCAB_MAX_KEY_LENGTH,
   VOCAB_MAX_VALUE_LENGTH,
-  type VocabParseResult,
+  type VocabClearResult,
+  type VocabLoadResult,
+  type VocabOperationReason,
   type VocabRejectReason,
   type VocabState,
 } from "../i18n/personal-vocabulary";
@@ -237,10 +239,13 @@ function useEdgeVoices(enabled: boolean, apiBase: string): {
 
   useEffect(() => {
     if (!enabled) {
+      // Resetting the async resource is the effect's external-state cleanup.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setState({ voices: [], loading: false, available: false, error: "" });
       return;
     }
     const controller = new AbortController();
+    // Mark the request pending before awaiting the external voice catalogue.
     setState(previous => ({ ...previous, loading: true, error: "" }));
     void fetchEdgeVoices(apiBase, controller.signal).then(result => {
       if (controller.signal.aborted) return;
@@ -455,8 +460,8 @@ function FunnySample({ text }: { text: string }) {
  * renderer in its dependency graph at all.
  */
 function useVocabulary(): VocabState & {
-  load: (file: File) => Promise<VocabParseResult>;
-  clear: () => void;
+  load: (file: File) => Promise<VocabLoadResult>;
+  clear: () => VocabClearResult;
 } {
   const snapshot = useSyncExternalStore(subscribeVocabulary, getVocabularySnapshot, getVocabularySnapshot);
   return { ...snapshot, load: loadVocabularyFile, clear: clearVocabulary };
@@ -502,6 +507,14 @@ function describeVocabRejection(t: TFn, reason: VocabRejectReason): string {
   return t(VOCAB_REASON_KEY[reason], vocabReasonVars(reason));
 }
 
+function isVocabularyOperationFailure(reason: VocabRejectReason | VocabOperationReason): reason is VocabOperationReason {
+  return reason === "persistence-failed" || reason === "clear-failed" || reason === "superseded";
+}
+
+function isVocabularyFileRejection(reason: VocabRejectReason | VocabOperationReason): reason is VocabRejectReason {
+  return !isVocabularyOperationFailure(reason);
+}
+
 /**
  * The personal-vocabulary card: a semantic file picker with no-file, loaded,
  * invalid, replace and clear states — per the universal contract, present on
@@ -534,14 +547,24 @@ function VocabularyCard({ t }: { t: TFn }) {
         title: t("vocab.loadedNotice"),
         body: t("vocab.loadedNoticeBody", { count: Object.keys(result.doc.entries).length }),
       });
-    } else {
+    } else if (result.reason === "superseded") {
+      // A newer upload or clear owns the state now. Its completion must not
+      // produce a stale success or error notification.
+      return;
+    } else if (isVocabularyOperationFailure(result.reason)) {
+      notify({ tone: "error", title: t("vocab.operationFailedNotice"), body: t("vocab.operationFailedBody") });
+    } else if (isVocabularyFileRejection(result.reason)) {
       notify({ tone: "error", title: t("vocab.invalidNotice"), body: describeVocabRejection(t, result.reason) });
     }
   };
 
   const onClear = () => {
-    vocab.clear();
-    notify({ tone: "info", title: t("vocab.clearedNotice"), body: t("vocab.clearedNoticeBody") });
+    const result = vocab.clear();
+    if (result.ok) {
+      notify({ tone: "info", title: t("vocab.clearedNotice"), body: t("vocab.clearedNoticeBody") });
+    } else if (result.reason === "clear-failed") {
+      notify({ tone: "error", title: t("vocab.operationFailedNotice"), body: t("vocab.operationFailedBody") });
+    }
   };
 
   return (
@@ -584,8 +607,10 @@ function VocabularyCard({ t }: { t: TFn }) {
         role="status"
         style={{ margin: "var(--sp-2) 0 0", color: "var(--m3-on-surface-variant)", fontSize: "var(--t-body-s)" }}
       >
-        {vocab.lastRejection
-          ? t("vocab.stateInvalid", { reason: describeVocabRejection(t, vocab.lastRejection.reason) })
+        {vocab.lastRejection && isVocabularyOperationFailure(vocab.lastRejection.reason)
+          ? t("vocab.stateOperationFailed")
+          : vocab.lastRejection && isVocabularyFileRejection(vocab.lastRejection.reason)
+            ? t("vocab.stateInvalid", { reason: describeVocabRejection(t, vocab.lastRejection.reason) })
           : vocab.doc
             ? t("vocab.stateLoaded", { count })
             : t("vocab.stateNone")}

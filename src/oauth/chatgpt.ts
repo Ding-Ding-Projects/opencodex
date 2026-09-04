@@ -46,6 +46,40 @@ export function extractEmail(idToken?: string, accessToken?: string): string | u
   return undefined;
 }
 
+export interface ChatGPTRefreshDependencies {
+  readonly fetch?: typeof fetch;
+}
+
+/** Refresh a ChatGPT credential using only the caller-supplied refresh token. */
+export async function refreshChatGPTTokenRaw(
+  refreshToken: string,
+  options: { signal?: AbortSignal; dependencies?: ChatGPTRefreshDependencies } = {},
+): Promise<OAuthCredentials> {
+  const token = refreshToken.trim();
+  if (!token) throw new Error("ChatGPT refresh token is unavailable");
+  const resp = await (options.dependencies?.fetch ?? fetch)(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: CLIENT_ID,
+      refresh_token: token,
+    }).toString(),
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (!resp.ok) {
+    const errDesc = await safeErrorDescription(resp);
+    const reason = /invalid(?:ated|_grant)|revoked/i.test(errDesc)
+      ? "revoked"
+      : /expired/i.test(errDesc) ? "expired" : "unknown";
+    const error = new Error(`ChatGPT token refresh failed: ${resp.status} ${errDesc}`) as Error & { reason?: string };
+    error.name = "ChatGPTTokenRefreshError";
+    error.reason = reason;
+    throw error;
+  }
+  return credsFromToken((await resp.json()) as Record<string, unknown>);
+}
+
 function credsFromToken(data: Record<string, unknown>): OAuthCredentials {
   const idToken = typeof data.id_token === "string" ? data.id_token : undefined;
   const accessToken = data.access_token as string;

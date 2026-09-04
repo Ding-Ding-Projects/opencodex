@@ -33,11 +33,16 @@ function fixture(version = "9.8.7"): string {
 describe("GUI build identity", () => {
   test("keeps npm pack JSON stdout machine-readable", async () => {
     const gate = await Bun.file(new URL("../scripts/verify-gui-dist.ts", import.meta.url)).text();
+    const iconScript = await Bun.file(new URL("../scripts/generate-windows-icon.mjs", import.meta.url)).text();
     const workflow = await Bun.file(new URL("../.github/workflows/ci.yml", import.meta.url)).text();
 
     expect(workflow).toContain("npm pack --json > pack.json");
     expect(gate).toContain("console.error(`GUI package gate passed:");
     expect(gate).not.toContain("console.log(`GUI package gate passed:");
+    expect(iconScript).toContain("console.error(`Windows icon is current:");
+    expect(iconScript).toContain("console.error(`Wrote deterministic Windows icon to");
+    expect(iconScript).not.toContain("console.log(`Windows icon is current:");
+    expect(iconScript).not.toContain("console.log(`Wrote deterministic Windows icon to");
   });
 
   test("accepts only a matching Material 3 manifest and index marker", () => {

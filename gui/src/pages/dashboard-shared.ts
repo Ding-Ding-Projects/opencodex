@@ -86,7 +86,7 @@ export interface ShadowCallData { enabled: boolean; model: string }
 export interface UsageSummary30d { summary: { requests: number; totalTokens: number; coverageRatio: number } }
 export type UpdateChannel = "latest" | "preview";
 export type Installer = "npm" | "bun" | "source";
-export type UpdateJobStatus = "running" | "restarting" | "succeeded" | "failed";
+export type UpdateJobStatus = "running" | "restarting" | "succeeded" | "failed" | "cancelled";
 export interface SyncResult {
   ok: boolean;
   added: number;
@@ -146,6 +146,7 @@ export function defaultUpdateChannel(version: string | undefined): UpdateChannel
 export function updateReasonLabel(reason: string | undefined, t: (key: TKey) => string): string {
   switch (reason) {
     case "source_checkout": return t("dash.updateReason.source_checkout");
+    case "desktop_installer": return t("dash.updateReason.desktop_installer");
     case "latest_unavailable": return t("dash.updateReason.latest_unavailable");
     case "already_latest": return t("dash.updateReason.already_latest");
     default: return t("dash.updateReason.unknown");
@@ -158,6 +159,7 @@ export function updateJobLabel(status: UpdateJobStatus, t: (key: TKey) => string
     case "restarting": return t("dash.updateStatus.restarting");
     case "succeeded": return t("dash.updateStatus.succeeded");
     case "failed": return t("dash.updateStatus.failed");
+    case "cancelled": return t("dash.updateStatus.cancelled");
   }
 }
 

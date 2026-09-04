@@ -11,6 +11,7 @@
 import { resolveEnvValue, saveConfigPreservingClaudeCode } from "../config";
 import type { OcxConfig, OcxProviderConfig } from "../types";
 import { resolveProviderTransport, type OcxProviderTransport } from "./xai-transport";
+import { resolveProviderCredential } from "../lib/provider-credentials";
 
 // ---- cooldown state (in-memory, same as codex/routing.ts) ----
 
@@ -55,7 +56,9 @@ function parseRetryAfterMs(value: string | null | undefined, now = Date.now()): 
 function sameKey(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return false;
   if (a === b) return true;
-  return resolveEnvValue(a) === resolveEnvValue(b);
+  const left = resolveProviderCredential(resolveEnvValue(a));
+  const right = resolveProviderCredential(resolveEnvValue(b));
+  return left !== undefined && left === right;
 }
 
 function isKeyInCooldown(providerName: string, keyId: string, now = Date.now()): boolean {
@@ -200,7 +203,7 @@ export function rotateProviderTransportOn429(
         // and `resolveProviderTransport` does not expand env references — so a
         // `${XAI_API_KEY}` pool entry used to be sent upstream as those twelve
         // literal characters, turning a recoverable 429 into a 401.
-        { ...routedProvider, apiKey: resolveEnvValue(rotated.apiKey) },
+        { ...routedProvider, apiKey: resolveProviderCredential(resolveEnvValue(rotated.apiKey)) },
         options.promptCacheKey,
       )
     : null;

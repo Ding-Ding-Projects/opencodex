@@ -244,13 +244,23 @@ export default function ProviderWorkspaceShell({
     let cancelled = false;
     fetch(`${apiBase}/api/usage?range=30d`)
       .then(r => readJsonIfOk<{
-        providers?: Array<{ provider: string; requests: number; totalTokens?: number }>;
+        providers?: Array<{ provider: string; requests: number; totalTokens?: number; estimatedCostUsd?: number; apiEquivalentCostUsd?: number }>;
         models?: Array<{ provider: string; model: string; resolvedModel?: string; requests: number; totalTokens: number; inputTokens: number; outputTokens: number; shareRatio: number; estimatedCostUsd?: number; apiEquivalentCostUsd?: number }>;
       }>(r))
       .then((data) => {
         if (cancelled || !data) return;
         const byProvider: Record<string, ProviderUsageTotals> = {};
-        for (const p of data.providers ?? []) byProvider[p.provider] = { requests: p.requests, totalTokens: p.totalTokens };
+        // The per-provider cost subtotals travel with the row so the usage
+        // panel reads the server's own totals rather than re-summing model
+        // rows, which a future slice or filter would silently break.
+        for (const p of data.providers ?? []) {
+          byProvider[p.provider] = {
+            requests: p.requests,
+            totalTokens: p.totalTokens,
+            ...(p.estimatedCostUsd !== undefined ? { estimatedCostUsd: p.estimatedCostUsd } : {}),
+            ...(p.apiEquivalentCostUsd !== undefined ? { apiEquivalentCostUsd: p.apiEquivalentCostUsd } : {}),
+          };
+        }
         setUsageTotals(byProvider);
         // Group model rows by provider
         const byProviderModels: Record<string, ProviderModelUsageRow[]> = {};

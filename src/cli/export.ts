@@ -19,6 +19,7 @@ import { join, resolve } from "node:path";
 import { getConfigDir, getConfigPath, readConfigDiagnostics } from "../config";
 import { listStateHistory } from "../lib/state-history";
 import { collectOrcaCodexHomeDiagnostic, type OrcaCodexHomeDiagnostic } from "../codex/home";
+import { providerVaultExportRefusal } from "../lib/provider-credentials";
 
 const USAGE = "Usage: ocx export --client orca --json [--out <path>]  |  ocx export <new-file> --yes  |  ocx export --history [--json]  |  ocx export data <dataset> [--format <f>] [--out <path>] [--list]";
 
@@ -255,6 +256,11 @@ export async function handleExportCommand(args: string[]): Promise<number> {
       + "  Exporting now would write a bundle containing default configuration and call it a backup.\n"
       + "  Inspect it with:  ocx config validate",
     );
+    return 2;
+  }
+  const vaultRefusal = providerVaultExportRefusal(diagnostics.config);
+  if (vaultRefusal) {
+    console.error(`ocx export: refusing full-state backup: ${vaultRefusal}. The OS vault must be backed up through its own account-scoped recovery path.`);
     return 2;
   }
 
