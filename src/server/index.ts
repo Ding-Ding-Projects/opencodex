@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { markActivity } from "../lib/sidecar-tracker";
 import {
   buildWarmupCompletionFrames,
@@ -46,12 +47,15 @@ export { resolveAdapter } from "./adapter-resolve";
 import { formatErrorResponse, type ResponsesTerminalStatus } from "../bridge";
 import {
   drainAndShutdown,
+  admitSessionTurn,
   getActiveTurnCount,
   isDraining,
   registerTurn,
   setServerRef,
   trackStreamLifetime,
   unregisterTurn,
+  releaseSessionTurn,
+  trackSessionTurn,
 } from "./lifecycle";
 export {
   drainAndShutdown,
@@ -62,6 +66,9 @@ export {
   registerTurn,
   trackStreamLifetime,
   unregisterTurn,
+  admitSessionTurn,
+  releaseSessionTurn,
+  trackSessionTurn,
 } from "./lifecycle";
 import { ensureAppLogFile } from "../lib/app-log-file";
 import { hydrateDebugLogFromDisk } from "../lib/debug-log-buffer";
@@ -151,6 +158,8 @@ import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
 import { handleSearch } from "./search";
 import { BUILD_STAMP, fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
+import { TenantBoundaryStore, tenantBoundary, tenantRequestLedger, type TenantAdmission } from "./tenant-boundary";
+import { readCodexTransitionState } from "../codex/transition-state";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -471,6 +480,10 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
+        const tenantWs = tenantBoundary.admit(req);
+        if (tenantWs.kind === "unauthorized" || tenantWs.kind === "forbidden") {
+          return withCors(formatErrorResponse(tenantWs.status, "tenant_admission", tenantWs.message), req, config);
+        }
         const apiAuthError = requireResponsesApiAuth(req, config);
         if (apiAuthError) return withCors(apiAuthError, req, config);
         if (!isAllowedRequestOrigin(req, config)) {
@@ -499,6 +512,10 @@ export function startServer(port?: number) {
         // it, and with only `version` to go on it could not tell the previous
         // version of itself from the copy it had just installed — so an updated
         // app served the old dashboard. See `electron/proxy-adoption.mjs`.
+        const coordinator = (() => {
+          try { return readCodexTransitionState().kind === "ready" ? "ready" : "unavailable"; }
+          catch { return "unavailable"; }
+        })();
         return jsonResponse({
           status: "ok",
           service: "opencodex",
@@ -508,7 +525,31 @@ export function startServer(port?: number) {
           uptime: process.uptime(),
           pid: process.pid,
           port: listenPort,
+          coordinator,
         }, 200, req, config);
+      }
+
+      let tenantAdmission: TenantAdmission | undefined;
+      let sessionKey: string | undefined;
+      if (url.pathname.startsWith("/v1/")) {
+        const tenantResult = tenantBoundary.admit(req);
+        if (tenantResult.kind === "unauthorized" || tenantResult.kind === "forbidden") {
+          return withCors(formatErrorResponse(tenantResult.status, "tenant_admission", tenantResult.message), req, config);
+        }
+        tenantAdmission = tenantResult.kind === "admitted" ? tenantResult.admission : undefined;
+        const requestedModel = await tenantBoundary.modelFromRequest(req);
+        const authorization = tenantBoundary.authorize(req, requestedModel, requestedModel?.includes("/") ? requestedModel.slice(0, requestedModel.indexOf("/")) : undefined);
+        if (authorization.kind === "unauthorized" || authorization.kind === "forbidden") {
+          return withCors(formatErrorResponse(authorization.status, "tenant_authorization", authorization.message), req, config);
+        }
+        sessionKey = await tenantBoundary.sessionKeyFromRequest(req);
+        if (sessionKey && !admitSessionTurn(sessionKey)) {
+          return withCors(formatErrorResponse(409, "session_turn_active", "another turn is active for this session; queued turns are disabled"), req, config);
+        }
+        if (tenantAdmission) {
+          try { tenantRequestLedger.record({ tenantId: tenantAdmission.tenantId, requestId: req.headers.get("x-request-id")?.slice(0, 200) || randomUUID(), path: url.pathname, ...(requestedModel ? { model: requestedModel } : {}), status: "admitted", recordedAt: new Date().toISOString() }); }
+          catch { /* history is observability only; admission and dispatch remain authoritative */ }
+        }
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -569,7 +610,7 @@ export function startServer(port?: number) {
             : idsParam === "desktop"
               ? "desktop3p" as const
               : (/^claude-code\//i.test(req.headers.get("user-agent") ?? "") ? "readable" as const : "desktop3p" as const);
-          const data = buildAnthropicModelInfos([...visibleNativeSlugs(config)], goOrdered, resolveAutoContext(config.claudeCode), idStyle, activeDesktop3pAlias);
+          const data = tenantBoundary.filterModels(tenantAdmission, buildAnthropicModelInfos([...visibleNativeSlugs(config)], goOrdered, resolveAutoContext(config.claudeCode), idStyle, activeDesktop3pAlias));
           return jsonResponse({ data }, 200, req, config);
         }
         if (!copilotAdmission.active && url.searchParams.has("client_version")) {
@@ -580,14 +621,14 @@ export function startServer(port?: number) {
           // on-disk sync; codex-rs keeps them out of the picker itself).
           const maMode = config.multiAgentMode === "v1" || config.multiAgentMode === "v2" ? config.multiAgentMode : "default";
           const entries = buildCatalogEntries(loadCatalogTemplate(), nativeSlugs, goOrdered, config.subagentModels, websocketsEnabled(config), maMode as "v1" | "default" | "v2", exactComboCatalogSlugs(config));
-          return jsonResponse({ models: applyNativeVisibility(entries, disabledNativeSlugs(config)) }, 200, req, config);
+          return jsonResponse({ models: applyNativeVisibility(tenantBoundary.filterCatalogEntries(tenantAdmission, entries), disabledNativeSlugs(config)) }, 200, req, config);
         }
         // OpenAI list shape: native gpt bare + routed models namespaced "<provider>/<id>"
         // (pure availability list — disabled natives are omitted entirely).
-        let data = [
+        let data = tenantBoundary.filterModels(tenantAdmission, [
           ...visibleNativeSlugs(config).map(id => ({ id, object: "model", created: 0, owned_by: "openai" })),
           ...uniqueCatalogModelsForRawPublicList(goOrdered).map(m => ({ id: m.alias ?? `${m.provider}/${m.id}`, object: "model", created: 0, owned_by: m.owned_by ?? m.provider })),
-        ];
+        ]);
         if (copilotAdmission.active) {
           const profile = await buildCopilotDesktopProfile(config);
           const callable = callableCopilotModels(profile.models);
@@ -625,7 +666,7 @@ export function startServer(port?: number) {
           response.status,
           response.status === 499 ? { closeReason: "client_cancel" } : undefined,
         );
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (
@@ -647,7 +688,7 @@ export function startServer(port?: number) {
         const endpoint = url.pathname.endsWith("/edits") ? "edits" as const : "generations" as const;
         const response = await handleImages(req, config, endpoint, logCtx);
         addFinalRequestLog(requestId, start, logCtx, response.status, response.status === 499 ? { closeReason: "client_cancel" } : undefined);
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (req.method === "GET" && url.pathname.startsWith("/v1/opencodex/artifacts/")) {
@@ -701,7 +742,7 @@ export function startServer(port?: number) {
           response.status,
           response.status === 499 ? { closeReason: "client_cancel" } : undefined,
         );
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (url.pathname === "/v1/responses" && req.method === "POST") {
@@ -739,7 +780,7 @@ export function startServer(port?: number) {
             finalizeNativePassthroughLog(499, { closeReason: "client_cancel" });
           },
         });
-        return withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, config);
+        return withCors(trackSessionTurn(responseWithDeferredRequestLog(response, requestId, start, logCtx), sessionKey), req, config);
       }
 
       // Anthropic Messages inbound (Claude Code). count_tokens FIRST (longer path).
@@ -755,7 +796,7 @@ export function startServer(port?: number) {
           return withCors(anthropicErrorResponse(403, "cross-origin data-plane request blocked", "permission_error"), req, config);
         }
         const response = await handleClaudeCountTokens(req, config);
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       if (url.pathname === "/v1/messages" && req.method === "POST") {
@@ -776,7 +817,7 @@ export function startServer(port?: number) {
         // pre-translation stream + native passthrough callbacks) — do not re-wrap the
         // translated Anthropic stream here.
         const response = await handleClaudeMessages(req, config, logCtx, { requestId, start });
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
 
@@ -810,7 +851,7 @@ export function startServer(port?: number) {
           { requestId, start },
           copilotAdmission.active ? { profile: GITHUB_COPILOT_DESKTOP_PURPOSE } : {},
         );
-        return withCors(response, req, config);
+        return withCors(trackSessionTurn(response, sessionKey), req, config);
       }
 
       // ChatGPT / Codex App voice (GPT‑Live / Frameless Bidi) + OpenAI Realtime call-create.

@@ -11,6 +11,7 @@ import { stopStorageCleanupScheduler } from "../storage/policy-scheduler";
 // ---------------------------------------------------------------------------
 
 const activeTurns = new Set<AbortController>();
+const activeSessionTurns = new Set<string>();
 let draining = false;
 let recyclingForExit = false;
 let _serverRef: ReturnType<typeof Bun.serve> | undefined;
@@ -42,6 +43,22 @@ export function registerTurn(ac: AbortController): void { activeTurns.add(ac); }
 export function unregisterTurn(ac: AbortController): void { activeTurns.delete(ac); }
 export function isDraining(): boolean { return draining; }
 export function getActiveTurnCount(): number { return activeTurns.size; }
+export function admitSessionTurn(sessionId: string): boolean {
+  if (!sessionId) return true;
+  if (activeSessionTurns.has(sessionId)) return false;
+  activeSessionTurns.add(sessionId);
+  return true;
+}
+export function releaseSessionTurn(sessionId: string | undefined): void { if (sessionId) activeSessionTurns.delete(sessionId); }
+export function trackSessionTurn<T extends Response>(response: T, sessionId: string | undefined): T {
+  if (!sessionId || !response.body) { releaseSessionTurn(sessionId); return response; }
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) { try { const next = await reader.read(); if (next.done) { releaseSessionTurn(sessionId); controller.close(); } else controller.enqueue(next.value); } catch (error) { releaseSessionTurn(sessionId); controller.error(error); } },
+    cancel(reason) { releaseSessionTurn(sessionId); return reader.cancel(reason); },
+  });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers }) as T;
+}
 /** Live listen port of the Bun server, when started. */
 export function getServerListenPort(): number | undefined {
   const port = _serverRef?.port;

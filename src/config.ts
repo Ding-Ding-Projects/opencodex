@@ -1,8 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { Database } from "bun:sqlite";
 import * as z from "zod/v4";
+import { bumpConfigGenerationAtPath, bumpCurrentConfigGeneration, initializeConfigGeneration, readConfigGenerationAtPath } from "./codex/generation";
+import type { BumpConfigGeneration, ReadConfigGeneration } from "./codex/convergence-types";
+import { fsyncPath } from "./lib/fsync-path";
 import {
   CODEX_ACCOUNT_NAMESPACE_COMBO_ALIAS_COLLISION_ERROR,
   codexAccountNamespaceForModel,
@@ -1561,9 +1565,125 @@ export function saveConfig(config: OcxConfig): void {
   if (process.platform === "win32") {
     hardenSecretDir(dir, { required: true });
   }
-  const configPath = getConfigPath();
-  atomicWriteFile(configPath, JSON.stringify(config, null, 2) + "\n");
+  withConfigMutationLockSync(() => {
+    const configPath = getConfigPath();
+    const bytes = JSON.stringify(config, null, 2) + "\n";
+    let changed = true;
+    try { changed = readFileSync(configPath, "utf8") !== bytes; } catch { /* first write */ }
+    if (changed) {
+      atomicWriteFile(configPath, bytes);
+      bumpCurrentConfigGeneration(configMutationDatabase!);
+    }
+  });
   noteConfigWritten();
+}
+
+const CONFIG_MUTATION_DB_FILENAME = "config-mutation.sqlite";
+let configMutationDepth = 0;
+let configMutationDatabase: Database | null = null;
+
+function configMutationDatabasePath(): string {
+  const dir = getConfigDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return join(dir, CONFIG_MUTATION_DB_FILENAME);
+}
+
+function openConfigMutationDatabase(): Database {
+  const finalPath = configMutationDatabasePath();
+  if (!existsSync(finalPath)) {
+    const tempPath = `${finalPath}.${randomUUID()}.tmp`;
+    const temp = new Database(tempPath, { create: true });
+    try {
+      temp.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA user_version=1; BEGIN IMMEDIATE;");
+      initializeConfigGeneration(temp);
+      temp.exec("COMMIT");
+    } catch (error) {
+      try { temp.exec("ROLLBACK"); } catch { /* close below */ }
+      temp.close();
+      try { unlinkSync(tempPath); } catch { /* unpublished temp */ }
+      throw error;
+    }
+    temp.close();
+    try { chmodSync(tempPath, 0o600); } catch { /* Windows ACL helper owns the boundary */ }
+    hardenSecretPath(tempPath, { required: true, timeoutMemoKey: tempPath });
+    fsyncPath(tempPath);
+    if (process.platform === "win32") {
+      const quote = (value: string) => value.replaceAll("'", "''");
+      const script = [
+        "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class OcxMoveConfig { [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string existing, string destination, int flags); }'",
+        `$ok=[OcxMoveConfig]::MoveFileEx('${quote(tempPath)}','${quote(finalPath)}',8)`,
+        "if(-not $ok){ exit [Runtime.InteropServices.Marshal]::GetLastWin32Error() }",
+      ].join("; ");
+      const encoded = Buffer.from(script, "utf16le").toString("base64");
+      const moved = Bun.spawnSync(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
+      if (!moved.success && moved.exitCode !== 183) throw new Error("config mutation database publication failed");
+    } else {
+      try { linkSync(tempPath, finalPath); }
+      catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+        if (code !== "EEXIST") throw error;
+      }
+    }
+    fsyncPath(dirname(finalPath));
+    try { unlinkSync(tempPath); } catch { /* final inode is authoritative */ }
+  }
+  return new Database(finalPath, { readwrite: true, create: false });
+}
+
+/** Synchronous, fail-fast C lock used by cooperating config and Codex writers. */
+export function withConfigMutationLockSync<T>(fn: () => T): T {
+  if (configMutationDepth > 0) {
+    configMutationDepth += 1;
+    try { return fn(); } finally { configMutationDepth -= 1; }
+  }
+  const database = openConfigMutationDatabase();
+  try {
+    try { chmodSync(configMutationDatabasePath(), 0o600); } catch { /* Windows ACL helper owns this boundary */ }
+    database.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE;");
+    initializeConfigGeneration(database);
+    configMutationDepth = 1;
+    configMutationDatabase = database;
+    const result = fn();
+    database.exec("COMMIT;");
+    return result;
+  } catch (error) {
+    try { database.exec("ROLLBACK;"); } catch { /* close below releases the lock */ }
+    throw error;
+  } finally {
+    configMutationDepth = 0;
+    configMutationDatabase = null;
+    database.close();
+  }
+}
+
+export const readConfigGeneration: ReadConfigGeneration = () => {
+  try { return readConfigGenerationAtPath(configMutationDatabasePath()); }
+  catch { return { kind: "unavailable", reason: "database" }; }
+};
+
+export const bumpConfigGeneration: BumpConfigGeneration = expected => {
+  try { return bumpConfigGenerationAtPath(configMutationDatabasePath(), expected); }
+  catch { return { kind: "unavailable", reason: "database" }; }
+};
+
+export type PersistedConfigMutation<T> = { changed: boolean; value: T };
+export type PersistedConfigMutationOutcome<T> =
+  | { status: "committed" | "unchanged"; value: T }
+  | { status: "unavailable"; reason: "missing" | "invalid" | "conflict" };
+
+export function mutatePersistedConfig<T>(mutate: (config: OcxConfig) => PersistedConfigMutation<T>): PersistedConfigMutationOutcome<T> {
+  const observed = readConfigDiagnostics();
+  if (observed.source !== "file") return { status: "unavailable", reason: observed.source === "default" ? "missing" : "invalid" };
+  return withConfigMutationLockSync(() => {
+    const current = readConfigDiagnostics();
+    if (current.source !== "file") return { status: "unavailable", reason: current.source === "default" ? "missing" : "invalid" };
+    const next = structuredClone(current.config);
+    const result = mutate(next);
+    if (!result.changed) return { status: "unchanged", value: result.value };
+    atomicWriteFile(getConfigPath(), JSON.stringify(next, null, 2) + "\n");
+    bumpCurrentConfigGeneration(configMutationDatabase!);
+    return { status: "committed", value: result.value };
+  });
 }
 
 // Settings history is best-effort and deliberately disabled in tests, where

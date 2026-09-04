@@ -14,7 +14,7 @@ import {
   type ProcessIdentity,
 } from "../lib/process-identity";
 
-const JOURNAL_PATH = join(CODEX_HOME, "opencodex-journal.json");
+export const JOURNAL_PATH = join(CODEX_HOME, "opencodex-journal.json");
 
 interface Journal {
   version: 1;

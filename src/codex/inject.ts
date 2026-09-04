@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { atomicWriteFile, loadConfig, subagentDefaultSyncEffective, websocketsEnabled } from "../config";
+import { adoptRetainedApplyHome, adoptRetainedRestoreHome } from "./adoption";
+import { DEFAULT_INJECT_LOCK_TIMEOUT_MS } from "./inject-coordination";
+import { withCodexWriteLock, withCodexWriteLockSync } from "./codex-write-lock";
 import { markJournalInjectedState, removeJournal, restoreJournalState, writeJournal } from "./journal";
 import { restoreCodexCatalog } from "./catalog";
 import { migrateHistoryToOpenai, syncCodexHistoryProvider } from "./history-provider";
@@ -478,6 +482,41 @@ export interface CodexInjectResult {
   nativeSubagentDefaultsWarning?: string;
 }
 
+function writeWitness(content: string): { authoritySnapshotId: string } {
+  return { authoritySnapshotId: createHash("sha256").update(content, "utf8").digest("hex") };
+}
+
+/**
+ * The native files are one synchronous critical section. The coordinator row is
+ * advanced before the first file write and the lock verifies the same on-disk
+ * witness again under N+C, so a stale caller cannot publish over a newer writer.
+ */
+async function withNativeWriteSection(admittedContent: string, commit: () => boolean): Promise<
+  | { status: "acquired"; value: boolean }
+  | { status: "busy" | "refused"; message: string }
+> {
+  const admitted = writeWitness(admittedContent);
+  const result = await withCodexWriteLock({
+    timeoutMs: DEFAULT_INJECT_LOCK_TIMEOUT_MS,
+    admitted,
+    readAdmissionUnderLock: () => writeWitness(readFileSync(CODEX_CONFIG_PATH, "utf8")),
+  }, context => {
+    const published = context.coordinator.beginTransition(
+      { nativeGeneration: context.expectation.nativeBefore, currentTxId: context.currentTxId },
+      {
+        txId: context.expectation.txId,
+        direction: "apply",
+        authoritySnapshotId: admitted.authoritySnapshotId,
+        nextRetryAt: new Date().toISOString(),
+      },
+    );
+    if (published.kind !== "updated") throw new Error("native transition could not be published");
+    return commit();
+  });
+  if (result.status === "acquired") return { status: "acquired", value: result.value };
+  return { status: result.status === "busy" ? "busy" : "refused", message: result.status === "busy" ? "Another process is writing Codex configuration; retry shortly." : result.message };
+}
+
 export async function injectCodexConfig(port: number, config?: OcxConfig, options: InjectCodexOptions = {}): Promise<CodexInjectResult> {
   if (!existsSync(CODEX_CONFIG_PATH)) {
     return { success: false, message: `Codex config not found at ${CODEX_CONFIG_PATH}. Is Codex installed?` };
@@ -518,13 +557,15 @@ export async function injectCodexConfig(port: number, config?: OcxConfig, option
   }
   const baselineContent = nativeDefaultsBaseline.content;
 
-  // Classify and journal the same bytes: a native config is a valid original and
-  // supersedes a stale snapshot (#477), while an injected one must never become
-  // one — that is how opencodex routing would survive `ocx stop`.
-  writeJournal({
-    currentStateIsNative: !hasInjectedCodexRouting(rawContent),
-    configContent: baselineContent,
-  });
+  try {
+    const adoption = adoptRetainedApplyHome();
+    if (adoption.kind === "refused") {
+      return { success: false, message: `Codex routing adoption refused: ${adoption.reason}.` };
+    }
+  } catch (error) {
+    return { success: false, message: `Codex routing adoption failed: ${error instanceof Error ? error.message : "unknown error"}.` };
+  }
+
   // EOL boundary: transforms below are LF-pure; preserve the file's dominant ending on write.
   const eol = dominantEol(rawContent);
   let content = applyEol(baselineContent, "\n");
@@ -592,9 +633,18 @@ export async function injectCodexConfig(port: number, config?: OcxConfig, option
 
   const profileContent = buildProfileFile(port, catalogPath, websocketsEnabled(config ?? {}), legacyMode, config?.hostname);
   content = applyEol(content, eol);
-  atomicWriteFile(CODEX_CONFIG_PATH, content);
-  atomicWriteFile(CODEX_PROFILE_PATH, profileContent);
-  markJournalInjectedState(content, profileContent);
+  const nativeWrite = await withNativeWriteSection(rawContent, () => {
+    // Journaling is part of the same N+C critical section as the native files;
+    // otherwise the journal itself becomes residue between adoption and row init.
+    writeJournal({ currentStateIsNative: !hasInjectedCodexRouting(rawContent), configContent: baselineContent });
+    atomicWriteFile(CODEX_CONFIG_PATH, content);
+    atomicWriteFile(CODEX_PROFILE_PATH, profileContent);
+    markJournalInjectedState(content, profileContent);
+    return true;
+  });
+  if (nativeWrite.status !== "acquired") {
+    return { success: false, message: `Codex routing write ${nativeWrite.status}: ${nativeWrite.message}` };
+  }
   // Legacy mode still forward-tags history so re-tagged threads stay listable. Design B needs
   // the opposite: a one-time migration of previously re-tagged threads BACK to openai (restore
   // machinery; cheap no-op when there is nothing to migrate).
@@ -767,11 +817,40 @@ export function restoreNativeCodex(): { success: boolean; message: string } {
     removeJournal();
     return { success: true, message: `External Codex provider ${tomlString(activeProvider)} preserved; no native restore was needed.` };
   }
-  const journal = restoreJournalState();
-  const cfg = journal.configRestored
-    ? { success: true, message: "Codex config restored from opencodex journal." }
-    : removeCodexConfig({ preserveProfile: journal.profileRestored || journal.profileChanged });
-  const cat = restoreCodexCatalog();
+  try {
+    const adoption = adoptRetainedRestoreHome();
+    if (adoption.kind === "refused") {
+      return { success: false, message: `Codex restore adoption refused: ${adoption.reason}.` };
+    }
+  } catch (error) {
+    return { success: false, message: `Codex restore adoption failed: ${error instanceof Error ? error.message : "unknown error"}.` };
+  }
+  const rawBeforeRestore = existsSync(CODEX_CONFIG_PATH) ? readFileSync(CODEX_CONFIG_PATH, "utf8") : "";
+  const restoreWrite = withCodexWriteLockSync({
+    admitted: writeWitness(rawBeforeRestore),
+    readAdmissionUnderLock: () => writeWitness(existsSync(CODEX_CONFIG_PATH) ? readFileSync(CODEX_CONFIG_PATH, "utf8") : ""),
+  }, context => {
+    const published = context.coordinator.beginTransition(
+      { nativeGeneration: context.expectation.nativeBefore, currentTxId: context.currentTxId },
+      {
+        txId: context.expectation.txId,
+        direction: "remove",
+        authoritySnapshotId: writeWitness(rawBeforeRestore).authoritySnapshotId,
+        nextRetryAt: new Date().toISOString(),
+      },
+    );
+    if (published.kind !== "updated") throw new Error("native restore transition could not be published");
+    const journal = restoreJournalState();
+    const cfg = journal.configRestored
+      ? { success: true, message: "Codex config restored from opencodex journal." }
+      : removeCodexConfig({ preserveProfile: journal.profileRestored || journal.profileChanged });
+    const cat = restoreCodexCatalog();
+    return { cfg, cat };
+  });
+  if (restoreWrite.status !== "acquired") {
+    return { success: false, message: `Codex restore write ${restoreWrite.status}: ${restoreWrite.status === "busy" ? "another process owns the Codex write section" : restoreWrite.message}` };
+  }
+  const { cfg, cat } = restoreWrite.value;
   // Design B (loopback) steady state: threads are already tagged openai, so prove the
   // no-op with a readonly probe instead of write-opening a DB the Codex app may hold
   // (Windows: WAL writer lock -> seconds of stalling + a false warning on every stop).

@@ -15,10 +15,13 @@
  * `configPath` parameter without fighting the module-load-time const in paths.ts.
  */
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { realpathSync } from "node:fs";
 import { atomicWriteFile, expandUserPath } from "../config";
 import { CODEX_CONFIG_PATH } from "./paths";
+import { adoptRetainedApplyHome } from "./adoption";
+import { withCodexWriteLockSync } from "./codex-write-lock";
 
 // EOL preservation, local copies of inject.ts dominantEol/applyEol: importing
 // inject here would close a module cycle (features -> inject -> catalog -> features).
@@ -389,7 +392,7 @@ function transitionConfigError(content: string): string | null {
  * valid for the destination version. Any failed command/postcondition restores
  * the exact original config bytes.
  */
-export function transitionMultiAgentV2(
+function transitionMultiAgentV2Unlocked(
   enabled: boolean,
   toggleFeature: (enabled: boolean) => void,
   options: { configPath?: string; threadLimit?: number } = {},
@@ -447,4 +450,31 @@ export function transitionMultiAgentV2(
       return { ok: false, error: `${message}; rollback failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}` };
     }
   }
+}
+
+export function transitionMultiAgentV2(
+  enabled: boolean,
+  toggleFeature: (enabled: boolean) => void,
+  options: { configPath?: string; threadLimit?: number } = {},
+): MultiAgentV2TransitionResult {
+  if (options.configPath !== undefined) return transitionMultiAgentV2Unlocked(enabled, toggleFeature, options);
+  const path = activeCodexConfigPath();
+  const original = readConfigText(path);
+  if (original === null) return { ok: false, error: `config.toml not readable at ${path}` };
+  const adoption = adoptRetainedApplyHome();
+  if (adoption.kind === "refused") return { ok: false, error: `Codex feature adoption refused: ${adoption.reason}` };
+  const witness = createHash("sha256").update(original, "utf8").digest("hex");
+  const result = withCodexWriteLockSync({
+    admitted: { authoritySnapshotId: witness },
+    readAdmissionUnderLock: () => ({ authoritySnapshotId: createHash("sha256").update(readFileSync(path, "utf8"), "utf8").digest("hex") }),
+  }, context => {
+    const published = context.coordinator.beginTransition(
+      { nativeGeneration: context.expectation.nativeBefore, currentTxId: context.currentTxId },
+      { txId: context.expectation.txId, direction: "apply", authoritySnapshotId: witness, nextRetryAt: new Date().toISOString() },
+    );
+    if (published.kind !== "updated") throw new Error("feature transition coordinator update was not published");
+    return transitionMultiAgentV2Unlocked(enabled, toggleFeature, options);
+  });
+  if (result.status !== "acquired") return { ok: false, error: `Codex feature write ${result.status}` };
+  return result.value;
 }

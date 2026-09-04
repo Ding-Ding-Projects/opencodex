@@ -14,6 +14,11 @@ import {
 } from "./request-log";
 
 const nativePassthroughSseResponses = new WeakSet<Response>();
+let activeSseInspectors = 0;
+
+export function getInspectionCounters(): Record<string, number> {
+  return { active: activeSseInspectors };
+}
 
 export function relayWithAbort(
   body: ReadableStream<Uint8Array> | null,
@@ -456,6 +461,9 @@ export function createSseInspector(handlers: {
   onCompletedResponse?: (response: { id?: unknown; output?: unknown; status?: unknown }) => void;
   onFirstOutput?: () => void;
 }): SseInspector {
+  activeSseInspectors += 1;
+  let released = false;
+  const release = () => { if (!released) { released = true; activeSseInspectors = Math.max(0, activeSseInspectors - 1); } };
   const decoder = new TextDecoder();
   let buffer = "";
   let reported = false;
