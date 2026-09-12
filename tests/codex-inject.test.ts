@@ -16,6 +16,7 @@ import {
   MANAGED_AGENTS_TABLE_MARKER,
   MANAGED_SUBAGENT_DEFAULT_MARKER,
 } from "../src/codex/subagent-defaults";
+import { DEFAULT_CATALOG_PATH, tomlString } from "../src/codex/paths";
 
 describe("Codex config injection", () => {
   test("omits provider-level Responses WebSocket support by default", () => {
@@ -73,7 +74,7 @@ describe("Codex config injection", () => {
       'model = "gpt-5.5"',
       'model_context_window = 1000000',
       'model_auto_compact_token_limit = 900000',
-      'model_catalog_json = "/tmp/opencodex-catalog.json"',
+      `model_catalog_json = ${tomlString(DEFAULT_CATALOG_PATH)}`,
       'model_provider = "opencodex"',
       "",
       "[features]",
@@ -263,7 +264,7 @@ describe("Design B openai_base_url injection", () => {
     const injected = setRootOpenaiBaseUrl([
       'model = "opencode-go/minimax-m3"',
       'model_verbosity = "high"',
-      'model_catalog_json = "/tmp/opencodex-catalog.json"',
+      `model_catalog_json = ${tomlString(DEFAULT_CATALOG_PATH)}`,
       "",
       "[features]",
       "fast_mode = true",

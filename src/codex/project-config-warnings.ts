@@ -3,6 +3,7 @@ import path, { dirname, join, resolve } from "node:path";
 import { expandUserPath } from "../config";
 import { defaultCodexHome } from "./home";
 import { readRootTomlString } from "./paths";
+import { firstStructuralTableIndex } from "./toml-structure";
 
 const OCX_SECTION_MARKER = "# Auto-injected by opencodex";
 const DIAGNOSTICS_CACHE_TTL_MS = 30_000;
@@ -34,7 +35,7 @@ let diagnosticsCache: { at: number; warnings: ProjectCodexConfigWarning[] } | nu
 
 function hasInjectedOpenaiBaseUrl(content: string): boolean {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const rootEnd = firstTable === -1 ? lines.length : firstTable;
   for (let i = 1; i < rootEnd; i++) {
     if (/^\s*openai_base_url\s*=/.test(lines[i]) && lines[i - 1].includes(OCX_SECTION_MARKER)) return true;

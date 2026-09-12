@@ -7,6 +7,8 @@
  * them here breaks that cycle. `inject.ts` imports them back and re-exports the
  * two public predicates, so external callers see no change.
  */
+import { firstStructuralTableIndex } from "./toml-structure";
+
 export const OCX_SECTION_MARKER = "# Auto-injected by opencodex";
 
 export function isRootOpenaiBaseUrlLine(line: string): boolean {
@@ -21,7 +23,7 @@ export function tomlStringPattern(key: string): RegExp {
 
 export function rootTomlString(content: string, key: string): string | null {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(line => /^\s*\[/.test(line));
+  const firstTable = firstStructuralTableIndex(lines);
   const rootLines = lines.slice(0, firstTable === -1 ? lines.length : firstTable);
   const pattern = tomlStringPattern(key);
   for (const line of rootLines) {
@@ -52,7 +54,7 @@ export function providerTableString(content: string, provider: string, key: stri
 
 export function hasInjectedOpenaiBaseUrl(content: string): boolean {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const rootEnd = firstTable === -1 ? lines.length : firstTable;
   for (let i = 1; i < rootEnd; i++) {
     if (isRootOpenaiBaseUrlLine(lines[i]!) && lines[i - 1]!.includes(OCX_SECTION_MARKER)) return true;
