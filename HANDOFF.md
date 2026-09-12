@@ -106,7 +106,19 @@ and one runs past five minutes.
 
 The `windows-schtasks` job has been red since 2026-09-04, well before this work, and it is
 Windows-only, so nothing here can reproduce or root-cause it. It is named rather than left to look
-like a new failure.
+like a new failure, and the exact failure is recorded so a machine that can run it does not have to
+rediscover it.
+
+Step 8, "ocx stop should end the task", is where it fails; step 9's uninstall then fails as a
+consequence. The stop itself reports success, printing that the service manager stopped without
+respawning and that the proxy process stopped. What never happens is the condition the step waits
+ten seconds for: the scheduled task leaving the running state while the health endpoint stops
+answering. It gives up and reports that the task or the endpoint survived the stop.
+
+One detail in the same output is worth carrying: the restore step warns that adopting the Codex
+configuration failed because the home directory does not exist on the runner. That may be an
+artifact of how the job sets the environment up rather than the cause, and separating the two is
+the first thing to do on a machine that can actually run it.
 
 ### What the first green runs actually proved
 
