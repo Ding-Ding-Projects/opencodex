@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { Database } from "bun:sqlite";
@@ -362,6 +362,15 @@ function decompressRolloutZstUtf8(
   path: string,
   maxBytes: number = MAX_ROLLOUT_ZST_DECOMPRESSED_BYTES,
 ): string {
+  // Bound the INPUT read too, before it happens: `path` may be a symlink (this
+  // is reached with paths staged/restored from disk, not only ones this module
+  // wrote itself), and a compressed rollout has no business being anywhere near
+  // as large as the decompressed cap below. Catching that here means the read
+  // is never attempted for an oversized target, rather than only bounding the
+  // decompression of whatever readFileSync already pulled fully into memory.
+  if (statSync(path).size > maxBytes) {
+    throw new Error("rollout_zst_too_large");
+  }
   const compressed = readFileSync(path);
   const decoded = zstdDecompressSync(compressed as Uint8Array<ArrayBuffer>, {
     maxOutputLength: maxBytes,
@@ -370,6 +379,11 @@ function decompressRolloutZstUtf8(
     throw new Error("rollout_zst_too_large");
   }
   return new TextDecoder().decode(decoded);
+}
+
+/** Test-only seam: exercise the input-size guard with a small `maxBytes` instead of a real 64MB fixture. */
+export function decompressRolloutZstUtf8ForTests(path: string, maxBytes: number): string {
+  return decompressRolloutZstUtf8(path, maxBytes);
 }
 
 function parseThreadFieldsFromRolloutText(raw: string): RolloutThreadFields | null {

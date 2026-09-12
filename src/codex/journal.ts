@@ -96,10 +96,22 @@ export function writeJournal(options: WriteJournalOptions = {}): void {
   atomicWriteFile(JOURNAL_PATH, JSON.stringify(journal));
 }
 
+/**
+ * Record the fingerprint of the bytes opencodex itself just wrote, so a later
+ * restore can tell "still exactly what we injected" from "the user edited it".
+ *
+ * Always advances the hash to the CURRENT round's bytes. A restart without a
+ * clean stop re-injects into the same still-open journal (a new port after the
+ * proxy came back up, for instance); that second round is 100% opencodex-authored
+ * content, not a user edit, so the recorded fingerprint must track it — exactly
+ * the same "the current native config supersedes an older snapshot" reasoning
+ * `writeJournal` applies on the native side. A hash frozen at round one would
+ * make `restoreJournalState` misclassify round two's own routing as a foreign
+ * edit and refuse to restore the operator's real original.
+ */
 export function markJournalInjectedState(config: string, profile: string | null): void {
   const journal = readJournal();
   if (!journal) return;
-  if (journal.injectedConfigHash) return;
   journal.injectedConfigHash = sha256(config) ?? undefined;
   journal.injectedProfileHash = sha256(profile);
   atomicWriteFile(JOURNAL_PATH, JSON.stringify(journal));

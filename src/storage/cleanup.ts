@@ -18,6 +18,7 @@ import {
   existsSync,
   fsyncSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -292,7 +293,11 @@ export function listArchivedCandidates(codexHome: string): ArchivedCandidate[] {
     if (!isSafeArchiveFileName(name)) continue;
     const absPath = join(dir, name);
     try {
-      const st = statSync(absPath);
+      // lstat (never follow): a symlink here would let candidate discovery walk
+      // outside archived_sessions/, and a symlinked huge file would later be
+      // read in full by the restore/decompress path. Skip anything that is not
+      // a plain regular file, symlinks included.
+      const st = lstatSync(absPath);
       if (!st.isFile()) continue;
       const relPath = `${ARCHIVED_SESSIONS_DIR}/${name}`;
       const logicalRel = logicalRolloutRelPath(relPath);
