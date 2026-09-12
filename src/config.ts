@@ -102,12 +102,24 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 export function atomicWriteFile(path: string, content: string, io: AtomicWriteIO = {
-  write: (target, value) => writeFileSync(target, value, { encoding: "utf-8", mode: 0o600 }),
+  write: (target, value) => {
+    writeFileSync(target, value, { encoding: "utf-8", mode: 0o600 });
+    // Flush the temp file's own bytes before it is hardened/renamed, so a crash
+    // right after this call can never leave the eventual destination inode
+    // pointing at data the OS never actually persisted.
+    fsyncPath(target);
+  },
   harden: target => {
     try { chmodSync(target, 0o600); } catch { /* platform may ignore chmod */ }
     if (process.platform === "win32") hardenSecretPath(target, { required: true });
   },
-  rename: renameAtomicFile,
+  rename: (source, destination) => {
+    renameAtomicFile(source, destination);
+    // Flush the directory entry too: on a crash between rename() and the next
+    // fsync, some filesystems can still lose the rename itself even though the
+    // renamed file's own data already made it to disk.
+    fsyncPath(dirname(destination));
+  },
   truncate: target => truncateSync(target, 0),
   unlink: unlinkSync,
 }): void {
@@ -185,14 +197,23 @@ export async function atomicWriteFileAsync(
   io?: AtomicWriteAsyncIO,
 ): Promise<void> {
   const effective: AtomicWriteAsyncIO = io ?? {
-    write: (target, value) => writeFileSync(target, value, { encoding: "utf-8", mode: 0o600 }),
+    write: (target, value) => {
+      writeFileSync(target, value, { encoding: "utf-8", mode: 0o600 });
+      // See atomicWriteFile's default `write`: flush the temp file's bytes
+      // before it is hardened/renamed.
+      fsyncPath(target);
+    },
     harden: async target => {
       try { chmodSync(target, 0o600); } catch { /* platform may ignore chmod */ }
       if (process.platform === "win32") {
         await hardenSecretPathAsync(target, { required: true, timeoutMemoKey: path });
       }
     },
-    rename: renameAtomicFileAsync,
+    rename: async (source, destination) => {
+      await renameAtomicFileAsync(source, destination);
+      // See atomicWriteFile's default `rename`: flush the directory entry too.
+      fsyncPath(dirname(destination));
+    },
     truncate: target => truncateSync(target, 0),
     unlink: unlinkSync,
   };
