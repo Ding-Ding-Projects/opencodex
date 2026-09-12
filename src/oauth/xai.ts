@@ -2,6 +2,7 @@
 import { OAuthCallbackFlow, type OAuthCallbackFlowOptions } from "./callback-server";
 import { generatePKCE } from "./pkce";
 import type { LocalTokenImportMode, OAuthController, OAuthCredentials } from "./types";
+import { redactSecretString } from "../lib/redact";
 
 const XAI_OAUTH_ISSUER = "https://auth.x.ai";
 export const XAI_OAUTH_DISCOVERY_URL = `${XAI_OAUTH_ISSUER}/.well-known/openid-configuration`;
@@ -96,7 +97,13 @@ export class XaiTokenRequestError extends Error { constructor(public readonly st
 export interface XaiTokenRetryDeps { sleep?:(ms:number)=>Promise<void>; random?:()=>number }
 function isAbortError(error:unknown):boolean{return error instanceof DOMException&&error.name==="AbortError";}
 function retryDelay(attempt:number,retryAfter:string|null,random:()=>number):number{const base=attempt===1?100:250,j=Math.round(base*(.75+random()*.5)),seconds=retryAfter!==null&&/^\d+$/.test(retryAfter)?Number(retryAfter):0;return Math.min(2000,Math.max(j,seconds*1000));}
-async function readTokenError(response:Response):Promise<XaiTokenRequestError>{let oauthError:string|undefined,detail="";try{const body=await response.json() as {error?:unknown;error_description?:unknown};if(typeof body.error==="string")oauthError=body.error;if(typeof body.error_description==="string")detail=body.error_description;}catch{}const suffix=detail?`: ${detail}`:oauthError?`: ${oauthError}`:"";return new XaiTokenRequestError(response.status,oauthError,`xAI token request failed: ${response.status}${suffix}`);}
+// `oauthError` is the allowlisted OAuth error code (e.g. "invalid_grant") and is kept
+// verbatim on the returned XaiTokenRequestError.oauthError field, which `terminal()` in
+// oauth/index.ts compares against a fixed set for terminal-refresh classification.
+// `error_description` is free-form upstream text that can echo request/header content
+// (including the refresh token that failed), so it is redacted with the shared
+// `redactSecretString` helper before it can reach the thrown Error's `.message`.
+async function readTokenError(response:Response):Promise<XaiTokenRequestError>{let oauthError:string|undefined,detail="";try{const body=await response.json() as {error?:unknown;error_description?:unknown};if(typeof body.error==="string")oauthError=body.error;if(typeof body.error_description==="string")detail=body.error_description;}catch{}const safeDetail=detail?redactSecretString(detail):"";const suffix=safeDetail?`: ${safeDetail}`:oauthError?`: ${oauthError}`:"";return new XaiTokenRequestError(response.status,oauthError,`xAI token request failed: ${response.status}${suffix}`);}
 export async function postXaiToken(
   tokenEndpoint: string,
   body: Record<string, string>,

@@ -1,3 +1,5 @@
+import { redactSecretString } from "../lib/redact";
+
 export class CodexWarmupError extends Error {
   code: "http_status" | "missing_body" | "stream_failed" | "stream_incomplete" | "stream_error" | "invalid_sse" | "no_terminal" | "transport";
   status?: number;
@@ -31,7 +33,16 @@ const FALLBACK_MODELS = ["gpt-5.5"];
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ERROR_BODY_BYTES = 2048;
 
-/** Read the first MAX_ERROR_BODY_BYTES of a response body and extract an error message. */
+/**
+ * Read the first MAX_ERROR_BODY_BYTES of a response body and extract an error message.
+ *
+ * The request this guards (`tryWarmup`) sends `Authorization: Bearer <access token>` --
+ * a live Codex credential -- to the upstream. A diagnostic-shaped JSON error body that
+ * echoes request/header content back (e.g. `{"error":{"message":"invalid bearer <token>"}}`)
+ * would otherwise carry that token straight into `upstreamDetail`, which auth-api.ts embeds
+ * into a 401 response body the GUI displays in a toast. Every string extracted below is
+ * therefore passed through the shared `redactSecretString` helper before it is returned.
+ */
 async function readErrorDetail(res: Response): Promise<string | undefined> {
   try {
     const text = await res.text();
@@ -41,11 +52,11 @@ async function readErrorDetail(res: Response): Promise<string | undefined> {
       // ChatGPT backend error shape: { error: { message: "..." } } or { detail: "..." }
       const nested = json.error;
       if (nested && typeof nested === "object" && typeof (nested as Record<string, unknown>).message === "string") {
-        return ((nested as Record<string, unknown>).message as string).slice(0, 512);
+        return redactSecretString(((nested as Record<string, unknown>).message as string).slice(0, 512));
       }
-      if (typeof json.detail === "string") return json.detail.slice(0, 512);
-      if (typeof json.error === "string") return (json.error as string).slice(0, 512);
-      if (typeof json.message === "string") return json.message.slice(0, 512);
+      if (typeof json.detail === "string") return redactSecretString(json.detail.slice(0, 512));
+      if (typeof json.error === "string") return redactSecretString((json.error as string).slice(0, 512));
+      if (typeof json.message === "string") return redactSecretString(json.message.slice(0, 512));
     } catch {
       // Non-JSON response body may contain sensitive data (tokens, credentials).
       // Only surface structured error messages, never raw text.

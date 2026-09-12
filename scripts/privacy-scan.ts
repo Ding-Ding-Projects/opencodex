@@ -28,7 +28,7 @@ export type PrivacyScanOptions = {
   readHistoricalFile?: (path: string) => Uint8Array;
 };
 
-const TEXT_FILE_RE = /\.(?:cjs|css|html|js|json|jsonc|md|mjs|ps1|sh|toml|ts|tsx|txt|yml|yaml)$/;
+const TEXT_FILE_RE = /\.(?:astro|bat|cjs|css|go|html|js|json|jsonc|md|mdx|mjs|mts|ps1|py|sh|toml|ts|tsx|txt|yml|yaml)$/;
 const EXCLUDED_PREFIXES = [
   // Design prototype. `design/ocx-data.js` is offline mock data shaped like the
   // real /api/* payloads, so it contains placeholder account emails on purpose.
@@ -462,6 +462,19 @@ function lineNumber(text: string, index: number): number {
   return line;
 }
 
+/**
+ * True for the Go port's own test-only files: `_test.go` sources (the Go
+ * convention for test code, exactly analogous to this project's `tests/`
+ * directory for TypeScript) and anything under a `test`/`testdata` directory
+ * segment (e.g. `go/test/parity/...`), even on the rare file that does not
+ * itself end in `_test.go`. Both this project's own Go source (`go/`) and any
+ * third-party Go module it vendors are addressed the same way: only test-only
+ * paths are trusted, everything else in `.go` files is scanned normally.
+ */
+function isGoTestPath(file: string): boolean {
+  return file.endsWith("_test.go") || /(?:^|\/)(?:test|testdata)\//.test(file);
+}
+
 function isAllowedEmail(file: string, email: string): boolean {
   if (file === "scripts/privacy-scan.ts" && email === "a@b.com") return true;
   const normalized = email.toLowerCase();
@@ -474,7 +487,13 @@ function isAllowedEmail(file: string, email: string): boolean {
   }
   // URL-userinfo fixtures (https://user:pw@host/...) read as "pw@host" — not emails.
   if (file.startsWith("tests/") && email === ["pw", "chatgpt.com"].join("@")) return true;
-  return file.startsWith("tests/") && email === "a@b.com";
+  if (file.startsWith("tests/") && email === "a@b.com") return true;
+  // Same URL-userinfo artifact as above, in the Go port's own equivalent fixture
+  // (go/internal/providers/openai_tiers_test.go parses a URL of the form
+  // "https://user:<redacted-shaped-word>@api.openai.com/..."). Written without the
+  // literal joined value here so this comment does not itself read as an email.
+  if (isGoTestPath(file) && email === ["pass", "api.openai.com"].join("@")) return true;
+  return false;
 }
 
 function isAllowedHomePath(file: string, username: string): boolean {
@@ -513,12 +532,22 @@ function isAllowedHomePath(file: string, username: string): boolean {
   // than to the directory it happens to be sitting in. Anything else in this
   // file, including a real username, still fails.
   if (file === "gui/src/docs/generated-articles.ts" && username === "example") return true;
+  // The Go port's own test fixtures (see isGoTestPath): they exercise home-path
+  // redaction with a variety of synthetic first names (jun, Alice, bob, bob2,
+  // somebody, runner, ...) rather than this project's small fixed TypeScript
+  // sentinel set, so — same as the unconditional "Public" carve-out above —
+  // this is a path-scoped trust of the whole test-only surface, not a name
+  // enumeration that has to grow with every new Go fixture.
+  if (isGoTestPath(file)) return true;
   return false;
 }
 
 function isAllowedTokenLooking(file: string, token: string): boolean {
   // Test fixture sentinels: sk-rawsentinel..., sk-test-...
   if (file.startsWith("tests/") && /^sk-(?:rawsentinel|test-)\d+[a-z]*$/.test(token)) return true;
+  // The Go port's own test fixtures (see isGoTestPath) exercise the same
+  // redaction/sanitization behavior with their own synthetic key-shaped values.
+  if (isGoTestPath(file)) return true;
   // The screenshot seed needs providers that look configured, so it writes
   // key-shaped values into a throwaway profile. `CAPTURE-FIXTURE` sits in the
   // middle of the value and the rest is zeros, which is about as far from a
@@ -534,6 +563,9 @@ function isAllowedTokenLooking(file: string, token: string): boolean {
 }
 
 function isAllowedBearerToken(file: string, token: string): boolean {
+  // The Go port's own test fixtures (see isGoTestPath) exercise the same
+  // Authorization-header redaction behavior with their own synthetic tokens.
+  if (isGoTestPath(file)) return true;
   if (!file.startsWith("tests/")) return false;
   // The original three fixture families, which read like real tokens on purpose
   // so the code under test cannot tell the difference.

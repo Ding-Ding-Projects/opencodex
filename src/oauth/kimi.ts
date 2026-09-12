@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
 import { getConfigDir } from "../config";
+import { redactSecretString } from "../lib/redact";
 import type { OAuthController, OAuthCredentials } from "./types";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
@@ -203,7 +204,10 @@ async function pollForToken(deviceCode: string, intervalMs: number, expiresInMs:
     }
     if (error === "expired_token") throw new Error("Kimi device authorization expired");
     if (error === "access_denied") throw new Error("Kimi device authorization denied");
-    throw new Error(`Kimi device flow failed: ${error ?? response.status}${payload.error_description ? `: ${payload.error_description}` : ""}`);
+    // `error` is the OAuth error code and is kept verbatim; `error_description` is
+    // free-form upstream text that can echo request content, so it is redacted with the
+    // shared helper before it can reach the thrown Error's `.message`.
+    throw new Error(`Kimi device flow failed: ${error ?? response.status}${payload.error_description ? `: ${redactSecretString(payload.error_description)}` : ""}`);
   }
   throw new Error("Kimi device flow timed out");
 }
@@ -222,7 +226,8 @@ export async function refreshKimiToken(refreshToken: string): Promise<OAuthCrede
   });
   if (!response.ok) {
     const payload = (await response.json().catch(() => undefined)) as TokenResponse | undefined;
-    throw new Error(`Kimi token refresh failed: ${response.status}${payload?.error_description ? `: ${payload.error_description}` : ""}`);
+    // Same rationale as pollForToken above: keep the HTTP status, redact error_description.
+    throw new Error(`Kimi token refresh failed: ${response.status}${payload?.error_description ? `: ${redactSecretString(payload.error_description)}` : ""}`);
   }
   return parseTokenPayload((await response.json()) as TokenResponse, refreshToken);
 }
