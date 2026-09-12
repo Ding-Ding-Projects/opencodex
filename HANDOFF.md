@@ -78,14 +78,29 @@ succession cancelled two runs; only the last one has a live verdict. A batch of 
 its final run finish, or the tip has no exact-commit evidence.
 
 With the embedded bundle current, `go build ./...` and `go vet ./...` are clean here, so the Go
-job can reach its own test step for the first time. The failures waiting there are a separate,
-older problem and are not touched by any of this: the native port prints a help page where the
-proxy prints nothing for an unknown command, its Grok writer omits the reasoning-effort ladder the
-proxy writes, its update dry run names executables differently on Windows, a storage digest
-disagrees with its oracle on macOS, and two Windows cases fail on a file mode and a locked file.
-Each one is a real differential with a named test, none of them is a flake, and none has a fix
-here. The Go suite cannot be run to completion on this machine either: two of its tests need a
-`codex` executable that is not installed, and one runs past five minutes.
+job reached its own test step for the first time, on all three runners. On Linux it reported one
+failure, the Grok writer dropping each model's reasoning ladder, and that one is fixed here: the
+registry already knew the ladder and three call sites built the inject model without it. The rest
+are separate and older, each a real differential with a named test and none of them a flake: the
+native port prints a help page where the proxy prints nothing for an unknown command, its update
+dry run names executables differently on Windows, a storage digest disagrees with its oracle on
+macOS, and two Windows cases fail on a file mode and a locked file. The Go suite still cannot be
+run to completion on this machine: two of its tests need a `codex` executable that is not
+installed, and one runs past five minutes. Two packages also fail here for reasons this work did
+not cause, an update-policy case and a usage-cache case, both confirmed against the stashed tree.
+
+The `windows-schtasks` job has been red since 2026-09-04, well before this work, and it is
+Windows-only, so nothing here can reproduce or root-cause it. It is named rather than left to look
+like a new failure.
+
+### What the first green runs actually proved
+
+Two workflows that had never once succeeded now do. The release path published for the first time
+after its checkout was given full history, and the dashboard build passed on the Windows runner
+after the leaked test roots were unmounted, which is the only place that fix could ever be
+observed. The Windows job itself has now been cancelled on four consecutive commits without any
+push of ours arriving to cancel it, so its concurrency rule is not the cause and it still has no
+exact-commit verdict on this line of work.
 
 ## Proxy-start panic supervision extended to package scripts — 2026-08-22, `dev`
 
