@@ -46,16 +46,23 @@ Landed so far, each with a regression watched red before and green after:
 | The journal's injected-bytes hash latched after the first injection | the hash always advances, so a restart without a clean stop can still restore the true original |
 | `atomicWriteFile` never flushed before the rename | the default io fsyncs the temp file and the destination directory, matching what the mutation database already did |
 | Archived-session candidates followed symlinks and read the whole compressed input | `lstatSync` plus a size check before the read |
+| A root-level multi-line array or string whose continuation line began with `[` was read as the first table header, at 12 call sites | one shared lexical scanner, extracted from the already-tested line scanner in `subagent-defaults.ts` |
+| Catalog ownership was decided by basename, so an unrelated file with the same name was overwritten and stripped | ownership resolved against this install's real catalog path |
+| OAuth refresh and Codex warmup error text reached the client unredacted while four sibling providers already guarded it | both redacted at the same boundary the siblings use |
+| The privacy scanner's extension allowlist never opened the tracked Go files or the published `.mdx` | allowlist extended, and the blanket Go-test-path credential exemption narrowed to a hand-written fixture shape |
+| Three fire-and-forget shutdown timers had no try/finally, so a throwing drain left the daemon up after the client was told it was going down | one shared helper for the two stop routes; the restart route un-wedges and resumes serving |
+| Line attribution spawned `git blame` one file at a time | bounded concurrent fan-out, output proved byte-identical, the suite down from about 110 seconds to about 67 |
+| `scripts/test.ts` had no wall-clock bound outside Windows | a generous overridable limit on every platform, and a clear message when it trips |
+| A contract test built its scratch path from a Windows-only variable and left directories in the repository root | the real temporary directory, with cleanup |
 
-Still open at the time of writing, each with an accepted finding and a worker on it: the TOML
-root-boundary scan that mistakes a multi-line array or string for a table header (12 call sites,
-and `subagent-defaults.ts` already has the correct lexer to reuse); catalog ownership decided by
-basename alone; OAuth refresh and Codex warmup error text reaching the client unredacted while
-four sibling providers already guard it; the privacy scanner's extension allowlist that never
-opens the 964 tracked Go files or the published `.mdx`; the three fire-and-forget shutdown timers
-with no try/finally; the serial per-file `git blame` fan-out in line attribution; the missing
-wall-clock bound in `scripts/test.ts` outside Windows; and a contract test that leaves scratch
-directories in the repository root.
+Every accepted finding from the hunt has now landed. Verifying them turned up three more, all in
+the release surface rather than the product, and all three are fixed here:
+
+| Found while verifying | Fix |
+| --- | --- |
+| A test read its source directory out of a file URL's `pathname`, which on Windows keeps the slash in front of the drive letter; the module threw at import and took its whole file down, red on the Windows runner and green everywhere else | `fileURLToPath` at both call sites that did this, and a hygiene guard that is red on any platform if the form returns |
+| The committed dashboard bundle the Go binary embeds was twenty-eight files out of date, so the Go job's first step had failed on every run it ever had and the build, vet and test steps had never once been reached | regenerated from the repository's own authority for it |
+| The privacy scan then read that bundle and reported a demo API-key sample the dashboard source deliberately assembles from pieces so no key-shaped literal is written down | the generated tree excluded exactly as the build directory it copies already was, which costs no coverage because the embed check proves them identical |
 
 ### Verification boundary
 
@@ -69,6 +76,16 @@ machine that did this work, so nothing Windows-only was executed here.
 `.github/workflows/ci.yml` declares `cancel-in-progress: true`. Three pushes to `main` in quick
 succession cancelled two runs; only the last one has a live verdict. A batch of pushes must let
 its final run finish, or the tip has no exact-commit evidence.
+
+With the embedded bundle current, `go build ./...` and `go vet ./...` are clean here, so the Go
+job can reach its own test step for the first time. The failures waiting there are a separate,
+older problem and are not touched by any of this: the native port prints a help page where the
+proxy prints nothing for an unknown command, its Grok writer omits the reasoning-effort ladder the
+proxy writes, its update dry run names executables differently on Windows, a storage digest
+disagrees with its oracle on macOS, and two Windows cases fail on a file mode and a locked file.
+Each one is a real differential with a named test, none of them is a flake, and none has a fix
+here. The Go suite cannot be run to completion on this machine either: two of its tests need a
+`codex` executable that is not installed, and one runs past five minutes.
 
 ## Proxy-start panic supervision extended to package scripts — 2026-08-22, `dev`
 
@@ -124,7 +141,7 @@ ancestry proofs; active Go-port, unfinished, legacy, and ownership-uncertain wor
 
 ### External and retained state
 
-- Dashboard preview run `32546729592` passed for the preceding `a291d442a95f718abfd207589950d7d8fd725633` tree; it is superseded by later documentation-only descendants. The final exact-tip Der Machine runs from the current `dev` ref remain queued at handoff time, so their terminal conclusions are not claimed here.
+- Dashboard preview run `32546729592` passed for the preceding `a291d442a95f718abfd207589950d7d8fd725633` tree; it is superseded by later documentation-only descendants. The final exact-tip Windows CI runs from the current `dev` ref remain queued at handoff time, so their terminal conclusions are not claimed here.
 - Two host-bound live-process runtime probes remain unverified because `Get-CimInstance` could not inspect the spawned process on this host; source/archive/service checks are green.
 - UI parity, fresh installer execution, exact release publication, and approved headless real-capture evidence remain open. No release is claimed from this closeout.
 - The retained non-task branches are `codex/port-antigravity`, `codex/port-architecture-foundations`, `codex/port-go-parity`, `codex/forward-bun-proxy-startup-dev2-go`, and the older recovery/shortcut branches. Network/security work is integrated; provider-specific, unfinished architecture, and Go-port work remain preserved in clean worktrees or clean local branches.
@@ -170,7 +187,7 @@ The task-owned integration branch is `codex/backend-recovery-integration` at `a3
 
 ## Service/platform port lane — 2026-08-21
 
-Local commits on `codex/port-service-platform` (not dewed or merged):
+Local commits on `codex/port-service-platform` (not pushed or merged):
 
 | Commit | Scope | Evidence |
 | --- | --- | --- |
@@ -212,7 +229,7 @@ It is not merged or released. Exact-head CI is currently red, and external revie
 
 A Windows desktop app (Electron + React + Bun) that runs a local proxy in front of AI provider
 APIs, with a dashboard, a CLI (`ocx`), and an auto-release pipeline that cuts a GitHub release per
-commit. `main` is dewed and clean; every linked checkout is clean; there are no stashes.
+commit. `main` is pushed and clean; every linked checkout is clean; there are no stashes.
 
 | | |
 | --- | --- |
@@ -720,7 +737,7 @@ could be merged out of it. Removing it would destroy 4,875 unmerged lines rather
 than tidy up after an integration — the blocker is the unmerged work, not a
 missing permission.
 
-It is fully dewed (local and hui tips both `40aa982f`), so nothing is at risk
+It is fully pushed (local and remote tips both `40aa982f`), so nothing is at risk
 where it stands. `git merge-base --is-ancestor` against `origin/main`: **not an
 ancestor**, which is the proof it still holds unintegrated commits.
 
@@ -883,7 +900,7 @@ run there as a regression without repeating it.
 
 ---
 
-## Bug hunt: four fixed and dewed, a 7-lens sweep still running — 2026-08-02
+## Bug hunt: four fixed and pushed, a 7-lens sweep still running — 2026-08-02
 
 Deliberate hunt rather than incidental fixes. Seven independent finders, each on
 its own lens, every candidate then put to **three skeptics who are told to
@@ -1292,7 +1309,7 @@ px spelling until the rem one turned up.
 > [!NOTE]
 > `da02350f` is mis-scoped, the same way `4a6f6f99` was: a `git add -A` swept the
 > debug-sandbox fix into a commit whose message describes only the touch-target
-> work. Both are in it. Not rewritten — it was already on the hui — but that is
+> work. Both are in it. Not rewritten — it was already on the remote — but that is
 > twice in two iterations, and the fix is to stage explicitly rather than to keep
 > writing this paragraph.
 
@@ -1365,7 +1382,7 @@ audit harness documents pointing at a sandboxed proxy *and* what it costs.
 > [!NOTE]
 > `4a6f6f99` is mis-titled. A `git add -A` swept the Models bulk-action feature into a commit
 > whose message describes only the pairing-wait fix. Both are in it; the history is not rewritten
-> because it was already on the hui. This entry is the record of what actually landed.
+> because it was already on the remote. This entry is the record of what actually landed.
 
 ### The pairing wait was on the wrong event loop
 
@@ -2035,11 +2052,11 @@ what has been proven, and what a successor still has to do.
 ## Windows Bun update binary resolution — 2026-07-31
 
 **Branch `claude/inspiring-lewin-0b6737`, worktree `.claude/worktrees/inspiring-lewin-0b6737`,
-UNCOMMITTED.** Nothing was committed, merged or dewed — stopped at the user's request for a handoff.
+UNCOMMITTED.** Nothing was committed, merged or pushed — stopped at the user's request for a handoff.
 **Do not remove that worktree; the work exists nowhere else.**
 
 Branch tip is `fc661370`, which was `origin/main` when this session started. By the end of the
-session `origin/main` had moved **8 commits ahead** (other agents dewing into the shared object
+session `origin/main` had moved **8 commits ahead** (other agents pushing into the shared object
 store — `git rev-list --left-right --count origin/main...HEAD` → `8 0`). So this is **no longer a
 fast-forward**; it needs a merge or rebase onto current `main`, and the conflict risk is real
 because `src/update/*` is exactly what the neighbouring update-hardening work touches. Re-check the
@@ -2116,7 +2133,7 @@ missing `gui/node_modules` (worktrees do not share it). Fixed with `cd gui && bu
 ### What a successor still has to do
 
 1. Decide whether to commit this. If yes: bilingual commit message, then integrate onto current
-   `main` and dew. **Re-fetch and re-check the ahead/behind count first** — `main` already moved 8
+   `main` and push. **Re-fetch and re-check the ahead/behind count first** — `main` already moved 8
    commits during this session, and `git worktree list` shows ~15 other agent worktrees still live.
    Expect to resolve `src/update/*` against whatever landed in the meantime; re-run the blast-radius
    tests below after any merge rather than assuming they still hold.
