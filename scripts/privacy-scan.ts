@@ -542,12 +542,43 @@ function isAllowedHomePath(file: string, username: string): boolean {
   return false;
 }
 
+/**
+ * Whether a key- or token-shaped value from a Go test path reads as hand-written fixture text
+ * rather than real credential material.
+ *
+ * Blanket-trusting every Go test path was the first shape of this carve-out, and it meant a real
+ * key pasted into a `_test.go` would pass the gate that exists to catch exactly that. The Go
+ * fixtures are all hand-typed words (`access-secret`, `synthetic-account-token-a`,
+ * `abcdefghijklmnop`), while every provider key this scan is meant to catch carries upper-case
+ * characters or a long digit run from its entropy. Trusting the SHAPE rather than the directory
+ * keeps the fixtures quiet and still fails a real leak in the same file.
+ */
+/**
+ * A fixture value that declares itself. A test that proves redaction needs a credential-shaped
+ * string to redact, and the legible way to keep this scan quiet about one is to say so inside the
+ * value rather than to enumerate every fixture here. Scoped to `tests/` deliberately: the same
+ * marker has to stay REPORTABLE elsewhere, because the extension-coverage tests write it into a
+ * synthetic .go/.mdx/.bat file precisely to prove the scanner opens those extensions at all.
+ */
+function isDeclaredTestFixtureSecret(file: string, value: string): boolean {
+  return file.startsWith("tests/") && /FAKE-NOT-REAL/.test(value);
+}
+
+function isHandWrittenFixtureSecret(value: string): boolean {
+  if (value.length > 64) return false;
+  if (/[A-Z]/.test(value)) return false;
+  if (/\d{4,}/.test(value)) return false;
+  return /^[a-z0-9._-]+$/.test(value);
+}
+
 function isAllowedTokenLooking(file: string, token: string): boolean {
+  if (isDeclaredTestFixtureSecret(file, token)) return true;
   // Test fixture sentinels: sk-rawsentinel..., sk-test-...
   if (file.startsWith("tests/") && /^sk-(?:rawsentinel|test-)\d+[a-z]*$/.test(token)) return true;
   // The Go port's own test fixtures (see isGoTestPath) exercise the same
-  // redaction/sanitization behavior with their own synthetic key-shaped values.
-  if (isGoTestPath(file)) return true;
+  // redaction/sanitization behavior with their own synthetic key-shaped values. The shape check
+  // keeps a real key pasted into one of those files reportable.
+  if (isGoTestPath(file) && isHandWrittenFixtureSecret(token)) return true;
   // The screenshot seed needs providers that look configured, so it writes
   // key-shaped values into a throwaway profile. `CAPTURE-FIXTURE` sits in the
   // middle of the value and the rest is zeros, which is about as far from a
@@ -563,9 +594,11 @@ function isAllowedTokenLooking(file: string, token: string): boolean {
 }
 
 function isAllowedBearerToken(file: string, token: string): boolean {
+  if (isDeclaredTestFixtureSecret(file, token)) return true;
   // The Go port's own test fixtures (see isGoTestPath) exercise the same
-  // Authorization-header redaction behavior with their own synthetic tokens.
-  if (isGoTestPath(file)) return true;
+  // Authorization-header redaction behavior with their own synthetic tokens; the shape check
+  // keeps a real token pasted into one of those files reportable.
+  if (isGoTestPath(file) && isHandWrittenFixtureSecret(token)) return true;
   if (!file.startsWith("tests/")) return false;
   // The original three fixture families, which read like real tokens on purpose
   // so the code under test cannot tell the difference.

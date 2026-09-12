@@ -6,6 +6,8 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(privacy): trust the hand-written fixture shape rather than the whole Go test path, so a real key pasted into a `_test.go` is still reported while the port's own placeholder values stay quiet
+
 - fix(codex): advance the journal's `injectedConfigHash`/`injectedProfileHash` to the current round's bytes on every re-injection instead of only ever recording the first, so a restart without a clean stop no longer misclassifies opencodex's own second-round routing as a user edit and refuses to restore the operator's real original config
 - fix(config): fsync the temp file before it is hardened/renamed, and fsync the destination directory after the rename, in the default atomic-write path (`atomicWriteFile`/`atomicWriteFileAsync`) — so a crash right after a config, journal, PID, or history-manifest write can no longer lose or truncate it; the injectable `AtomicWriteIO`/`AtomicWriteAsyncIO` test seams are unchanged
 - fix(storage): stop archived-session cleanup from following symlinks — `listArchivedCandidates` now `lstat`s each entry and skips anything that is not a plain regular file — and add an input-size check to `decompressRolloutZstUtf8` before it reads a `.jsonl.zst` rollout into memory, so a symlinked file can no longer be read in full before the existing decompression cap ever applies

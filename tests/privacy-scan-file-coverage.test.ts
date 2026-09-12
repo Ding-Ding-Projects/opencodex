@@ -91,11 +91,53 @@ describe("privacy-scan.ts file-extension coverage", () => {
     expect(findings.some(f => f.file === "fake.py" && f.kind === "bearer-token")).toBe(true);
   });
 
-  test("a real-shaped Go test fixture path is still exempt the same way tests/ is for TypeScript", () => {
+  test("a hand-written fixture value in a Go test path is exempt the way tests/ is for TypeScript", () => {
     // isGoTestPath()'s allowance is for placeholder home-path/token content inside Go's own
     // test-only files, mirroring this project's tests/ carve-outs -- it must not blanket-exempt
-    // a non-test .go file from the same directory.
-    const findings = scanIsolated("fake_test.go");
+    // a non-test .go file from the same directory. The value here is the hand-written shape every
+    // real Go fixture uses; an entropy-shaped one stays reportable, which the suite below proves.
+    const root = mkdtempSync(join(tmpdir(), "ocx-privacy-scan-extension-"));
+    tempRoots.push(root);
+    const handWritten = ["access", "secret", "value"].join("-");
+    writeFileSync(join(root, "fake_test.go"), `const fixture = "${handWritten}"\n`, "utf8");
+    const findings = scanRepository({
+      root,
+      trackedFiles: ["fake_test.go"],
+      designReferenceRoot: join(root, "design-reference", "original-source"),
+      packageJsonPath: join(root, "package.json"),
+    });
     expect(findings.some(f => f.file === "fake_test.go")).toBe(false);
+  });
+});
+
+describe("the Go test-path carve-out trusts a shape, not a directory", () => {
+  // Trusting every path that looks like a Go test was the first shape of this carve-out, and it
+  // would have let a real key pasted into a `_test.go` through the gate that exists to catch
+  // exactly that. What is trusted is the hand-written fixture shape instead.
+  function scanGoFixture(fileName: string, line: string): ReturnType<typeof scanRepository> {
+    const root = mkdtempSync(join(tmpdir(), "ocx-privacy-go-shape-"));
+    tempRoots.push(root);
+    writeFileSync(join(root, fileName), line, "utf8");
+    return scanRepository({
+      root,
+      trackedFiles: [fileName],
+      designReferenceRoot: join(root, "design-reference", "original-source"),
+      packageJsonPath: join(root, "package.json"),
+    });
+  }
+
+  test("a hand-written fixture value in a Go test file stays quiet", () => {
+    // Assembled from parts so this file does not itself contain a key-shaped literal.
+    const handWritten = ["sk", "concurrency", "secret", "value"].join("-");
+    const findings = scanGoFixture("quiet_test.go", `const fixture = "${handWritten}"\n`);
+    expect(findings.filter(finding => finding.file === "quiet_test.go")).toEqual([]);
+  });
+
+  test("an entropy-shaped key in the same Go test file is still reported", () => {
+    // Same assembly, and deliberately mixed case with a long entropy run: the shape a pasted
+    // provider key has, and the shape the carve-out must keep reporting.
+    const entropyShaped = ["sk", "Xk92FhQpZr71TvBnLd04WsEyRc38JmAu5Gt6"].join("-");
+    const findings = scanGoFixture("leak_test.go", `const pasted = "${entropyShaped}"\n`);
+    expect(findings.some(finding => finding.file === "leak_test.go")).toBe(true);
   });
 });
