@@ -48,7 +48,22 @@ beforeEach(() => {
   Object.defineProperty(testWindow.HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
 });
 
-afterEach(() => {
+/**
+ * Every root this file mounts, so the teardown below can take them all down.
+ *
+ * React flushes a root's cleanup effects asynchronously. A root left mounted therefore runs its
+ * `clearInterval` and `removeEventListener` calls against whatever `window` is by the time they
+ * flush — and `afterEach` has restored the real globals by then, so `window.clearInterval` is
+ * gone and the cleanup throws. On Linux the process exits before the effects ever run; on the
+ * Windows runner they run, and the suite ends with unhandled errors and a nonzero exit while
+ * every single test passes.
+ */
+const mountedRoots: { unmount: () => void }[] = [];
+
+afterEach(async () => {
+  for (const root of mountedRoots.splice(0)) {
+    await act(async () => { root.unmount(); });
+  }
   testWindow.close();
   for (const key of globals) {
     Object.defineProperty(globalThis, key, { configurable: true, value: previousGlobals[key] });
@@ -62,6 +77,7 @@ async function mount(): Promise<{ container: HTMLElement; root: Root }> {
   let root!: Root;
   await act(async () => {
     root = createRoot(container);
+    mountedRoots.push(root);
     root.render(<TestProviders><LocksPage /></TestProviders>);
   });
   return { container, root };
