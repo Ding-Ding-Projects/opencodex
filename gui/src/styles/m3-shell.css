@@ -1314,6 +1314,40 @@ html[data-desktop] .m3-appbar .m3-avatar {
 .m3-banner--warn { background: var(--m3-warn-container); color: var(--m3-on-warn-container); }
 .m3-banner--error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
 
+/* -------------------------------------------------------------- bulkbar --
+   The shared bulk-action bar (`shell/BulkBar.tsx`) every selectable list in
+   the app renders once at least one row is selected. It needs its own
+   visual identity — a background, a border, real padding — so a selection
+   state reads as a distinct control surface, not as plain text stacked
+   between the rows above and below it.
+   -------------------------------------------------------------------------- */
+
+.m3-bulkbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-2, 12px);
+  margin: var(--sp-2, 12px) 0;
+  padding: var(--sp-2, 12px) var(--sp-3, 16px);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--r-l, 16px);
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+}
+.m3-bulkbar__count {
+  margin: 0;
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: var(--t-body-s, 13px);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.m3-bulkbar__actions {
+  flex: 0 1 auto;
+  gap: var(--sp-1, 8px);
+}
+
 /* --------------------------------------------------------------- select --
    The native control, themed. A hand-rolled listbox loses the platform picker
    that touch users expect, and has to reimplement keyboard support to match.

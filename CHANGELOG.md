@@ -72,6 +72,9 @@ into their release section — not lost — the next time it runs.
 - fix(gui): stop "Reset appearance" clearing the App Bar's cost-meter range, which belongs to a different screen and has no control on the Appearance page
 - fix(gui): ellipsize the nav rail's app name and version instead of cropping them mid-character; the container already allowed shrinking, the elements never got the overflow half of the fix, and the app name is user-renamable up to 60 code points
 - fix(gui): ellipsize the phone remote's header title, which had no overflow handling at all in a flex row it shares with the model chip
+- fix(gui): stash each Ollama chat session's unsaved model/system-prompt/parameter edits before switching sessions and restore them from that per-session cache in `loadSession`, so clicking another session in the sidebar (or creating one) no longer silently discards a draft the user never saved; the cache clears once a session's drafts are actually saved or the session is deleted
+- fix(gui): stop a still-in-flight Ollama chat send or regenerate from repainting whatever session the user has since switched to; the send itself is still allowed to finish in the background, but its stream-apply callback and its trailing reconciling refresh now check the session id is still the one on screen before touching `activeSession`
+- fix(gui): style the shared bulk-action bar (`.m3-bulkbar`, `.m3-bulkbar__count`, `.m3-bulkbar__actions` in `m3-shell.css`), which had no rule in any shipped stylesheet and rendered as unstyled stacked text with no background, border or padding on every one of the five pages that use it (combos workspace, models, locks, authenticator, API keys)
 
 ## 2.7.42 — 2026-07-28
 

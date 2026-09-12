@@ -285,6 +285,36 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
+  /**
+   * Mirrors `activeSessionId` for code that must read the *live* value from
+   * inside a long-running async call (`runStream`). `runStream` only ever
+   * knows the session id it was started for as a plain parameter, which by
+   * design does not track a later switch — this ref is how it can still tell
+   * whether that id is still the one on screen once its `fetch` finally
+   * resolves. Kept current every render, the same pattern `use-tab-registry.ts`
+   * uses for the same reason.
+   */
+  const activeSessionIdRef = useRef<string | null>(null);
+  useEffect(() => { activeSessionIdRef.current = activeSessionId; });
+
+  /**
+   * Unsaved per-session settings drafts, keyed by session id. Switching the
+   * active session must not silently discard an in-progress edit to
+   * `modelDraft`/`systemPromptDraft`/`parametersDraft` — there is no
+   * autosave and no confirmation dialog on the switch, so the outgoing
+   * session's drafts are stashed here before the switch, and `loadSession`
+   * below consults this map before falling back to the server's values. An
+   * entry is cleared once its drafts are actually saved, or once that
+   * session is deleted.
+   */
+  const draftsRef = useRef<Map<string, { model: string; systemPrompt: string; parameters: ChatParameters }>>(new Map());
+
+  /** Snapshot the given session's in-progress settings edits before navigating away from it. */
+  function stashDraft(id: string | null) {
+    if (!id) return;
+    draftsRef.current.set(id, { model: modelDraft, systemPrompt: systemPromptDraft, parameters: parametersDraft });
+  }
+
   const loadCatalogAndHealth = useCallback(async (signal?: AbortSignal) => {
     const result = await fetchJson<CatalogResponse>(apiBase, "/api/model-runtime/catalog", { signal });
     if (signal?.aborted || !result.ok) return;
@@ -308,9 +338,13 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
     setLoadingSession(false);
     if (!result.ok) { notify({ tone: "error", title: t("ollamaChat.loadFailedTitle"), body: result.error }); return; }
     setActiveSession(result.data.session);
-    setModelDraft(result.data.session.model);
-    setSystemPromptDraft(result.data.session.systemPrompt);
-    setParametersDraft(result.data.session.parameters);
+    // A stashed, never-saved draft for this session wins over the server's
+    // value — that is the whole point of the draft map: switching sessions
+    // must not silently discard an in-progress edit.
+    const draft = draftsRef.current.get(id);
+    setModelDraft(draft?.model ?? result.data.session.model);
+    setSystemPromptDraft(draft?.systemPrompt ?? result.data.session.systemPrompt);
+    setParametersDraft(draft?.parameters ?? result.data.session.parameters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBase, t]);
 
@@ -360,9 +394,12 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
 
   /* ------------------------------------------------------------ streaming */
 
-  function applyStreamLine(assistantId: string, line: StreamLine) {
+  function applyStreamLine(sessionId: string, assistantId: string, line: StreamLine) {
     setActiveSession(prev => {
-      if (!prev) return prev;
+      // Several sessions can stream at once by design (see the module doc),
+      // so a background stream must keep decoding — it just must not paint
+      // its deltas onto whatever session the user has switched to since.
+      if (!prev || prev.id !== sessionId) return prev;
       const messages = prev.messages.map(m => {
         if (m.id !== assistantId) return m;
         if (line.done) return { ...m, state: line.state ?? "done", error: line.error ?? null, stats: line.stats ?? null };
@@ -415,7 +452,7 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
             const raw = buffer.slice(0, idx);
             buffer = buffer.slice(idx + 1);
             if (!raw.trim()) continue;
-            try { applyStreamLine(assistantId, JSON.parse(raw) as StreamLine); } catch { /* one malformed line does not abandon the stream */ }
+            try { applyStreamLine(sessionId, assistantId, JSON.parse(raw) as StreamLine); } catch { /* one malformed line does not abandon the stream */ }
           }
         }
       } catch {
@@ -424,7 +461,13 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
     }
     setSending(false);
     abortRef.current = null;
-    void loadSession(sessionId);
+    // The user may have switched to a different session while this request
+    // was in flight — a background send is allowed to finish (several
+    // sessions can stream at once, per the module doc), but its own
+    // reconciling refresh must not snap the view back to a session the user
+    // has since navigated away from. Revisiting `sessionId` later re-fetches
+    // its true state anyway, so skipping this one refresh loses nothing.
+    if (activeSessionIdRef.current === sessionId) void loadSession(sessionId);
   }
 
   async function handleSend() {
@@ -442,7 +485,10 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, attachments: attachmentsPayload.length > 0 ? attachmentsPayload : undefined }) },
       (assistantId, userId) => {
         setActiveSession(prev => {
-          if (!prev) return prev;
+          // Guard against a session switch that happened while the POST was
+          // still in flight — see `runStream`'s trailing `loadSession` call
+          // for the matching guard on the reconciling refresh.
+          if (!prev || prev.id !== sessionId) return prev;
           const now = Date.now();
           const userMessage: ChatMessage = { id: userId ?? crypto.randomUUID(), role: "user", content, attachments: localAttachments, createdAt: now, state: "done", error: null, stats: null };
           const assistantMessage: ChatMessage = { id: assistantId, role: "assistant", content: "", attachments: null, createdAt: now, state: "streaming", error: null, stats: null };
@@ -462,7 +508,8 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
       { method: "POST" },
       assistantId => {
         setActiveSession(prev => {
-          if (!prev) return prev;
+          // Same stale-switch guard as the send path above.
+          if (!prev || prev.id !== sessionId) return prev;
           const now = Date.now();
           const messages = prev.messages.slice(0, -1);
           messages.push({ id: assistantId, role: "assistant", content: "", attachments: null, createdAt: now, state: "streaming", error: null, stats: null });
@@ -514,6 +561,7 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
     if (!result.ok) { notify({ tone: "error", title: t("ollamaChat.createFailedTitle"), body: result.error }); return; }
     setCreateOpen(false);
     setCreateTitle("");
+    stashDraft(activeSessionId);
     setActiveSessionId(result.data.session.id);
     setActiveSession(result.data.session);
     void loadSessions();
@@ -548,6 +596,10 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
     const result = await fetchJson(apiBase, `/api/model-runtime/chat/sessions/${session.id}`, { method: "DELETE" });
     if (!result.ok) { notify({ tone: "error", title: t("ollamaChat.deleteFailedTitle"), body: result.error }); return; }
     notify({ tone: "success", title: t("ollamaChat.deleteOkTitle"), body: session.title });
+    // No stashDraft() here: this only ever reassigns activeSessionId to null
+    // (never to another session), and the session whose draft that would be
+    // is the one just deleted, so there is nothing left to revisit it for.
+    draftsRef.current.delete(session.id);
     if (activeSessionId === session.id) { setActiveSessionId(null); setActiveSession(null); }
     void loadSessions();
   }
@@ -573,6 +625,10 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
     setModelDraft(result.data.session.model);
     setSystemPromptDraft(result.data.session.systemPrompt);
     setParametersDraft(result.data.session.parameters);
+    // The draft is now exactly what the server holds — drop the stash so a
+    // later switch away and back reloads the saved value instead of
+    // replaying this now-stale snapshot.
+    draftsRef.current.delete(activeSession.id);
     notify({ tone: adjustments.length > 0 ? "warn" : "success", title: t("ollamaChat.settingsSavedTitle"), body: adjustments.length > 0 ? adjustments.join(" ") : undefined });
     void loadSessions();
   }
@@ -652,7 +708,7 @@ export default function OllamaChat({ apiBase }: { apiBase: string }) {
                   <li key={s.id}>
                     <button
                       type="button"
-                      onClick={() => setActiveSessionId(s.id)}
+                      onClick={() => { stashDraft(activeSessionId); setActiveSessionId(s.id); }}
                       className="m3-btn m3-btn--text"
                       aria-current={s.id === activeSessionId}
                       style={{ width: "100%", justifyContent: "flex-start", textAlign: "left", flexDirection: "column", alignItems: "flex-start", gap: 2, background: s.id === activeSessionId ? "var(--m3-secondary-container)" : undefined, padding: "8px 10px" }}
