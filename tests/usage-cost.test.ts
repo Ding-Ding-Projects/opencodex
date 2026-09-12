@@ -630,5 +630,7 @@ describe("tokensPerSecond", () => {
     expect(tokensPerSecond(100, 0)).toBeNull();
     expect(tokensPerSecond(-1, 2000)).toBeNull();
     expect(tokensPerSecond(Number.NaN, 2000)).toBeNull();
+    expect(tokensPerSecond(100, Infinity)).toBeNull();
   });
 });
+

@@ -16,7 +16,8 @@ import { loginGithubCopilot, refreshGithubCopilotToken, validateCopilotApiBaseUr
 import { deriveOAuthDefaultModel, deriveOAuthProviderConfig } from "../providers/derive";
 import { apiKeyPoolEntryId, sanitizeApiKeyValue } from "../providers/api-keys";
 import { resolveProviderCredential } from "../lib/provider-credentials";
-import { effectiveGoogleMode, getProviderRegistryEntry } from "../providers/registry";
+import { effectiveGoogleMode, getProviderRegistryEntry, providerMatchesRegistryTransport } from "../providers/registry";
+import { resolveProviderModelDiscoveryUrl } from "../providers/model-discovery";
 import { resolveProviderTransport } from "../providers/xai-transport";
 import { detectClaudeCodeToken, detectGrokCliToken, hasComparableGrokIdentity, isSameGrokIdentity, shouldAdoptGrokGeneration } from "./local-token-detect";
 import { logOAuthEvent } from "./log";
@@ -554,6 +555,22 @@ export async function resolveModelsAuthToken(name: string, prov: OcxProviderConf
   return resolveProviderCredential(resolveEnvValue(prov.apiKey));
 }
 
+function modelDiscoveryTransportSeed(providerName: string, prov: OcxProviderConfig): OcxProviderConfig {
+  const entry = getProviderRegistryEntry(providerName);
+  if (
+    prov.authMode !== "oauth"
+    || entry?.authKind !== "oauth"
+    || entry.allowBaseUrlOverride === true
+    || /\{[^}]*\}/.test(entry.baseUrl)
+    || !providerMatchesRegistryTransport(providerName, prov)
+  ) {
+    return prov;
+  }
+  // Normal routing pins fixed OAuth presets before adapter-specific transport resolution.
+  // Discovery must do the same so a stale or modified config baseUrl never receives a token.
+  return { ...prov, adapter: entry.adapter, baseUrl: entry.baseUrl };
+}
+
 /**
  * Provider-correct `GET /models` request (URL + headers), so both model-listing paths fetch the
  * LIVE catalog correctly per adapter. Anthropic is the special case: its endpoint is `/v1/models`
@@ -566,20 +583,27 @@ export async function resolveModelsAuthToken(name: string, prov: OcxProviderConf
  * response.
  */
 export function buildModelsRequest(prov: OcxProviderConfig, apiKey: string | undefined, providerName = ""): { url: string; headers: Record<string, string> } {
+  const transportSeed = modelDiscoveryTransportSeed(providerName, prov);
   const effectiveProvider = resolveProviderTransport(
     providerName,
-    prov,
+    transportSeed,
     undefined,
     providerName === "github-copilot" ? getOAuthCredentialApiBaseUrl(providerName) : undefined,
   );
   const headers: Record<string, string> = { ...(effectiveProvider.headers ?? {}) };
+  const discoveryUrl = (defaultUrl: string): string => resolveProviderModelDiscoveryUrl(
+    providerName,
+    prov,
+    effectiveProvider.baseUrl,
+    defaultUrl,
+  );
   if (effectiveGoogleMode(providerName, effectiveProvider) === "ai-studio") {
     // Generative Language API: API key goes in x-goog-api-key (never Authorization: Bearer),
     // models live under /v1beta (v1 misses preview models), and pageSize maxes at 1000 —
     // enough to list everything without a pageToken loop. Vertex/antigravity keep the
     // generic branch (they fall back to their static model lists).
     if (apiKey) headers["x-goog-api-key"] = apiKey;
-    return { url: `${effectiveProvider.baseUrl}/v1beta/models?pageSize=1000`, headers };
+    return { url: discoveryUrl(`${effectiveProvider.baseUrl}/v1beta/models?pageSize=1000`), headers };
   }
   if (effectiveProvider.adapter === "anthropic") {
     const base = effectiveProvider.baseUrl.replace(/\/v1\/?$/, "");
@@ -591,10 +615,10 @@ export function buildModelsRequest(prov: OcxProviderConfig, apiKey: string | und
       if (effectiveProvider.apiKeyTransport === "bearer") headers["Authorization"] = `Bearer ${apiKey}`;
       else headers["x-api-key"] = apiKey;
     }
-    return { url: `${base}/v1/models?limit=1000`, headers };
+    return { url: discoveryUrl(`${base}/v1/models?limit=1000`), headers };
   }
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  return { url: `${effectiveProvider.baseUrl}/models`, headers };
+  return { url: discoveryUrl(`${effectiveProvider.baseUrl}/models`), headers };
 }
 
 /**

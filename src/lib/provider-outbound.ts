@@ -2,6 +2,7 @@ import type { OcxProviderConfig } from "../types";
 import {
   assessUrlDestination,
   DestinationDnsResolutionError,
+  providerAllowsPrivateNetwork,
   providerDestinationConfigError,
   resolvePublicAddresses,
 } from "./destination-policy";
@@ -116,7 +117,8 @@ export async function providerOutboundGet(
     if (assessment?.kind === "metadata" || assessment?.kind === "link-local" || assessment?.kind === "unspecified") {
       throw new ProviderOutboundPolicyError(`provider URL targets ${assessment.detail}`);
     }
-    if (!provider.allowPrivateNetwork) {
+    const allowPrivate = providerAllowsPrivateNetwork(name, provider);
+    if (!allowPrivate) {
       const destinationError = providerDestinationConfigError(name, {
         baseUrl: url,
         allowPrivateNetwork: false,
@@ -129,11 +131,12 @@ export async function providerOutboundGet(
   const proxyConfigured = configuredProxyFor();
   const resolveAddresses = dependencies.resolveAddresses ?? resolvePublicAddresses;
   const pinnedGet = dependencies.pinnedGet ?? pinnedHttpGet;
+  const allowPrivate = providerAllowsPrivateNetwork(name, provider);
   let resolved: Awaited<ReturnType<typeof resolvePublicAddresses>>;
   try {
     resolved = await resolveAddresses(url, {
       context: "provider URL",
-      allowPrivateNetwork: provider.allowPrivateNetwork,
+      allowPrivateNetwork: allowPrivate,
     });
   } catch (error) {
     const dnsResolutionFailed = error instanceof DestinationDnsResolutionError
@@ -149,7 +152,7 @@ export async function providerOutboundGet(
   // A bypass matcher only decides whether an already-authorized private route
   // may avoid the proxy. It can never grant the private-network opt-in itself,
   // even when a resolver seam reports a private result without enforcing it.
-  if (resolved.privateNetwork && !provider.allowPrivateNetwork) {
+  if (resolved.privateNetwork && !allowPrivate) {
     throw new ProviderOutboundPolicyError(providerDestinationConfigError(name, {
       baseUrl: url,
       allowPrivateNetwork: false,

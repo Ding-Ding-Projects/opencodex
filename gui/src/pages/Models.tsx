@@ -100,7 +100,9 @@ export default function Models({ apiBase }: { apiBase: string }) {
   const [contextCapValue, setContextCapValue] = useState(350_000);
   const [customCap, setCustomCap] = useState("");
   const [showCustom, setShowCustom] = useState(false);
-  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsedProviders);
+  // `null` means "no saved preference yet"; nothing-collapsed is this page's
+  // existing default, so a first visit reads the same as it always has.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsedProviders() ?? new Set());
   // A failed reload is a standing page condition, not an event: the 10s poll would otherwise
   // stack one un-dismissable error snackbar per tick, so it stays an inline banner.
   const [loadError, setLoadError] = useState(false);

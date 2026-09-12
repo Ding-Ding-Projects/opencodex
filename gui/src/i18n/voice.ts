@@ -865,16 +865,16 @@ const VOICE: Partial<Record<TKey, VoiceEntry>> = {
   "dash.shadowCallWarning": {
     cat: "warning",
     en: {
-      1: "⚠ When this is enabled, ALL gpt-5.4-mini requests are replaced with the selected model.",
-      2: "⚠ Once enabled, ALL gpt-5.4-mini requests are replaced with the selected model.",
-      4: "⚠ Turn this on and every single gpt-5.4-mini request gets replaced with the selected model — no exceptions.",
-      5: "⚠ Flip this and gpt-5.4-mini stops existing as far as this proxy is concerned: every one of its requests is replaced with the selected model.",
+      1: "⚠ When this is enabled, ALL requests for {models} are replaced with the selected model.",
+      2: "⚠ Once enabled, ALL requests for {models} are replaced with the selected model.",
+      4: "⚠ Turn this on and every single request for {models} gets replaced with the selected model — no exceptions.",
+      5: "⚠ Flip this and {models} stops existing as far as this proxy is concerned: every one of its requests is replaced with the selected model.",
     },
     yue: {
-      1: "⚠ 開啟後，所有 gpt-5.4-mini 請求都會被替換成你揀嘅模型。",
-      2: "⚠ 一開咗，所有 gpt-5.4-mini 請求都會換成你揀嗰個模型。",
-      4: "⚠ 開咗之後，每一個 gpt-5.4-mini 請求都會被換成你揀嗰個模型，一個都唔會漏。",
-      5: "⚠ 撳落去之後，喺呢個 proxy 眼中 gpt-5.4-mini 就當唔存在：佢每一個請求都會被換成你揀嗰個模型。",
+      1: "⚠ 開啟後，所有去 {models} 嘅請求都會被替換成你揀嘅模型。",
+      2: "⚠ 一開咗，所有去 {models} 嘅請求都會換成你揀嗰個模型。",
+      4: "⚠ 開咗之後，每一個去 {models} 嘅請求都會被換成你揀嗰個模型，一個都唔會漏。",
+      5: "⚠ 撳落去之後，喺呢個 proxy 眼中 {models} 就當唔存在：佢哋每一個請求都會被換成你揀嗰個模型。",
     },
   },
 

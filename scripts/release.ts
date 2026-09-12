@@ -5,7 +5,8 @@
  * Usage:
  *   bun scripts/release.ts <version> [--tag latest|preview] [--publish]
  *       Preflight (clean tree + typecheck + tests + privacy scan) → bump package.json → commit → push →
- *       verify the immutable remote candidate → dispatch the Release workflow → watch it.
+ *       wait for Cross-platform CI and Service lifecycle → verify the immutable remote candidate →
+ *       dispatch the Release workflow → watch it.
  *       The version bump commit/push is real; the Release workflow publish step is dry-run by default.
  *       Pass --publish to publish.
  *   bun scripts/release.ts watch
@@ -18,6 +19,7 @@
  */
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { commandInvocation } from "../src/lib/win-exec";
 
 const args = process.argv.slice(2);
 interface GhRun {
@@ -35,15 +37,39 @@ interface CommandResult {
   stderr: string;
 }
 
+const CI_WORKFLOW = "ci.yml";
+const SERVICE_WORKFLOW = "service-lifecycle.yml";
+const CI_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
+const CI_POLL_MS = 10 * 1000;
+
 async function runQuiet(command: string[]): Promise<CommandResult> {
   const fakeLog = process.env.FAKE_RELEASE_LOG;
   const executable = fakeLog && command[0]
     ? join(dirname(fakeLog), `${command[0]}.js`)
     : null;
-  const argv = executable && existsSync(executable)
-    ? [process.execPath, executable, ...command.slice(1)]
-    : command;
-  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  let argv: string[];
+  let windowsVerbatimArguments: true | undefined;
+  if (executable && existsSync(executable)) {
+    argv = [process.execPath, executable, ...command.slice(1)];
+  } else {
+    // Windows exposes npm and gh as `.cmd` shims. A shell-less spawn of a bare
+    // `npm` skips PATHEXT entirely and refuses `.cmd` targets outright, so this
+    // preflight — the first thing a release does — aborted before invoking a
+    // single command, and the release-helper tests saw exit 1 with an empty call
+    // log. `commandInvocation` is the module the CLI already uses for exactly
+    // this, escaping included; do not hand-roll a second resolver here.
+    const [bin, ...rest] = command;
+    const invocation = commandInvocation(bin ?? "", rest);
+    argv = [invocation.file, ...invocation.args];
+    if (invocation.options.windowsVerbatimArguments) windowsVerbatimArguments = true;
+  }
+  const proc = Bun.spawn(argv, {
+    stdout: "pipe",
+    stderr: "pipe",
+    // Load-bearing on the `cmd.exe /d /s /c` path: the invocation is already a
+    // fully escaped command LINE, so re-quoting it would corrupt the arguments.
+    ...(windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+  });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -137,8 +163,8 @@ async function assertUnusedReleaseVersion(packageName: string, version: string):
 
 async function watchLatest(): Promise<void> {
   const id = (await runRequired(["gh", "run", "list", "--workflow", "release.yml", "--limit", "1", "--json", "databaseId", "-q", ".[0].databaseId"])).trim();
- if (!id) { console.error("No Release runs found yet."); process.exit(1); }
- await watchRun(id);
+  if (!id) { console.error("No Release runs found yet."); process.exit(1); }
+  await watchRun(id);
 }
 
 async function watchRun(id: string | number): Promise<void> {
@@ -165,6 +191,41 @@ async function waitForReleaseWorkflowRun(sha: string, branch: string, createdAft
     await Bun.sleep(5_000);
   }
   console.error(`✗ timed out waiting for dispatched Release workflow run on ${sha}`);
+  process.exit(1);
+}
+
+async function listCiRuns(sha: string, workflow: string = CI_WORKFLOW): Promise<GhRun[]> {
+  const raw = await runRequired(["gh", "run", "list", "--workflow", workflow, "--commit", sha, "--limit", "20", "--json", "conclusion,databaseId,headSha,status,url"]);
+  const runs = JSON.parse(raw) as GhRun[];
+  return runs.filter(run => run.headSha === sha);
+}
+
+async function waitForSuccessfulCi(sha: string, workflow: string = CI_WORKFLOW, label = "Cross-platform CI"): Promise<GhRun> {
+  const deadline = Date.now() + CI_WAIT_TIMEOUT_MS;
+  let attempt = 1;
+  while (Date.now() < deadline) {
+    const runs = await listCiRuns(sha, workflow);
+    const successful = runs.find(run => run.status === "completed" && run.conclusion === "success");
+    if (successful) {
+      console.log(`→ ${label} passed: ${successful.url}`);
+      return successful;
+    }
+
+    const failed = runs.find(run => run.status === "completed" && run.conclusion && run.conclusion !== "success");
+    if (failed) {
+      console.error(`✗ ${label} failed for ${sha}: ${failed.url}`);
+      process.exit(1);
+    }
+
+    const state = runs.length > 0
+      ? runs.map(run => `${run.status}${run.conclusion ? `/${run.conclusion}` : ""}`).join(", ")
+      : "not started yet";
+    console.log(`→ waiting for ${label} (${sha.slice(0, 7)}) attempt ${attempt}: ${state}`);
+    attempt += 1;
+    await Bun.sleep(CI_POLL_MS);
+  }
+
+  console.error(`✗ timed out waiting for ${label} on ${sha}`);
   process.exit(1);
 }
 
@@ -230,7 +291,7 @@ await runRequired(["bun", "test", "--isolate", "tests"], "test suite");
 console.log("→ privacy scan");
 await runRequired(["bun", "run", "privacy:scan"], "privacy scan");
 
-// 2. Bump package.json and regenerate the versioned embedded GUI; the workflow creates the version tag after npm publish.
+// 2. Bump package.json only; the workflow creates the version tag after npm publish.
 console.log(`→ bump package.json → ${version}`);
 await runRequired(["npm", "version", version, "--no-git-tag-version"]);
 
@@ -241,7 +302,17 @@ const releaseSha = (await runRequired(["git", "rev-parse", "HEAD"])).trim();
 console.log(`→ push origin ${branch}`);
 await runRequired(["git", "push", "origin", branch]);
 
-// 4. Live-remote guard: re-read the actual remote head over the network immediately
+// 4. Wait for the pushed release commit to pass CI, then dispatch the Release workflow.
+console.log(`→ wait for Cross-platform CI (${releaseSha})`);
+await waitForSuccessfulCi(releaseSha);
+
+// The release bump always touches package.json, which is a service-lifecycle trigger path —
+// and release.yml's service gate requires an already-successful Service lifecycle run for
+// the release SHA. Wait for it too, or the dispatch races the still-running workflow.
+console.log(`→ wait for Service lifecycle (${releaseSha})`);
+await waitForSuccessfulCi(releaseSha, SERVICE_WORKFLOW, "Service lifecycle");
+
+// 5. Live-remote guard: re-read the actual remote head over the network immediately
 // before dispatch. The local remote-tracking ref can be minutes stale, and the
 // workflow_dispatch below resolves a mutable branch — so this is the last chance
 // to refuse publishing an unaudited newer commit.
@@ -255,7 +326,7 @@ console.log(`→ dispatch Release (tag=${tag}, dry-run=${dryRun})`);
 const dispatchStartedAt = new Date(Date.now() - 5_000).toISOString();
 await runRequired(["gh", "workflow", "run", "release.yml", "--ref", branch, "-f", `version=${version}`, "-f", `tag=${tag}`, "-f", `expected-sha=${releaseSha}`, "-f", `dry-run=${String(dryRun)}`]);
 
-// 5. Watch it.
+// 6. Watch it.
 const releaseRun = await waitForReleaseWorkflowRun(releaseSha, branch, dispatchStartedAt);
 await watchRun(releaseRun.databaseId);
 console.log(dryRun

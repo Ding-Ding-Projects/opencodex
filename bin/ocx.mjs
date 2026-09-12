@@ -692,11 +692,28 @@ const bun = resolveBun();
 // signal delivered only to this launcher (Codex app, IDE terminal, service wrapper,
 // or `kill -INT <launcherPid>`) killed the launcher and ORPHANED the Bun proxy —
 // port left bound, pid/runtime-port files left behind, Codex config not restored.
+//
+// Provenance seam for issue #701: THIS launcher runs under Node, which does not
+// auto-load a project `.env`/`.env.local`; the Bun child does, before any opencodex
+// code evaluates. So this is the last point that can still tell a real shell export
+// from a working-directory dotenv value, and we record which Anthropic credential
+// slots already existed. `src/cli/claude.ts` then treats anything present in the Bun
+// child but missing from this list as ambient project pollution rather than user auth,
+// which stopped a project dotenv from silently moving a claude.ai subscriber onto API
+// billing. An EMPTY value is meaningful (the launcher ran and saw no slots) and is
+// distinct from the variable being absent (no launcher at all — change nothing), so
+// this must stay a plain assignment and never be collapsed to a falsy check.
+// Disabling Bun's dotenv wholesale with --no-env-file is NOT an option: config
+// interpolation and provider settings legitimately read the project environment.
+//
 // windowsHide: from a windowless parent (the desktop app), a console-subsystem
 // child would otherwise allocate a visible console window on Windows.
+const preBunAnthropicSlots = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+  .filter(name => typeof process.env[name] === "string" && process.env[name] !== "");
 const result = await runBunWithCrashRetry(bun, [cliPath, ...process.argv.slice(2)], {
   windowsHide: true,
   retryCommand: process.argv[2],
+  env: { ...process.env, OCX_PRE_BUN_ANTHROPIC_ENV: preBunAnthropicSlots.join(",") },
 });
 if (result.error) {
   // A native spawn error can embed the executable path in `message`.

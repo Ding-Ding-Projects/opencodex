@@ -575,7 +575,7 @@ function assertWindows(): void {
  * and every abnormal early exit lands in tray-crash.json where
  * trayStatusFrom can surface the reason.
  */
-function spawnTray(entry: WindowsTrayEntry): void {
+export function launchWindowsTrayHost(entry: WindowsTrayEntry): void {
   void launchTrayHostWithCrashRetry({
     command: entry.bun,
     args: [entry.cli, "__tray-host"],
@@ -614,6 +614,8 @@ export async function runWindowsTrayHost(): Promise<void> {
   assertWindows();
   const entry = parseTrayHostEntry();
   delete process.env.OCX_TRAY_ENTRY_B64;
+  delete process.env.OCX_TRAY_HOST_BUN;
+  delete process.env.OCX_TRAY_HOST_ARGS;
   const child = spawn(windowsPowerShellPath(), windowsTrayProcessArgs(entry, "Run", process.pid), {
     stdio: "ignore",
     windowsHide: true,
@@ -699,7 +701,7 @@ export function installWindowsTray(startNow = true): WindowsTrayStatus {
     } catch { /* rollback best-effort */ }
     if (wasRunning && state && !heartbeatRunning()) {
       try {
-        spawnTray(currentEntry());
+        launchWindowsTrayHost(currentEntry());
         waitForHeartbeat(true);
       } catch { /* retain the primary installation failure */ }
     }
@@ -716,7 +718,7 @@ export function installWindowsTray(startNow = true): WindowsTrayStatus {
     restorePreviousInstall();
     throw error;
   }
-  if (startNow && !heartbeatRunning()) spawnTray(entry);
+  if (startNow && !heartbeatRunning()) launchWindowsTrayHost(entry);
   if (startNow && !waitForHeartbeat(true)) {
     restorePreviousInstall();
     throw new Error("The tray startup registration was installed, but the tray process did not become healthy.");
@@ -733,7 +735,7 @@ export function startWindowsTray(): WindowsTrayStatus {
   if (!state || readOwnedRunValue(state.runValue) !== state.runCommand) throw new Error("The tray is not installed. Install it first.");
   // Persisted state proves registration ownership but never selects an
   // executable. Resolve every launch path from the running installation.
-  if (!heartbeatRunning()) spawnTray(currentEntry());
+  if (!heartbeatRunning()) launchWindowsTrayHost(currentEntry());
   if (!waitForHeartbeat(true)) throw new Error("The tray process did not become healthy after launch.");
   return getWindowsTrayStatus();
 }

@@ -19,6 +19,7 @@ import { COMBO_NAMESPACE, comboConfigIssues } from "./combos/types";
 import { hardenSecretDir, hardenSecretPath, hardenSecretPathAsync } from "./lib/windows-secret-acl";
 import { recordOwnedConfigPath } from "./lib/config-ownership";
 import { announceDebugSandboxOnce, debugSandboxEnabled } from "./lib/debug-sandbox";
+import { assertNotRealHomeUnderTest } from "./lib/test-home-guard";
 import { providerDestinationConfigError } from "./lib/destination-policy";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
 import { vercelGatewayRoutingConfigError } from "./providers/vercel-gateway-routing";
@@ -794,6 +795,10 @@ const configSchema = z.object({
     // Unknown hand-edited metadata remains present so the key stays scoped and fails closed.
     purpose: z.string().trim().min(1).max(64).optional().catch("invalid"),
   }).passthrough()).optional(),
+  // Same degrade-don't-reject rationale as the fields above: a hand-edited
+  // non-string must not trip the backup-and-defaults repair path. Unset then
+  // takes the canonical sideband path (src/server/live.ts normalizeSidebandRoot).
+  experimentalRealtimeWsBaseUrl: z.string().optional().catch(undefined),
 }).passthrough().superRefine((config, ctx) => {
   if (config.noProxy !== undefined) {
     try { mergeNoProxyEntries(config.noProxy, {}); }
@@ -1579,6 +1584,9 @@ export function saveConfig(config: OcxConfig): void {
     return;
   }
   const dir = getConfigDir();
+  // First statement on purpose: a rejected write must leave nothing behind, not a
+  // freshly created/chmod'd directory. See src/lib/test-home-guard.ts.
+  assertNotRealHomeUnderTest(dir);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   } else {
