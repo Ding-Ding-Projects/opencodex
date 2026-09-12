@@ -1,5 +1,75 @@
 # Handoff
 
+## Repository repair and a bounded defect hunt — 2026-09-12, `main`
+
+`main` did not load. Two lanes merged on 2026-08-21 each added their own `configMutationDepth`
+and `withConfigMutationLockSync` to `src/config.ts`, the 2026-09-03 branch merges put both copies
+in one module, and Bun refused to parse it: `bun x tsc --noEmit` reported 30 errors across seven
+files and `bun src/cli/index.ts --version` could not start. Every error was merge residue of the
+same shape, a capability wired at one end and not the other: imports dropped while the code that
+used them stayed, `recordOAuthAccountCooldown` called by the Google adapter but no longer exported
+by the pool, a `.mjs` module imported from TypeScript with no declaration file, and the durable
+post-install runtime threaded nowhere despite `restartCommand` still taking the parameter.
+
+The same class had also broken Windows CI on every run: the Go native-port lane added the
+`npm-global` job's steps and the package scripts together, and the merge took the workflow half
+only, so the job packed and then called five script names that existed nowhere. All five are
+restored, the native staging step is back in `prepack` (the job already sets up Go for exactly
+that), and `tests/ci-workflows.test.ts` now asserts that every script a workflow invokes is
+defined in a package.json, which is the check whose absence let the two halves drift apart.
+
+Three product defects were fixed alongside the residue. Codex config injection deleted the
+operator's root `model_context_window` and `model_auto_compact_token_limit` on every start;
+injection never wrote those keys, so it no longer removes them, and an integration regression
+pins the whole operator-owned set through injection, re-injection and native restore.
+`bin/ocx.mjs` had lost `resolveBun`'s `required` parameter while both guards that read it stayed,
+so the launcher died on a `ReferenceError`; the release path's own `verify:native-install` gate
+caught it and now reaches the launcher's real diagnostic instead. Tray crash records larger than
+1 KiB are dropped rather than trusted, and a crash younger than a minute reports as `<1m ago`.
+
+### The hunt
+
+Six independent workers took one lens each (config injection, concurrency and process lifecycle,
+credentials and redaction, tests and guards, recovery and operations, dashboard correctness), then
+four independent workers tried to disprove every candidate. Sixteen findings survived; two were
+rejected: the historical two-file `bun test` hang does not reproduce once `src/config.ts` parses,
+and the open management plane is documented as intentional line for line in the configuration
+reference.
+
+Landed so far, each with a regression watched red before and green after:
+
+| Finding | Fix |
+| --- | --- |
+| Chat session switch discarded unsaved settings | per-session draft map consulted before server values |
+| An in-flight send applied its result to whichever session was on screen | live session-id guard in the stream updaters; the request still finishes in the background |
+| `BulkBar`'s three classes had no rule in any shipped stylesheet | rules added in `m3-shell.css` using role tokens only |
+| The journal's injected-bytes hash latched after the first injection | the hash always advances, so a restart without a clean stop can still restore the true original |
+| `atomicWriteFile` never flushed before the rename | the default io fsyncs the temp file and the destination directory, matching what the mutation database already did |
+| Archived-session candidates followed symlinks and read the whole compressed input | `lstatSync` plus a size check before the read |
+
+Still open at the time of writing, each with an accepted finding and a worker on it: the TOML
+root-boundary scan that mistakes a multi-line array or string for a table header (12 call sites,
+and `subagent-defaults.ts` already has the correct lexer to reuse); catalog ownership decided by
+basename alone; OAuth refresh and Codex warmup error text reaching the client unredacted while
+four sibling providers already guard it; the privacy scanner's extension allowlist that never
+opens the 964 tracked Go files or the published `.mdx`; the three fire-and-forget shutdown timers
+with no try/finally; the serial per-file `git blame` fan-out in line attribution; the missing
+wall-clock bound in `scripts/test.ts` outside Windows; and a contract test that leaves scratch
+directories in the repository root.
+
+### Verification boundary
+
+`bun x tsc --noEmit` is clean, the privacy scan passes, the dashboard suite is 1,675 pass 0 fail,
+and `build:gui` then `npm pack` then `npm run verify:native-package` exits 0 where it previously
+failed. A per-file root-suite baseline taken before any change (607 files, 558 clean) is the
+comparison point for every lane; the three failures that remain in the focused recovery run and
+the five in `tests/ci-workflows.test.ts` are all in that baseline. PowerShell is absent on the
+machine that did this work, so nothing Windows-only was executed here.
+
+`.github/workflows/ci.yml` declares `cancel-in-progress: true`. Three pushes to `main` in quick
+succession cancelled two runs; only the last one has a live verdict. A batch of pushes must let
+its final run finish, or the tip has no exact-commit evidence.
+
 ## Proxy-start panic supervision extended to package scripts — 2026-08-22, `dev`
 
 Reported defect: `ocx start` dying immediately after the stale-journal recovery warning with a Bun
