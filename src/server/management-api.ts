@@ -49,7 +49,7 @@ import {
 } from "../lib/debug-settings";
 import type { OcxClaudeCodeConfig, OcxClaudeDesktopProfile, OcxConfig, OcxCustomModel, OcxProviderConfig } from "../types";
 import type { DesktopProfileModel } from "../claude/desktop-profile";
-import { drainAndShutdown } from "./lifecycle";
+import { scheduleDrainAndExit } from "./lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "./request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../usage/cost";
 import type { PersistedUsageAttempt } from "../usage/log";
@@ -230,10 +230,7 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     // which is exactly why an intentional stop has to do it here.
     const { stripGrokConfig } = await import("../grok/inject");
     const grok = stripGrokConfig();
-    setTimeout(async () => {
-      await drainAndShutdown(undefined, config.shutdownTimeoutMs ?? 5000);
-      process.exit(0);
-    }, 200);
+    scheduleDrainAndExit(config.shutdownTimeoutMs ?? 5000);
     const grokNote = grok.ok ? "" : ` Grok config cleanup failed: ${grok.message}`;
     return jsonResponse(restore.success
       ? { success: true, message: `Proxy stopping, native Codex restored.${grokNote}` }

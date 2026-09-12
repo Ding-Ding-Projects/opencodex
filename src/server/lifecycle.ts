@@ -182,3 +182,32 @@ export async function drainAndShutdown(
   s?.stop(true);
   draining = false;
 }
+
+/**
+ * Schedule a drain-then-exit after a short delay, so an HTTP response that already promised
+ * "the proxy is stopping" has time to flush before the listener actually goes down.
+ *
+ * Used by `POST /api/stop` and `POST /api/host/exit`, both of which used to run this as a bare
+ * `setTimeout(async () => { await drainAndShutdown(...); process.exit(0); }, ...)` with no
+ * try/finally. If `drainAndShutdown` throws — it has no internal try/catch of its own around
+ * `runShutdownTasks`, `flushResponseState`, the storage-cleanup calls, or `s?.stop(true)` — the
+ * timer callback's returned promise rejects with nothing attached to it (a bare `setTimeout`
+ * callback's return value is discarded), so `process.exit` never runs and the rejection surfaces
+ * as a genuine unhandled rejection. `src/lib/crash-guard.ts` installs the only process-wide
+ * `unhandledRejection` handler and, for anything outside its narrow benign-abort allowlist,
+ * deliberately logs and keeps the process alive — exactly wrong here, since the client was
+ * already told the daemon is going down.
+ *
+ * Mirrors the CLI's own signal-driven shutdown (`src/cli/index.ts`'s `shutdown()`), which wraps
+ * the identical `drainAndShutdown` call in `try { ... } finally { process.exit(...) }` so
+ * `process.exit` always runs, drain failure or not.
+ */
+export function scheduleDrainAndExit(timeoutMs: number, delayMs = 200): void {
+  setTimeout(async () => {
+    try {
+      await drainAndShutdown(undefined, timeoutMs);
+    } finally {
+      process.exit(0);
+    }
+  }, delayMs);
+}

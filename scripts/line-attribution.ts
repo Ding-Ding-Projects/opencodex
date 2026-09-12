@@ -1,6 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { countLines } from "./count-lines";
+
+const execFileAsync = promisify(execFile);
 
 export interface AttributionIdentity {
   name: string;
@@ -113,6 +116,15 @@ const DEFAULT_MAX_COMMITS = 100_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_BYTES = 64 << 20;
 const METADATA_BATCH_SIZE = 128;
+/**
+ * Bounded fan-out for the per-file `cat-file -s` + `blame --line-porcelain` calls in
+ * {@link attributeTrackedLines}. Each tracked file used to run through a synchronous
+ * `spawnSync`, one at a time, which serializes ~4,700 files behind two git process
+ * launches apiece. Running them through {@link mapWithConcurrency} instead lets that many
+ * git child processes overlap at once; 8 is generous enough to shorten the real wall clock
+ * without opening thousands of processes at once on a modest CI runner.
+ */
+const ATTRIBUTION_CONCURRENCY = 8;
 
 function normalizeName(value: string): string {
   return value.normalize("NFC").trim().replace(/\s+/g, " ");
@@ -143,27 +155,36 @@ function positiveLimit(value: number | undefined, fallback: number, label: strin
   return result;
 }
 
-function git(root: string, args: readonly string[], timeoutMs: number, context: string): string {
-  const result = spawnSync("git", args, {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: MAX_OUTPUT_BYTES,
-    timeout: timeoutMs,
-    windowsHide: true,
-  });
-  if (result.error) {
-    const reason = result.error.message.includes("maxBuffer")
-      ? `output exceeded ${MAX_OUTPUT_BYTES} bytes`
-      : result.error.message;
+/**
+ * Runs one git invocation asynchronously (non-blocking `execFile`, not `spawnSync`) so callers
+ * can run several at once through {@link mapWithConcurrency} instead of serializing every git
+ * process behind the previous one. Error shape is preserved from the prior synchronous
+ * implementation: a real git exit (`error.code` numeric) becomes a {@link GitCommandError} with
+ * the same operation/exit-code/stderr message; a launch failure, timeout, or maxBuffer overrun
+ * becomes the same "unable to run git (...)" message the sync version threw.
+ */
+async function git(root: string, args: readonly string[], timeoutMs: number, context: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", [...args], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: MAX_OUTPUT_BYTES,
+      timeout: timeoutMs,
+      windowsHide: true,
+    });
+    return stdout;
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    if (typeof failure.code === "number") {
+      const detail = (failure.stderr || failure.stdout || `exit ${String(failure.code)}`).trim();
+      const wrapped = new GitCommandError("git", args, failure.code, detail);
+      wrapped.message = `${context}: ${wrapped.message}`;
+      throw wrapped;
+    }
+    const rawMessage = failure.message ?? String(error);
+    const reason = rawMessage.includes("maxBuffer") ? `output exceeded ${MAX_OUTPUT_BYTES} bytes` : rawMessage;
     throw new Error(`${context}: unable to run git (${reason})`);
   }
-  if (result.status !== 0) {
-    const detail = (result.stderr || result.stdout || `exit ${String(result.status)}`).trim();
-    const failure = new GitCommandError("git", args, result.status, detail);
-    failure.message = `${context}: ${failure.message}`;
-    throw failure;
-  }
-  return result.stdout;
 }
 
 function commitIdsFromBlame(output: string, path: string): string[] {
@@ -198,16 +219,16 @@ function parseCoAuthors(trailers: string): AttributionIdentity[] {
   return identities;
 }
 
-function classifyCommits(
+async function classifyCommits(
   root: string,
   commits: readonly string[],
   agentKeys: ReadonlySet<string>,
   timeoutMs: number,
-): Map<string, boolean> {
+): Promise<Map<string, boolean>> {
   const result = new Map<string, boolean>();
   for (let offset = 0; offset < commits.length; offset += METADATA_BATCH_SIZE) {
     const batch = commits.slice(offset, offset + METADATA_BATCH_SIZE);
-    const output = git(
+    const output = await git(
       root,
       [
         "show",
@@ -246,7 +267,7 @@ function classifyCommits(
  * stripped of one surrounding angle-bracket pair. A line is agent-authored
  * when its commit author OR any exact Co-Authored-By trailer matches.
  */
-export function attributeTrackedLines(options: AttributionOptions): LineAttribution {
+export async function attributeTrackedLines(options: AttributionOptions): Promise<LineAttribution> {
   const root = resolve(options.root);
   const requestedRevision = options.revision ?? "HEAD";
   const maxFiles = positiveLimit(options.maxFiles, DEFAULT_MAX_FILES, "maxFiles");
@@ -265,28 +286,30 @@ export function attributeTrackedLines(options: AttributionOptions): LineAttribut
     throw new Error("agentIdentities contains duplicate pairs after normalization");
   }
 
-  const shallow = git(root, ["rev-parse", "--is-shallow-repository"], timeoutMs, "checking repository history depth").trim();
+  const shallow = (await git(root, ["rev-parse", "--is-shallow-repository"], timeoutMs, "checking repository history depth")).trim();
   if (shallow === "true") {
     throw new Error("line attribution requires complete local history; the repository is shallow");
   }
-  const revision = git(
+  const revision = (await git(
     root,
     ["rev-parse", "--verify", `${requestedRevision}^{commit}`],
     timeoutMs,
     `resolving revision ${JSON.stringify(requestedRevision)}`,
-  ).trim();
-  const blameByPath = new Map<string, string[]>();
-  const allCommits = new Set<string>();
-  let lineCount = 0;
+  )).trim();
 
-  for (const path of paths) {
+  // Per-file cat-file+blame work is independent across files, so it runs through
+  // mapWithConcurrency instead of one file at a time: each git call before this used a
+  // synchronous spawn, so ~4,700 tracked files meant that many serialized process launches.
+  // The order-preserving result lets the aggregate maxLines/maxCommits bookkeeping below run
+  // exactly as it did serially, over the same per-path results, just gathered concurrently.
+  const perFile = await mapWithConcurrency(paths, ATTRIBUTION_CONCURRENCY, async (path): Promise<{ path: string; commits: string[] }> => {
     if (path.includes("\0")) throw new Error(`path contains a NUL byte: ${JSON.stringify(path)}`);
-    const sizeText = git(
+    const sizeText = (await git(
       root,
       ["cat-file", "-s", `${revision}:${path}`],
       timeoutMs,
       `measuring ${JSON.stringify(path)} at ${JSON.stringify(revision)}`,
-    ).trim();
+    )).trim();
     const bytes = Number(sizeText);
     if (!Number.isSafeInteger(bytes) || bytes < 0) {
       throw new Error(`git returned an invalid byte size for ${JSON.stringify(path)}: ${JSON.stringify(sizeText)}`);
@@ -294,13 +317,19 @@ export function attributeTrackedLines(options: AttributionOptions): LineAttribut
     if (bytes > maxFileBytes) {
       throw new Error(`${JSON.stringify(path)} is ${bytes} bytes; maxFileBytes is ${maxFileBytes}`);
     }
-    const blame = git(
+    const blame = await git(
       root,
       ["blame", "--line-porcelain", revision, "--", path],
       timeoutMs,
       `attributing ${JSON.stringify(path)} at ${JSON.stringify(revision)}`,
     );
-    const commits = commitIdsFromBlame(blame, path);
+    return { path, commits: commitIdsFromBlame(blame, path) };
+  });
+
+  const blameByPath = new Map<string, string[]>();
+  const allCommits = new Set<string>();
+  let lineCount = 0;
+  for (const { path, commits } of perFile) {
     lineCount += commits.length;
     if (lineCount > maxLines) throw new Error(`refusing to attribute more than ${maxLines} surviving lines`);
     commits.forEach(commit => allCommits.add(commit));
@@ -308,7 +337,7 @@ export function attributeTrackedLines(options: AttributionOptions): LineAttribut
     blameByPath.set(path, commits);
   }
 
-  const classified = classifyCommits(root, [...allCommits].sort(), agentKeys, timeoutMs);
+  const classified = await classifyCommits(root, [...allCommits].sort(), agentKeys, timeoutMs);
   const files = paths.map(path => {
     const commits = blameByPath.get(path)!;
     const agent = commits.filter(commit => classified.get(commit) === true).length;
@@ -381,12 +410,21 @@ interface CountedEntry {
   code: number;
 }
 
-export function countLinesWithAttribution(revision = "HEAD"): LineAttributionReport {
-  const counted = countLines(revision) as ReturnType<typeof countLines> & { entries?: CountedEntry[] };
+/**
+ * `precomputed` lets a caller that already ran `countLines()` for its own purposes (e.g. a
+ * report that shows both the plain count and the attributed one) pass that result straight
+ * through instead of paying for a second full tracked-file scan of the repository. Omit it to
+ * compute `countLines(revision)` internally, exactly as before.
+ */
+export async function countLinesWithAttribution(
+  revision = "HEAD",
+  precomputed?: ReturnType<typeof countLines> & { entries?: CountedEntry[] },
+): Promise<LineAttributionReport> {
+  const counted = precomputed ?? (countLines(revision) as ReturnType<typeof countLines> & { entries?: CountedEntry[] });
   if (!counted.entries) {
     throw new Error("countLines() must expose tracked entries before attribution can run");
   }
-  const attributed = attributeTrackedLines({
+  const attributed = await attributeTrackedLines({
     root: join(import.meta.dir, ".."),
     paths: counted.entries.map(entry => entry.path),
     revision: counted.revision,
