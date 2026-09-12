@@ -277,7 +277,7 @@ dispatch, orchestrator, planner, policy, queue, recovery —, `src/lab/conforman
 implement what reads as upstream's own equivalent of a bug-hunting/evidence-tracking pipeline for
 their agent fleet. This tree does not exist in the fork at all. It is infrastructure upstream built
 for *their own* development process, analogous to (but architecturally unrelated to) this fork's own
-tooling under `devlog/` and the shared-instructions' Chut/hunt-pass conventions. Adopting it would
+tooling under `devlog/` and this project's own check-and-hunt-pass conventions. Adopting it would
 mean importing upstream's entire internal workflow machinery — out of scope for a fork with its own
 process, and not a user-facing feature in any case.
 

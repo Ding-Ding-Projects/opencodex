@@ -6,7 +6,7 @@
 - [x] Repair the stale in-app docs bundle, packaged icon stdout contamination, app-name identity assertion, parity evidence hashes, notification teardown race, and GUI lint baseline.
 - [x] Integrate the ready recovery, docs vocabulary/School mode, design-reference, dashboard/updater, build/bootstrap, branding/embed, release-workflow, account-lifecycle, package-contract, line-attribution, docs-site, and network-safety lanes into `dev` at source integration tip `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`; later descendants only refresh public records. The generated-docs repair is `a291d442a95f718abfd207589950d7d8fd725633` and the GUI lint integration is `b26287d50c1d4764fd4ea1fbf3166b6ad7d1d3fd`.
 - [x] Push `dev` and independently prove `origin/dev` contains the exact local tip.
-- [ ] Obtain terminal green Der Machine verdicts for the current `dev` ref; the final exact-tip Windows CI and Dashboard preview runs remain queued at this roadmap update. The root whole-suite run remains locally unverified after the bounded line-attribution stall and host-bound ACL fixtures.
+- [ ] Obtain terminal green continuous-integration verdicts for the current `dev` ref; the final exact-tip Windows CI and Dashboard preview runs remain queued at this roadmap update. The root whole-suite run remains locally unverified after the bounded line-attribution stall and host-bound ACL fixtures.
 - [ ] Complete the 63 partial shared-contract rows, including documentation-site parity, real built-artifact interaction proof, and the required captures; do not promote a row from `partial` on source evidence alone.
 - [ ] Build/install/exercise the real unsigned Squirrel artifact and publish one new release only after exact-SHA CI, artifact hashes, release timing, line attribution, and public dim-sum metadata are verified.
 - [x] Complete ancestry-proven cleanup for only task-owned inactive merged branches/worktrees; retain active, unfinished, other-task, Go-port, and ownership-uncertain work.
@@ -16,7 +16,7 @@
 - [x] Integrate source-verified startup recovery, forced native-config restore, owner-safe proxy handling, updater scheduling, installer branding/PATH, protocol/provider, service, observability, catalog, and collaboration backend batches.
 - [x] Preserve the first checked-in `design/` source and add exact manifest/tree/blob/hash/size/package/reparse privacy validation.
 - [x] Preserve every paused UI/design and unfinished backend lane on its owning branch for handoff.
-- [x] Merge the backend integration into the `dev` integration branch and dew the exact integrated tip; promotion to the release `main` jer remains a separate release action.
+- [x] Merge the backend integration into the `dev` integration branch and push the exact integrated tip; promotion to the release `main` branch remains a separate release action.
 - [ ] Reconcile the replacement UI and integrate the personal-vocabulary, updater UI, dashboard health, and design-parity checkpoints.
 - [ ] Finish native Go issue #17 parity and the remaining Antigravity, network/vault, architecture, and reset-credit review gaps.
 - [ ] Build and exercise the real unsigned Squirrel installer, then publish and verify a new release.

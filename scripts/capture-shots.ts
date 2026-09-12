@@ -684,7 +684,7 @@ async function clearOverlays(): Promise<void> {
 
 /**
  * Every route in `gui/src/app-routing.ts` is represented by the pure
- * hand-written registry. The route-completeness Chut compares that registry
+ * hand-written registry. The route-completeness check compares that registry
  * with `VALID_PAGES`; this harness consumes the same rows for real built-app
  * captures, so adding a page cannot quietly leave the capture set behind.
  */
