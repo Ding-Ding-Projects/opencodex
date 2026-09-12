@@ -1,5 +1,23 @@
 # Roadmap
 
+## Upstream catch-up, one verified tag at a time — 2026-09-12
+
+The fork sits 7,267 commits behind its source. Merging the tip produces 523 conflicting files, so
+the catch-up comes in rungs, each one verified against the tree it started from and integrated on
+its own.
+
+- [x] `v2.8.0`. 69 conflicting hunks across 39 paths. The dashboard ends at 1,695 passing and none
+      failing, its build and typecheck clean, the root suites at their known failures and no more.
+- [ ] `v2.10.1`
+- [ ] `v2.12.0`
+- [ ] `v2.20.0`
+- [ ] `v2.31.0`
+- [ ] `v2.40.0`
+- [ ] `v2.51.0`
+- [ ] Close the four Linux failures in the Go job that this catch-up does not touch: the help
+      surface implementing 50 of 69 lines, the two tests needing an executable the runner lacks,
+      and the two that predate this work.
+
 ## Current integration closeout — 2026-08-21
 
 - [x] Remove the interactive GitHub-star prompt, marker, startup call, and `gh` mutation route; retain no user-facing star prompt.
