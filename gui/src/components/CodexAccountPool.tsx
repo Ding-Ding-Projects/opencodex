@@ -578,6 +578,7 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
       <CodexAutoSwitchSetting
         threshold={autoSwitch.threshold}
         draft={autoSwitch.draft}
+        hydrated={autoSwitch.hydrated}
         saving={autoSwitch.saving}
         loadError={autoSwitch.loadError}
         feedback={autoSwitch.feedback}

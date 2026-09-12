@@ -3,6 +3,7 @@ import {
   PROJECT_CONFIG_DIAGNOSTICS_POLL_MS,
   beginPollEpochs,
   mapStartupHealthProbe,
+  probeNeedsFastRetry,
   seedStartupHealthFromSettings,
   settingsPollMayCommit,
   startupRiskDetailKey,
@@ -26,16 +27,46 @@ describe("startup health UI decisions", () => {
     expect(settingsPollMayCommit(started, { request: 4, mutation: 2, mutationInFlight: true })).toBe(false);
   });
 
-  test("maps stale diagnostics to error and rejects invalid payloads", () => {
-    expect(mapStartupHealthProbe({ status: "protected", diagnosticStale: true })).toBe("error");
+  test("keeps payload status when diagnostics are stale and rejects invalid payloads", () => {
+    // diagnosticStale is SWR refresh, not a hard read failure — do not map to "error".
+    expect(mapStartupHealthProbe({ status: "protected", diagnosticStale: true })).toBe("protected");
+    expect(mapStartupHealthProbe({ status: "at-risk", diagnosticStale: true })).toBe("at-risk");
     expect(mapStartupHealthProbe({ status: "native", diagnosticStale: false })).toBe("native");
     expect(mapStartupHealthProbe({ status: "nope" })).toBeNull();
   });
 
-  test("settings may only seed while startup health is still unknown", () => {
+  test("settings may seed while unknown or hard-error, but not overwrite a real status", () => {
     expect(seedStartupHealthFromSettings(null, { status: "protected", diagnosticStale: false })).toBe("protected");
-    expect(seedStartupHealthFromSettings("error", { status: "protected", diagnosticStale: false })).toBe("error");
-    expect(seedStartupHealthFromSettings(null, { status: "at-risk", diagnosticStale: true })).toBe("error");
+    expect(seedStartupHealthFromSettings("error", { status: "protected", diagnosticStale: false })).toBe("protected");
+    expect(seedStartupHealthFromSettings(null, { status: "at-risk", diagnosticStale: true })).toBe("at-risk");
+    expect(seedStartupHealthFromSettings("at-risk", { status: "protected", diagnosticStale: false })).toBe("at-risk");
+  });
+});
+
+describe("stale startup-health fast retry", () => {
+  // The chip used to sit on the server's conservative placeholder until the next 30s
+  // poll, which is why it only appeared to sync when the user clicked something.
+  test("a stale answer asks for a fast re-check", () => {
+    expect(probeNeedsFastRetry({ status: "at-risk", stale: true })).toBe(true);
+    expect(probeNeedsFastRetry({ status: "protected", stale: true })).toBe(true);
+    expect(probeNeedsFastRetry({ status: "native", stale: true })).toBe(true);
+  });
+
+  test("a settled answer does not", () => {
+    expect(probeNeedsFastRetry({ status: "protected", stale: false })).toBe(false);
+    expect(probeNeedsFastRetry({ status: "at-risk", stale: false })).toBe(false);
+  });
+
+  test("a hard error is left to the ordinary poll", () => {
+    // A read failure will not resolve itself in two seconds; retrying fast would just
+    // hammer a down endpoint.
+    expect(probeNeedsFastRetry({ status: "error", stale: true })).toBe(false);
+    expect(probeNeedsFastRetry({ status: "error", stale: false })).toBe(false);
+  });
+
+  test("no snapshot yet is not a retry trigger", () => {
+    expect(probeNeedsFastRetry(undefined)).toBe(false);
+    expect(probeNeedsFastRetry(null)).toBe(false);
   });
 });
 

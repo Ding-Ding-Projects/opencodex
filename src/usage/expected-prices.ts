@@ -111,9 +111,11 @@ const XAI_PRIORITY_PRICING = "https://docs.x.ai/developers/advanced-api-usage/pr
  */
 export const OPENAI_PRIORITY_MULTIPLIERS: Readonly<Record<string, number>> = {
   "gpt-5.6-sol": 2,
-  "gpt-5.6-terra": 2,
-  "gpt-5.6-luna": 2,
+  "gpt-5.6-terra": 1.6,
+  "gpt-5.6-luna": 0.4,
   "gpt-5.5": 2.5,
+  "gpt-5.4-mini": 2,
+  "gpt-5.4": 2,
 };
 
 /**

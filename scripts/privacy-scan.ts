@@ -488,6 +488,14 @@ function isAllowedHomePath(file: string, username: string): boolean {
   // username, the same way `isAllowedEmail`'s `example.com`/`.test` domains
   // are allowed everywhere rather than only under `tests/`.
   if (username === "Public") return true;
+  // "runneradmin" is the fixed, built-in account every GitHub Actions Windows
+  // runner provisions -- not a per-machine operator identity, the same way
+  // "Public" above is a shared built-in profile rather than somebody's real
+  // account. tests/test-home-guard.test.ts quotes a real CI incident's error
+  // message verbatim (`C:\Users\runneradmin\.bun\bin\bun.exe`), and that
+  // reproducibility is the point of the incident record; unconditional like
+  // "Public" because this name can never coincide with a real leaked username.
+  if (username === "runneradmin") return true;
   if (file.startsWith("tests/") && (username === "example" || username === "test" || username === "x")) {
     return true;
   }

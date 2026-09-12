@@ -4,11 +4,10 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `bin/ocx.mjs` | Published npm `bin` entry (Node shim). Resolves a validated `OPENCODEX_BUN_PATH` override or the bundled Bun binary (`bun` dependency), lazy-runs its `install.js` if only the placeholder stub is present, then launches `src/cli/index.ts` under Bun. `start` and `ensure` receive one external panic-qualified retry through `src/lib/bun-start-supervisor.mjs`; other commands retain single-attempt exit propagation. Lets `npm install -g` work without a separately-installed Bun. |
-| `src/lib/bun-runtime.ts` | Bundled-Bun resolution: the shared Node-safe validator rejects missing, non-regular, and placeholder-sized paths; it is only a regular-file/size heuristic, not Bun identity or signature verification. `bundledBunPath()` and `durableBunPath()` prefer an `OPENCODEX_BUN_PATH` override that passes this heuristic, with the durable choice baked into service/shim artifacts. |
-| `src/lib/bun-start-supervisor.mjs` | Node-side child supervisor for the npm launcher. Forwards stderr live with stream backpressure while retaining a 64 KiB attempt-local diagnostic tail; an independent marker latch survives later tail eviction. It retries only `start`/`ensure` after an abnormal exit carrying Bun's exact crash marker and caps the retry at one. Spawn failures, ordinary nonzero exits, parent signals, warning-only output, and marker-free signal-style codes never retry. |
-| `src/cli/index.ts` | `ocx` / `opencodex` CLI: init, start, stop, restore/eject, sync, status, login/logout, gui, service, update. After help/version early exits, ordinary commands run the bounded best-effort Codex-shim auto-restore policy before dispatch. Keeps the `#!/usr/bin/env bun` shebang for from-source dev (`bun run src/cli/index.ts`). |
-| `src/server/index.ts` | Bun server entrypoint: `startServer`, `/v1/responses` HTTP + WebSocket routing, exact `POST /v1/images/generations` and `POST /v1/images/edits` routing, `/v1/models`, `/v1/*` JSON 404 guard, GUI fallback, and facade re-exports for split server modules. |
+| `bin/ocx.mjs` | Published npm `bin` entry (Node shim). Resolves the bundled Bun binary (`bun` dependency), lazy-runs its `install.js` if only the placeholder stub is present, then execs `src/cli/index.ts` under Bun. Lets `npm install -g` work without a separately-installed Bun. |
+| `src/lib/bun-runtime.ts` | Bundled-Bun resolution: `isRealBunBinary()` (size gate vs the ~450-byte placeholder stub), `bundledBunPath()`, `durableBunPath()` (path baked into service/shim artifacts). |
+| `src/cli/index.ts` | `ocx` / `opencodex` CLI. Lifecycle: init, start, stop, restart, status, sync, restore/eject, gui, service, update. Configuration: provider, account, models, combo/route, access, integrations, v2. Diagnostics: doctor, debug, observe, health. Windows adds tray. The full command surface is `src/cli/help.ts`; this table names the groups, not every verb. After help/version early exits, ordinary commands run the bounded best-effort Codex-shim auto-restore policy before dispatch. Keeps the `#!/usr/bin/env bun` shebang for from-source dev (`bun run src/cli/index.ts`). |
+| `src/server/index.ts` | Bun server entrypoint: `startServer`, `/v1/responses` HTTP + WebSocket routing (compact handled before generic Responses), exact `POST /v1/images/generations` and `POST /v1/images/edits` routing, `/v1/models`, the Anthropic-shaped `/v1/messages` and OpenAI-shaped `/v1/chat/completions` compatibility surfaces, the Live/Realtime surface, the hosted-search relay, artifact serving, `/healthz`, the `/api/*` auth gate, the `/v1/*` JSON 404 guard, GUI fallback, and facade re-exports for split server modules. |
 | `src/server/images.ts` | Standalone Images data plane: default OpenAI or explicit custom-provider selection, Codex account affinity, bounded opaque request relay, single-attempt upstream fetch, pool health recording, and safe response/cancellation relay. |
 | `src/config.ts` | `~/.opencodex/config.json`, defaults, PID path, env-value resolution, `websocketsEnabled()`. |
 | `src/router.ts` | Provider/model selection before adapter dispatch. |
@@ -17,10 +16,18 @@
 | `src/codex/shim.ts` | Codex autostart shim: replaces the `codex` binary with a wrapper that auto-starts the proxy on demand. It skips startup for management subcommands even when value-taking global flags precede the subcommand, and transactionally restores complete, stable external launcher replacements without a watcher or PATH rediscovery. |
 | `src/service.ts` | OS service manager (macOS launchd, Linux systemd, Windows schtasks): always-on proxy with crash restart. |
 
-The `src/` root stays thin: process entry, shared config/types, router, bridge, service manager, and
-reasoning effort definitions live there. Feature code is grouped under `src/adapters/`, `src/codex/`,
-`src/cli/`, `src/oauth/`, `src/providers/`, `src/responses/`, `src/server/`, `src/update/`,
-`src/usage/`, `src/vision/`, `src/web-search/`, and `src/lib/`.
+The `src/` root stays thin: process entry (`src/cli.ts`, `src/index.ts`), shared config/types,
+router, bridge, service manager, reasoning-effort definitions, and the stall-timeout budget live
+there. Feature code is grouped by responsibility:
+
+| Group | Directories |
+| --- | --- |
+| Data plane | `src/adapters/`, `src/responses/`, `src/chat/`, `src/claude/`, `src/grok/`, `src/images/`, `src/vision/`, `src/web-search/` |
+| Codex integration | `src/codex/`, `src/combos/`, `src/providers/`, `src/oauth/` |
+| Surfaces | `src/server/`, `src/cli/`, `src/tray/`, `src/github/` |
+| Support | `src/lib/`, `src/storage/`, `src/usage/`, `src/update/`, `src/generated/` |
+
+`src/generated/` is build output committed for the runtime; it is not edited by hand.
 
 `src/server/` is split by responsibility: `index.ts` owns the listener and route ordering;
 `responses.ts` owns Responses handling and compaction; `images.ts` owns the standalone Images relay;
@@ -32,48 +39,12 @@ server infrastructure (`src/lib/bun-stream-caps.ts` owns the Bun stream-capabili
 static GUI, WebSocket bridge, port/liveness, decompression, and adapter-resolution helpers live in
 their own files.
 
-## Installed runtime boundary
-
-The published npm package contains six Go binaries: macOS, Linux, and Windows on amd64 and arm64.
-Node 18+ runs only the small launcher that selects and validates the exact package-local artifact.
-An ordinary command on those targets must not execute Bun or `bun/install.js`.
-
-The `bun` dependency is intentionally retained but dormant. It exists only for an older updater to
-install the transition package, for one guarded legacy Codex-shim refresh after Go has validated,
-for callers that explicitly select the Bun package API, and as a bridge on unsupported platforms.
-Removing it is a later compatibility milestone, not part of the Go runtime cutover. Source development
-continues to use a locally installed Bun CLI and the TypeScript entrypoints.
-
 ## Lifecycle
 
-`ocx start` and `ocx ensure` identity-probe the configured live proxy before reconciling an old
-journal. The probe includes the configured listener even when PID/runtime ownership files are
-missing. A healthy owner preserves the injected Codex state and journal; only a definitively dead
-owner is recovered. PID and runtime ownership removals compare their complete preflight snapshots,
-and any changed or newly published owner record prevents journal reconciliation by the losing
-process. Startup recovery uses the asynchronous hardened atomic-write path and is
-retry-safe when one journaled file was already restored before a later write failed.
-
-After that preflight, `ocx start` refuses a duplicate PID, starts the proxy, writes
-`~/.opencodex/ocx.pid`, syncs Codex config/catalog, then serves until shutdown. Normal shutdown
-restores native Codex. Service mode sets `OCX_SERVICE=1`, so managed restarts do not repeatedly
-restore/reinject; explicit service stop and uninstall still restore.
-
-The published Node launcher cannot catch a native Bun fault inside the Bun process, so it supervises
-the child externally. Only `start` and `ensure` receive one retry after an abnormal exit whose
-attempt-local stderr stream contains Bun's exact `oh no: Bun has crashed` marker. An independent
-streaming latch preserves that classification if later diagnostics evict the marker from the 64 KiB
-tail. Every stderr byte is forwarded with writable backpressure, the second result remains
-authoritative, and a second qualified crash prints the
-`OPENCODEX_BUN_PATH` recovery hint before propagating the real exit. Parent termination and ordinary
-CLI failures are never retried.
-
-That supervisor boundary is specific to the published npm `bin` path. Services and Codex autostart
-shims do not recursively invoke `bin/ocx.mjs`: their generated artifacts bake the result of
-`durableBunPath()` beside the TypeScript CLI entry and execute Bun directly. The Codex shim retains
-its existing best-effort two-attempt `ensure` sequence, while service restart behavior remains owned
-by launchd, systemd, or Task Scheduler. Neither path inherits or stacks the npm launcher's
-panic-marker classifier, bounded stderr tail, live stderr forwarding, or second-crash hint.
+`ocx start` refuses a duplicate PID, starts the proxy, writes `~/.opencodex/ocx.pid`, syncs Codex
+config/catalog, then serves until shutdown. Normal shutdown restores native Codex. Service mode sets
+`OCX_SERVICE=1`, so managed restarts do not repeatedly restore/reinject; explicit service stop and
+uninstall still restore.
 
 An installed Codex shim is checked on ordinary CLI startup with a regular-file/1 MiB state bound plus
 bounded metadata and prefix reads. A complete replacement must produce identical fingerprints and
@@ -87,8 +58,9 @@ tracked sibling before mutation and rolls back earlier siblings in reverse order
 Failures warn without changing the requested command's exit behavior. The probe uses read-only config
 diagnostics only for a confirmed candidate and never reads adjacent auth state.
 
-The bridge enforces a heartbeat stall deadline: after 5 minutes (150 ticks at the default 2 s
-interval) of upstream silence with no real events, the stream is closed and the upstream request
+The bridge enforces a heartbeat stall deadline. It defaults to 300 seconds sampled on a 2 s tick
+(`src/stall-timeout.ts`) and is configurable, so treat the number as a default rather than an
+invariant; sidecars keep their own clocks. On expiry the stream is closed and the upstream request
 cancelled. If the adapter generator ends without an explicit done/error event, the response is marked
 `incomplete` rather than `completed` so Codex can distinguish a clean finish from a truncated stream.
 
@@ -107,6 +79,23 @@ The server exposes `POST /api/stop` which restores native Codex config, stops an
 | `src/adapters/anthropic.ts` | Anthropic Messages bridge. |
 | `src/adapters/google.ts` | Gemini bridge. |
 | `src/adapters/azure.ts` | Azure OpenAI bridge. |
+| `src/adapters/cursor.ts`, `src/adapters/cursor/` | Cursor protobuf transport: discovery, request builder, event decoding, MCP, thread continuity, native-exec policy. |
+| `src/adapters/kiro.ts` and its `src/adapters/kiro-*.ts` helpers | Kiro event/tool/thinking/truncation/retry handling. |
+| `src/adapters/mimo-free.ts` | Mimo Free transport (client identity + JWT). |
+| `src/adapters/image.ts`, `src/adapters/anthropic-image-guard.ts`, `src/adapters/anthropic-image-normalize.ts` | Image conversion for adapter ingress and Anthropic-specific normalization/limits. |
+| `src/adapters/run-turn-queue.ts`, `src/adapters/tool-catalog-nudge.ts`, `src/adapters/identity.ts`, `src/adapters/upstream-http-error.ts` | Shared adapter execution support: turn queueing, tool-catalog nudging, client identity, upstream error normalization. |
 
 Adapter output must stay in internal `AdapterEvent` form until `bridge.ts` converts it back to
 Responses SSE or WebSocket frames.
+
+Live model discovery is bounded and registry-driven through `src/providers/model-discovery.ts`.
+Custom providers keep the conventional `${baseUrl}/models` request; canonical presets may select a
+trusted URL/path/query and declarative eligibility filter without persisting that policy into user
+config. A response is rejected before caching when it exceeds 4 MiB, contains more than 2,000 raw
+rows, has a malformed OpenAI list envelope, or includes an invalid model id. Tests use fixtures and
+must never depend on live provider endpoints. Newly promoted fixed key presets opt into
+`preserveCustomDestination`, so an older same-named custom provider keeps its configured adapter,
+destination, and key boundary instead of being silently canonicalized onto the new host. Fixed
+OAuth presets resolve discovery against the same canonical registry transport as normal routing
+before any adapter-specific transport override, so a stale configured `baseUrl` cannot receive an
+OAuth bearer token.

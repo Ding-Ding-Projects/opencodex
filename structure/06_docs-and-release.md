@@ -3,7 +3,8 @@
 ## Public docs
 
 The public documentation site lives in `docs-site/` and is built with Astro + Starlight. English is
-served at the site root, Korean under `/ko`, and Simplified Chinese under `/zh-cn`.
+served at the site root, with Korean under `/ko`, Simplified Chinese under `/zh-cn`, Russian under
+`/ru`, and Japanese under `/ja`. `docs-site/astro.config.mjs` is the locale source of truth.
 
 Manual navigation is defined in `docs-site/astro.config.mjs`. When adding a public page, update the
 sidebar and either add localized copies or intentionally accept Starlight fallback behavior.
@@ -39,19 +40,27 @@ bun run build
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | `pull_request`, `push` to `main`/`dev`/`preview`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs typecheck, `bun test --isolate tests`, the privacy scan, release-helper syntax check, GUI build, and `ocx help` (no lint: lint is not a gate and no workflow runs it); `npm-global-smoke` (Node only, **no setup-bun**) builds package assets, packs the tarball, installs it globally, and runs `ocx help` to prove the bundled-Bun launcher works without a separate Bun install. |
+| `.github/workflows/ci.yml` | `pull_request` to `main`/`dev`, `push` to `main`/`preview`/`dev`, or manual dispatch when runtime/package paths change | Cross-platform runtime/package quality gate on Linux, Windows, and macOS. The `test` job (Bun) runs typecheck, `bun test --isolate tests`, the GUI suite (`cd gui && bun test tests`), the privacy scan, release-helper syntax check, GUI lint/build, and `ocx help`; `npm-global-smoke` (Node only, **no setup-bun**) builds package assets, packs the tarball, installs it globally, and runs `ocx help` to prove the bundled-Bun launcher works without a separate Bun install. |
 | `.github/workflows/release.yml` | Manual dispatch only | npm publish/dry-run workflow. It requires the exact `GITHUB_SHA` to have a successful Cross-platform CI run before publish or dry-run. |
 | `.github/workflows/deploy-docs.yml` | `push` to `main` touching `docs-site/**` or the workflow, or manual dispatch | Build and publish the Astro/Starlight docs site to GitHub Pages. |
-| `.github/workflows/service-lifecycle.yml` | `push` touching `src/service.ts`, `src/cli/index.ts`, or the workflow, or manual dispatch | Linux systemd smoke test: install, verify, `ocx stop` stops the service, uninstall. |
+| `.github/workflows/service-lifecycle.yml` | `pull_request` to `main`/`dev` and `push`, both filtered on the service path set (`src/service.ts`, `src/cli.ts`, `src/cli/index.ts`, `src/lib/bun-runtime.ts`, `package.json`, `bun.lock`, the workflow), or manual dispatch | Service-lifecycle smoke on three platforms: Linux systemd, macOS launchd, and Windows Scheduled Tasks. Each installs, verifies, stops via `ocx stop`, and uninstalls. The path list is kept in sync with the `release.yml` service-gate regex. |
+| `.github/workflows/enforce-pr-target.yml` | `pull_request_target` (opened, reopened, edited, ready_for_review, synchronize) | The `enforce-target` gate: rejects pull requests whose head ancestry sits on the `main` tip while far behind `dev`, and rejects empty or malformed descriptions. Stacked child PRs targeting another open PR's head skip the wrong-base gate. |
+| `.github/workflows/enforce-issue-quality.yml` | `issues` (opened, edited, reopened), `issue_comment` (created, edited), or manual dispatch with an issue number | Issue-template compliance gate. |
+| `.github/workflows/issue-quality-tests.yml` | `pull_request` and `push` filtered on the issue/PR automation scripts, templates, and their workflows | Tests the issue and PR automation scripts themselves, so the gates cannot rot silently. |
+| `.github/workflows/issue-triage.yml` | `issues` (opened) | Duplicate detection and triage labeling for new issues. |
+| `.github/workflows/pr-labeler.yml` | `pull_request_target` (opened, edited, synchronize, labeled, unlabeled) | Type and path labeling plus title sync; `labeled`/`unlabeled` let a human override enqueue a fresher run in the per-PR concurrency group. |
+| `.github/workflows/react-doctor.yml` | `pull_request` (opened, synchronize, reopened, ready_for_review) and `push` to `main`; no path filter | React-focused static review. Findings fail the job; write-scoped outputs stay disabled, a contract pinned by `tests/ci-workflows.test.ts`. |
+| `.github/workflows/stale-needs-info.yml` | `schedule` only (daily 06:15 UTC); deliberately no manual dispatch | Closes issues left in needs-info past the grace period. Manual dispatch is omitted so a branch-selected run cannot execute that branch's body with issue write scope. |
+
+`pull_request_target`, `issues`, and `schedule` workflows always load from the repository default
+branch, not from `dev`. Landing a change to one of them on `dev` does not change live behavior until
+it is promoted, so those files follow the promotion model rather than ordinary integration.
 
 Docs-only changes intentionally route through the docs workflow instead of the runtime CI gate. If a
 docs change also edits runtime/package/release files, run the relevant local runtime checks before
 push and let `ci.yml` provide the Linux/Windows confirmation. Service-related changes
-(`src/service.ts`, `src/cli/index.ts`) additionally trigger the `service-lifecycle.yml` smoke test on Linux.
-
-The TypeScript prerelease line remains `preview`. `dev2-go` is a temporary, independently validated
-Go track, not a release-promotion branch and not a standing pull request into `dev`. Its head is
-stable only after Go CI succeeds for the exact commit.
+(`src/service.ts`, `src/cli/index.ts`, and the rest of the service path set) additionally trigger the
+`service-lifecycle.yml` smoke test on all three platforms.
 
 ## Root README
 
@@ -64,6 +73,32 @@ invariants belong in `structure/`, not the README.
 `docs/` contains investigations and diagnostic notes. Do not treat it as the current public user
 manual. When an investigation graduates into a maintained invariant, summarize it here under
 `structure/` and link public workflows from `docs-site/`.
+
+## Branch and devlog policy
+
+[`AGENTS.md`](../AGENTS.md) and [`MAINTAINERS.md`](../MAINTAINERS.md) are authoritative; this section
+exists so the repository-shape source of truth does not omit the shape of its own history.
+
+- `dev` is the single integration branch and the target for ordinary pull requests. `main` moves only
+  by maintainer-controlled promotion; `preview` carries the `x.y.z-preview.*` train. One documented
+  exception: a stacked child PR may target another **open** PR's head branch as a review workflow, and
+  is retargeted to `dev` once the parent lands or closes.
+- Bun-native TypeScript on `dev` is the only runtime line. The former Go native-runtime experiment is
+  retired and archived, and no `go/` tree is tracked in this repository; a local `go/` directory is
+  untracked leftovers. If native code returns, the expectation is an incremental module landing on
+  `dev`, not a second full-runtime branch.
+- `devlog/` is a tracked directory in this repository — no submodule, no private mirror. Open units
+  live in `devlog/_plan/`, closed units in `devlog/_fin/`, and external parity references in
+  `devlog/_chase/` (the reference clones themselves are gitignored).
+- The runtime does not consume `devlog/`, so a contributor who ignores it still builds and runs.
+  Repository checks do read it deliberately: `privacy:scan` scans it, and
+  `tests/repo-hygiene.test.ts` enforces the mechanical guards — no tracked `160000` gitlink anywhere,
+  devlog Markdown tracked as ordinary blobs, no `.gitmodules`, and no open plan carrying an unresolved
+  security verdict on a security-boundary topic. Some unit-scoped release gate scripts resolve their
+  evidence directory from `devlog/_plan` or `_fin` as well.
+- Security work in progress does not go in any tracked directory. Scratch space only; only the
+  published outcome — the fix, its regression test, the release note, the advisory once public —
+  reaches the repository.
 
 ## Maintenance governance
 
@@ -81,81 +116,32 @@ enforcement.
 - 다른 대안 대신 이 방식을 선택한 이유: A two-maintainer project needs clear ownership and sensitive-path review rules but does not yet need a separate governance framework.
 - 장점, 단점 및 영향: Contributors can identify reviewers and merge expectations directly from the repository. The roster must be updated when responsibilities change, and CODEOWNERS still requires branch-protection configuration to enforce approvals.
 
-## Package runtime (packaged Go)
+## Package runtime (bundled Bun)
 
-The source-development toolchain remains Bun-native TypeScript, while supported npm installations
-run Go. `package.json` `bin` points at `bin/ocx.mjs`, a small Node launcher, and the tarball carries
-one exact Go artifact for each darwin/linux/windows × amd64/arm64 target.
+The source runs on Bun, but the published package does **not** require a user-installed Bun.
+`package.json` `bin` points at `bin/ocx.mjs` (a Node shim), and the Bun runtime ships as the `bun`
+npm dependency (esbuild-style: a tiny main package plus platform-specific `@oven/bun-*`
+`optionalDependencies`, finalized by the dependency's own `postinstall: node install.js`).
 
 Invariants:
 
-- `bin/ocx.mjs` first applies the shared non-identity regular-file/size gate to an explicitly set
-  `OPENCODEX_BUN_PATH`, otherwise resolves the bundled binary via `require.resolve("bun/package.json")`
-  and the same gate (`>= 1 MB`) that rejects the ~450-byte placeholder stub left by
-  `--ignore-scripts`/pnpm. The override remains user-supplied and unvalidated beyond this gate: the
-  launcher does not identify, signature-check, or execute it during validation. Rejected overrides
-  warn without exposing the supplied path and fall back to the bundled runtime.
-- The launcher lazy-runs Bun's `install.js` when required, then invokes `src/cli/index.ts` through the
-  Node-safe `bun-start-supervisor.mjs`. Only `start` and `ensure` receive one retry after an abnormal
-  exit containing Bun's exact crash marker; stderr is forwarded byte-for-byte with writable
-  backpressure, its diagnostic tail is bounded to 64 KiB per attempt, and a separate marker latch
-  prevents later diagnostic noise from erasing a real classification. All other commands and failure
-  classes preserve the original single-attempt exit semantics.
+- `bin/ocx.mjs` resolves the bundled binary via `require.resolve("bun/package.json")` and a size gate
+  (`>= 1 MB`) that rejects the ~450-byte placeholder stub left by `--ignore-scripts`/pnpm; it then
+  lazy-runs `install.js` and execs `src/cli/index.ts` under Bun, propagating exit code and signal.
 - `package.json` carries `"trustedDependencies": ["bun"]` so `bun install` runs the dependency's
   postinstall, and `"engines": { "node": ">=18" }` (Bun is no longer a user prerequisite).
 - `src/service.ts` and `src/codex/shim.ts` bake `durableBunPath()` (the bundled binary, stable under
   the npm global prefix) into launchd/systemd/Task Scheduler and the Codex autostart shim, so those
   durable artifacts keep resolving across `ocx update`.
 - Public docs (root READMEs + `docs-site` installation pages, all locales) state Node 18+ as the only
-  runtime prerequisite and identify all six supported Go targets.
-
-### Runtime closure and port boundary
-
-| Consumer | Executable path | Retry and diagnostic ownership |
-| --- | --- | --- |
-| Published npm commands | Node 18+ runs `bin/ocx.mjs`; the launcher resolves or lazily installs the bundled Bun runtime, then starts `src/cli/index.ts`. | `bun-start-supervisor.mjs` forwards child stderr exactly as received, retains only a 64 KiB attempt-local tail for classification, and gives only `start`/`ensure` one retry after the exact Bun panic marker on an abnormal exit. The final child status remains authoritative. |
-| Installed service | The generated launchd, systemd, or Task Scheduler artifact invokes the `durableBunPath()` result and the TypeScript CLI directly. | The operating-system service manager owns restart behavior. It does not pass through or stack the npm launcher's panic classifier, stderr tail, retry, or recovery hint. |
-| Installed Codex shim | The generated shell, batch, or PowerShell shim invokes the same durable Bun/CLI pair directly before handing off to native Codex. | The shim keeps its existing best-effort two-attempt `ensure` sequence. It does not pass through or stack the npm launcher's panic classifier or diagnostic behavior. |
-| From-source development | Contributors run the Bun-shebang CLI directly. | The npm launcher contract does not apply. |
-
-The `OPENCODEX_BUN_PATH` override is checked before the bundled runtime for both the npm launcher and
-durable artifact generation. Rejection is deliberately path-redacted and falls back to the bundle;
-acceptance proves only that the resolved path is a regular file above the placeholder-size floor,
-not that it is an authentic or compatible Bun executable.
-
-This closure is packaging and TypeScript-launch infrastructure. It has no Go implementation
-counterpart on `dev2-go`: the Go-native runtime does not consume the npm Node launcher, bundled-Bun
-resolver, generated Bun service command, or Codex Bun shim. Forward-port the structure record so the
-branch documents the boundary, but do not manufacture a Go runtime change for it.
+  prerequisite. Do not reintroduce "install Bun first" / "bun must be on PATH" guidance for npm users.
 
 ## Release workflow
 
-Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`;
-`prepublishOnly` rejects direct source publishing so only the release workflow may publish.
-`scripts/release.ts` runs local typecheck, the test suite, and `bun run privacy:scan`
-before the version bump. Because `gui/vite.config.ts` bakes the package version into the GUI
-bundle, the bump is followed by `bun scripts/embed-gui.ts`, and the regenerated
-`go/internal/server/static/**` plus `static-manifest.json` are staged with `package.json` so the
-release commit can pass the embed guard it triggers. The helper then commits, pushes, and waits
-for successful exact-SHA runs of Cross-platform CI, Service lifecycle, **and Go CI** before the
-live remote-head check and the GitHub Release workflow dispatch; the CI wait timeout and poll
-interval are environment-overridable for tests but keep their production defaults. Every dispatch
-must name the exact expected commit SHA and fails closed when it is empty or differs from
-`GITHUB_SHA`. The workflow builds the GUI, verifies `gui/dist` against the committed embedded
-bundle, packs once, verifies that exact archive, compares the packed `package/gui/dist` bytes to
-the embedded tree by per-file SHA-256, runs the isolated poison-install receipt, and copies the
-validated bytes into a
-runner-private retained archive identified by an absolute path and SHA-256. It materializes and
-validates exactly six native binaries plus their checksum manifest from that retained archive
-before publish. A dry-run performs all archive and asset preparation but cannot run npm, Git tag,
-Git push, or GitHub Release mutations. A real run publishes the private retained archive and uses
-freshly materialized, immediately revalidated bytes as the seven GitHub Release assets. It then
-downloads the remote assets, normalizes local modes, and verifies their inventory and bytes against
-the retained archive. Registry visibility must prove both immutable version integrity and the
-requested npm dist-tag before GitHub reconciliation. Post-notes tag and GitHub Release changes are
-owned by `scripts/reconcile-release-assets.ts`, which receives that npm integrity and dist-tag, uses
-bounded argument-vector `git`/`gh` calls, revalidates npm identity and the authoritative remote tag
-before every mutation, and repeats both checks before final success. Docs publishing is separate.
+Package release is npm-focused. `package.json` exposes `opencodex` and `ocx`, `prepublishOnly` runs
+typecheck and GUI build, and `scripts/release.ts` now runs local typecheck, `bun test --isolate tests`, and
+`bun run privacy:scan` before the version bump, commit/push, Cross-platform CI wait, and GitHub
+Release workflow dispatch. Docs publishing is separate from npm release publishing.
 
 ## Release metadata invariants
 
@@ -164,30 +150,17 @@ Every npm release version must map cleanly across four surfaces:
 | Surface | Required state |
 | --- | --- |
 | `package.json` | `version` equals the release workflow `version` input. |
-| npm registry | `@bitkyc08/opencodex@<version>` is absent, or its integrity exactly matches the retained archive and the requested dist-tag already maps to it. |
-| Git tag | `v<version>` is absent, or it already resolves to the exact release commit. |
-| GitHub Release | `v<version>` is absent, or its tag, title, prerelease flag, notes, and existing asset names are compatible with exact recovery. Its final inventory is the seven archive-bound native assets. |
+| npm registry | `@bitkyc08/opencodex@<version>` does not exist before publish, then exists after publish with the requested dist-tag. |
+| Git tag | `v<version>` does not exist before publish, then points at the exact release commit. |
+| GitHub Release | `v<version>` does not exist before publish, then is created from the exact release commit. |
 
-The workflow classifies public state only after it has retained the candidate archive. npm identity
-is exact only when registry integrity and dist-tag both match. A same-SHA tag is reusable. GitHub
-Release presence is only a candidate until generated title, prerelease flag, and notes are available;
-the final exact classification happens immediately before create or repair. Any identity mismatch or
-unexpected asset name fails before mutation.
+The release must fail before `npm publish` if npm, the Git tag, or the GitHub Release already has the
+requested version. This prevents partial releases where npm is published but GitHub Release creation
+fails afterward.
 
-Exact-integrity reruns recover from interruptions after npm publish, tag push, empty-draft creation,
-or a partial asset upload. Creation, each asset write, and publication are separate npm-guarded
-mutations. A mismatched draft asset is deleted by exact asset ID, npm identity is checked again, and
-the replacement is uploaded without `--clobber`; missing assets are uploaded individually. The
-reconciler re-verifies all seven remote bytes against the retained archive, then explicitly publishes
-the complete draft with `gh release edit --draft=false`.
-An already published Release is verification-only and is never edited or uploaded to. Already exact
-mutations are skipped. This recovery path is deliberately narrow: it never moves a conflicting tag,
-republishes different npm bytes, accepts changed release metadata, or removes an unexpected remote
-asset.
-
-Do not force-move public version tags. If release metadata is inconsistent with the retained archive,
-exact commit, requested channel, generated notes, or seven-asset inventory, treat the version as
-consumed and publish the next unused patch version instead.
+Do not force-move public version tags by default. If release metadata is already inconsistent, treat
+the version as consumed and publish the next unused patch version instead. Only rewrite a public tag
+after an explicit human decision that the public history rewrite is acceptable.
 
 Manual preflight checks when debugging a release:
 
@@ -197,9 +170,9 @@ git ls-remote origin refs/tags/v<version>
 gh release view v<version>
 ```
 
-An existing artifact is recoverable only when the workflow's exact-integrity classifier accepts every
-identity above. Otherwise stop before publishing and choose the next unused patch version through
-`scripts/release.ts`.
+If any of these commands reports an existing artifact for the requested version, stop before
+publishing. For a non-destructive recovery, choose the next unused patch version and release that
+version through `scripts/release.ts`.
 
 ## Cross-platform CI
 
@@ -212,25 +185,24 @@ bun x tsc --noEmit
 bun test --isolate tests
 bun run privacy:scan
 bun build scripts/release.ts --target=bun --outdir=.tmp/ci-release-script-check
-cd gui && bun install --frozen-lockfile && bun run build
+cd gui && bun install --frozen-lockfile && bun run lint && bun run build
 bun run src/cli/index.ts help
 ```
 
-and the Node-only global-install smoke path. It verifies and installs the same archive that
-release validation inspected, disables lifecycle scripts, poisons Bun compatibility
-execution, and then runs the installed launcher:
+and the Node-only global-install smoke path:
 
 ```bash
+npm install
+npm run build:gui
 npm pack --json > pack.json
-npm run verify:native-package
-npm run verify:native-install
+npm install -g ./bitkyc08-opencodex-*.tgz
+ocx help
 ```
 
 The CI intentionally does not build docs, run coverage, or perform remote Ubuntu/RDP smoke tests.
 Those stay outside the default gate until a concrete regression justifies the extra runtime.
 
 The Release workflow remains manual and publish-focused. Before any dry-run or publish step, it
-checks that the exact release commit (`GITHUB_SHA`) already has successful Cross-platform CI and Go
-CI runs. Go CI runs on `dev2-go`, `main`, and `preview`, with pinned Bun 1.3.14 in every job for the
-mandatory cross-runtime compatibility test. This keeps release runs short and makes release a
-deployment of a verified commit rather than a second CI pipeline.
+checks that the exact release commit (`GITHUB_SHA`) already has a successful Cross-platform CI run.
+This keeps release runs short and makes release a deployment of a verified commit rather than a
+second CI pipeline.

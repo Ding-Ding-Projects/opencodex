@@ -360,8 +360,8 @@ describe("voice varies, facts do not", () => {
     },
     {
       key: "dash.shadowCallWarning",
-      en: [/gpt-5\.4-mini/, /replace/i],
-      yue: [/gpt-5\.4-mini/, /換/],
+      en: [/\{models\}/, /replace/i],
+      yue: [/\{models\}/, /換/],
     },
     {
       key: "pool.experimentalWarning",

@@ -176,6 +176,13 @@ function normalizeUsageValue(usage: OcxUsage | undefined): OcxUsage | undefined 
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    // Absolute active-context checkpoint (types.ts). Stateful providers such as Kiro report
+    // per-attempt usage only, so this field is the ONLY carrier of the cumulative context
+    // figure once the log records raw adapter usage instead of re-parsing the bridged wire
+    // (usageFromBridge, request-log.ts). Omitting it here silently dropped Kiro's context
+    // growth from every persisted row. It is deliberately NOT folded into totalTokens:
+    // a checkpoint is not a per-request total and must never be summed across requests.
+    ...(optionalCounter(usage.contextTotalTokens) !== undefined ? { contextTotalTokens: optionalCounter(usage.contextTotalTokens) } : {}),
     ...(optionalCounter(usage.totalTokens) !== undefined ? { totalTokens: optionalCounter(usage.totalTokens) } : {}),
     ...(optionalCounter(usage.cachedInputTokens) !== undefined ? { cachedInputTokens: optionalCounter(usage.cachedInputTokens) } : {}),
     ...(optionalCounter(usage.cacheReadInputTokens) !== undefined ? { cacheReadInputTokens: optionalCounter(usage.cacheReadInputTokens) } : {}),
@@ -243,6 +250,7 @@ function normalizeAttemptUsage(raw: unknown): OcxUsage | null {
   if (!isNonNegativeFiniteNumber(usage.inputTokens)
     || !isNonNegativeFiniteNumber(usage.outputTokens)) return null;
   for (const key of [
+    "contextTotalTokens",
     "totalTokens",
     "cachedInputTokens",
     "cacheReadInputTokens",

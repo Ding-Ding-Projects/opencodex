@@ -140,7 +140,7 @@ export function barWidth(percent: number): number {
   return Math.max(4, Math.round(clamped));
 }
 
-export default function QuotaBars({ quota, plan, threshold, t, className, layout = "compact" }: {
+export default function QuotaBars({ quota, plan, threshold, t, className, layout = "compact", pending = false }: {
   quota: AccountQuota | null;
   plan?: string | null;
   threshold: number;
@@ -148,13 +148,18 @@ export default function QuotaBars({ quota, plan, threshold, t, className, layout
   className?: string;
   /** compact = classic one-line rows; stacked = overview cards with clear reset copy */
   layout?: "compact" | "stacked";
+  /** Dims stacked rows while a background refresh is in flight. No effect in compact layout. */
+  pending?: boolean;
 }) {
   const { locale } = useI18n();
   const rows = buildQuotaRows(quota, plan, t);
   if (rows.length === 0) return null;
   if (layout === "stacked") {
     return (
-      <div className={`quota-stacked${className ? ` ${className}` : ""}`}>
+      <div
+        className={`quota-stacked${pending ? " quota-stacked--pending" : ""}${className ? ` ${className}` : ""}`}
+        aria-busy={pending || undefined}
+      >
         {rows.map(row => (
           <StackedQuotaRow key={row.limitLabel} row={row} threshold={threshold} t={t} locale={locale} />
         ))}

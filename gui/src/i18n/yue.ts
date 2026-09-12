@@ -243,15 +243,15 @@ export const yue: Partial<Record<TKey, string>> = {
   "dash.visionSidecar": "視覺 sidecar",
   "dash.visionSidecarHint": "揀幫淨係食文字嘅路由模型描述圖片嗰陣用嘅 backend 同模型。",
   "dash.shadowCallIntercept": "Shadow Call 攔截",
-  "dash.shadowCallInterceptHint": "攔截 Codex App 喺背景行嘅 gpt-5.4-mini 呼叫（生成標題、commit message），改為送去你揀嘅模型。Effort 固定係 low。",
-  "dash.shadowCallWarning": "⚠ 一開咗，所有 gpt-5.4-mini 請求都會換成你揀嘅模型。",
+  "dash.shadowCallInterceptHint": "攔截 Codex App 喺背景行嘅助手模型呼叫（{models}），用嚟生成標題同 commit message，改為送去你揀嘅模型。Effort 固定係 low。",
+  "dash.shadowCallWarning": "⚠ 一開咗，所有去 {models} 嘅請求都會換成你揀嘅模型。",
   "dash.shadowCallOriginal": "原本",
   "dash.shadowCallModel": "替換模型",
-  "dash.shadowCallTooltip": "Codex App 喺背景用 gpt-5.4-mini 嚟生成對話標題、生成 commit message 同編排 skill。開咗呢個就會將嗰啲呼叫改送去你揀嘅模型。",
+  "dash.shadowCallTooltip": "Codex App 喺背景用助手模型嚟生成對話標題、生成 commit message 同編排 skill。呢個助手模型喺唔同版本嘅 client 會變，所以 opencodex 攔截晒呢一堆模型：{models}。開咗呢個就會將嗰啲呼叫改送去你揀嘅模型。",
 
   // ---- models ----
   "models.shadowCallIntercept": "Shadow Call 攔截",
-  "models.shadowCallInterceptHint": "攔截 Codex App 喺背景行嘅 gpt-5.4-mini 呼叫（標題、commit message），改為送去你揀嘅模型。",
+  "models.shadowCallInterceptHint": "攔截 Codex App 喺背景行嘅助手模型呼叫（{models}），即標題同 commit message嗰啲，改為送去你揀嘅模型。",
 
   // ---- dashboard ----
   "dash.sidecarBackend": "Backend",
@@ -448,7 +448,7 @@ export const yue: Partial<Record<TKey, string>> = {
   "models.contextCapped": "350k 上限",
   "models.contextCapLabel": "Context 上限",
   "models.v2Label": "子代理",
-  "models.shadowCallOriginal": "⚠ 5.4-mini →",
+  "models.shadowCallOriginal": "⚠ {models} →",
   "models.v2DocsLink": "咩係 v1／v2？",
   "models.v2Mode_v1": "v1",
   "models.v2Mode_default": "base",
@@ -3890,4 +3890,77 @@ export const yue: Partial<Record<TKey, string>> = {
   "ollamaChat.turnState.done": "answer 完",
   "ollamaChat.turnState.stopped": "停咗",
   "ollamaChat.turnState.failed": "失敗",
+
+  // ---- sidebar (GitHub star + update badge) ----
+  "sidebar.star": "喺 GitHub 度 Star",
+  "sidebar.starred": "已經 Star 咗喺 GitHub",
+  "sidebar.starUnauthenticated": "打開 GitHub 去 Star（gh CLI 未登入）",
+  "sidebar.starFailed": "用 gh Star 唔到。改為打開 GitHub。",
+  "sidebar.updateAvailable": "有更新：{version}",
+  "sidebar.checkUpdate": "檢查更新",
+
+  // ---- startup safety ----
+  "startup.backToDashboard": "返去 Dashboard",
+  "startup.repair": "修復",
+  "startup.repairing": "修復緊…",
+  "startup.serviceRepaired": "背景服務修復成功。",
+  "startup.shimRepaired": "Codex launcher shim 修復成功。",
+
+  // ---- dashboard (memory + sub-agent delegation + model sync) ----
+  "dash.mem.jsHeapArena": "arena {total}",
+  "dash.mem.pressure": "對比警告門檻",
+  "dash.mem.pressureOf": "門檻嘅 {pct}%",
+  "dash.mem.pressureUnknown": "冇回報門檻",
+  "dash.injectionManage": "打開設定",
+  "dash.syncModelsHint": "用你已經連接嘅供應商，重寫 Codex 嘅模型 catalog。",
+  "dash.syncRun": "而家 Sync",
+
+  // ---- subagents ----
+  "sub.settings": "設定",
+  "sub.sections": "子代理分頁",
+  "sub.delegation.model": "第一個攞嚟用嘅模型",
+  "sub.delegation.modelHint": "Codex 委派工作嗰陣，第一個攞嚟用嘅模型。上面精選嘅係佢可以叫嘅清單；呢個就係佢第一個叫嘅。",
+
+  // ---- logs ----
+  "logs.badge.grok": "Grok",
+  "logs.tokens.contextTotal": "使用緊嘅 context",
+
+  // ---- debug ----
+  "debug.loadFailed": "載入唔到 debug 設定。",
+
+  // ---- usage ----
+
+  // ---- storage ----
+  "storage.rescanned": "掃描完成。",
+  "storage.snapshot.lastScan": "上次掃描",
+  "storage.snapshot.scanning": "掃描緊…",
+  "storage.snapshot.unavailable": "重未掃描過。",
+  "storage.cleanup.noArchives": "冇已封存 session 要清理。",
+  "storage.policy.trigger": "觸發",
+  "storage.policy.thresholdInc": "加大門檻",
+  "storage.policy.thresholdDec": "減細門檻",
+  "storage.policy.percentInc": "加大百分比",
+  "storage.policy.percentDec": "減細百分比",
+  "storage.policy.reduceInc": "加大縮減目標",
+  "storage.policy.reduceDec": "減細縮減目標",
+
+  // ---- provider workspace (rate limits) ----
+  "pws.dashboard.noRateLimits": "重未有 rate-limit 資料",
+
+  // ---- Codex auth ----
+  "codexAuth.autoSwitchThresholdInc": "加大切換門檻",
+  "codexAuth.autoSwitchThresholdDec": "減細切換門檻",
+
+  // ---- account pool ----
+  "accountPool.stickyLimitInc": "加大輪換前次數",
+  "accountPool.stickyLimitDec": "減細輪換前次數",
+
+  // ---- API keys ----
+  "api.activeKeysLoading": "生效中嘅 key",
+  "api.copyUrlHint": "撳一下複製 URL",
+  "api.urlCopied": "URL 已複製",
+  "api.copyExampleHint": "撳一下複製例子",
+  "api.exampleCopied": "例子已複製",
+
+  // ---- Claude ----
 };

@@ -71,6 +71,7 @@ async function mountSettings(
               : [{ value: String(state.maxContextTokens), label: String(state.maxContextTokens) }]),
           ]}
           autoCompactOptions={[{ value: "", label: "Default" }]}
+          availableModels={state.available ?? []}
           onStateChange={setState}
         />
       </TestLanguageProvider>

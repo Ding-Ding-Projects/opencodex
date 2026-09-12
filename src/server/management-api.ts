@@ -79,6 +79,7 @@ import { handleConverterQueueRoutes } from "./management/converter-queue-routes"
 import { handleModelRuntimeRoutes } from "./management/model-runtime-routes";
 import { handleModelRuntimeChatRoutes } from "./management/model-runtime-chat-routes";
 import { handleDownloadRoutes } from "./management/download-routes";
+import { handleSidebarRoutes } from "./management/sidebar-routes";
 import type { ManagementContext } from "./management/context";
 export type { ManagementApiDeps } from "./management/context";
 import { fetchAllModels } from "./management/shared";
@@ -207,7 +208,8 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
     ??     (await handleConverterQueueRoutes(ctx))
     ??     (await handleModelRuntimeRoutes(ctx))
     ??     (await handleModelRuntimeChatRoutes(ctx))
-    ??     (await handleDownloadRoutes(ctx));
+    ??     (await handleDownloadRoutes(ctx))
+    ??     (await handleSidebarRoutes(ctx));
   if (routed) return routed;
 
   if (url.pathname === "/api/stop" && req.method === "POST") {
