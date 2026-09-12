@@ -2586,3 +2586,52 @@ describe("workflow package scripts", () => {
     expect(scripts["build:publish"]).toContain("build:gui");
   });
 });
+
+describe("workflow history depth", () => {
+  /**
+   * The defect this pins: `auto-release.yml` and `super-express-release.yml` both build release
+   * notes with `scripts/count-lines.ts`, whose line attribution walks `git blame` over the whole
+   * history and throws "the repository is shallow" rather than publishing a partial count.
+   * Neither checkout asked for history, so both failed on every run — and failed late, after the
+   * Windows installer had already been built and verified unsigned, which is the expensive part.
+   * `release.yml` had `fetch-depth: 0` all along, so the requirement was known; it simply was not
+   * carried to the two workflows that copied the notes step.
+   *
+   * Checked against the parsed document, not the file text: a comment mentioning the script, or a
+   * `fetch-depth: 0` sitting on some unrelated checkout, would both fool a grep.
+   */
+  test("a workflow that counts attributed lines checks out complete history", async () => {
+    const files = [
+      "auto-release.yml",
+      "release.yml",
+      "super-express-release.yml",
+      "ci.yml",
+      "go-ci.yml",
+      "gui-preview.yml",
+      "react-doctor.yml",
+      "service-lifecycle.yml",
+      "desktop-installer.yml",
+      "cheap-lfs-cloud-compression.yml",
+    ];
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      const parsed = Bun.YAML.parse(await readText(`.github/workflows/${file}`)) as WorkflowDocument;
+      const steps = Object.values(parsed.jobs ?? {}).flatMap(job => job.steps ?? []);
+      const needsHistory = steps.some(step => (step.run ?? "").includes("scripts/count-lines.ts"));
+      if (!needsHistory) continue;
+
+      const checkouts = steps.filter(step => (step.uses ?? "").startsWith("actions/checkout@"));
+      if (checkouts.length === 0) {
+        offenders.push(`${file}: counts lines but never checks the repository out`);
+        continue;
+      }
+      for (const checkout of checkouts) {
+        const depth = checkout.with?.["fetch-depth"];
+        if (depth !== 0) offenders.push(`${file}: ${checkout.name ?? "checkout"} has fetch-depth ${String(depth)}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});

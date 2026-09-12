@@ -62,6 +62,12 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ inputs.ref || github.sha }}
+          # The release notes below are produced by `scripts/count-lines.ts`, whose line
+          # attribution walks `git blame` over the whole history and refuses outright on a
+          # shallow clone rather than publishing a partial count. Without this the release
+          # step failed on every run, after the installer had already been built and
+          # verified. `release.yml` has carried `fetch-depth: 0` for the same reason.
+          fetch-depth: 0
 
       # One resolved SHA for every step below. A branch name is not a commit,
       # and the release target, the codename and the notes must all name the

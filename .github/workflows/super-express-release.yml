@@ -31,6 +31,10 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ inputs.ref || github.sha }}
+          # This workflow's notes also run `scripts/count-lines.ts`, whose line attribution
+          # requires complete history and refuses on a shallow clone. Same reason as
+          # `auto-release.yml` and `release.yml`.
+          fetch-depth: 0
 
       - name: Resolve the commit being released
         shell: bash
