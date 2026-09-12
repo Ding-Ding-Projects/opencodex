@@ -35,8 +35,13 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SRC_DIR = new URL("../src", import.meta.url).pathname;
+// `fileURLToPath`, never `.pathname`: on Windows a file URL's pathname keeps the
+// leading slash in front of the drive letter (`/D:/a/...`), which `readdirSync`
+// cannot open, so this module threw at import time and took the whole file's
+// tests down with it on the Windows runner while staying green on Linux.
+const SRC_DIR = fileURLToPath(new URL("../src", import.meta.url));
 
 function walkCss(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {

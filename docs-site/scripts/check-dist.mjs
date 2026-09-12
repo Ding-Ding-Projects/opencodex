@@ -38,8 +38,13 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DIST = new URL("../dist/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+// `fileURLToPath` rather than `.pathname` plus a drive-letter regex: it strips the
+// same leading slash on Windows and also decodes the percent-escapes a checkout
+// path with a space or a non-ASCII character puts in the URL, which the regex left
+// in place and `readdir` then failed to open.
+const DIST = fileURLToPath(new URL("../dist/", import.meta.url));
 
 /** Normalised exactly as `astro.config.mjs` normalises it: "" or "/prefix". */
 const normalizeBase = (value) =>
