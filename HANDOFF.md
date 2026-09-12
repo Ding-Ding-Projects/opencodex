@@ -79,15 +79,30 @@ its final run finish, or the tip has no exact-commit evidence.
 
 With the embedded bundle current, `go build ./...` and `go vet ./...` are clean here, so the Go
 job reached its own test step for the first time, on all three runners. On Linux it reported one
-failure, the Grok writer dropping each model's reasoning ladder, and that one is fixed here: the
-registry already knew the ladder and three call sites built the inject model without it. The rest
-are separate and older, each a real differential with a named test and none of them a flake: the
-native port prints a help page where the proxy prints nothing for an unknown command, its update
-dry run names executables differently on Windows, a storage digest disagrees with its oracle on
-macOS, and two Windows cases fail on a file mode and a locked file. The Go suite still cannot be
-run to completion on this machine: two of its tests need a `codex` executable that is not
-installed, and one runs past five minutes. Two packages also fail here for reasons this work did
-not cause, an update-policy case and a usage-cache case, both confirmed against the stashed tree.
+failure in the differential package, the Grok writer dropping each model's reasoning ladder, and
+that one is fixed here: the registry already knew the ladder and three call sites built the inject
+model without it.
+
+**Correction, because the commit that made that fix overstates it.** Its message says the fix
+closes the only failure the job reports on Linux. That came from reading the end of the log, which
+shows the last failing package and not the run. The Linux job fails five tests, and the other four
+are untouched by this work:
+
+| Test | Why |
+| --- | --- |
+| `TestRootHelpConvergesOnOracleBytes` | the port implements 50 of the 69 help lines the proxy prints |
+| `TestBuiltBinarySyncShimRestoreBackRoundTrip` | needs a `codex` executable the runner does not have |
+| `TestRunSyncProductionPathsReportHomeAndPreserveExternalProviderEarly` | the same missing executable |
+| `TestUpdateRejectsPolicyViolationsBeforeDownload` | predates this work, confirmed against the stashed tree |
+| `TestUsageSummaryCacheInvalidationAndSurfaceKeys` | the same |
+
+The commit message cannot be corrected without rewriting published history, so the correction lives
+here. The other runners add their own, each a real differential with a named test and none of them
+a flake: the native port prints a help page where the proxy prints nothing for an unknown command,
+its update dry run names executables differently on Windows, a storage digest disagrees with its
+oracle on macOS, and two Windows cases fail on a file mode and a locked file. The Go suite still
+cannot be run to completion on this machine either: the same two tests need the missing executable,
+and one runs past five minutes.
 
 The `windows-schtasks` job has been red since 2026-09-04, well before this work, and it is
 Windows-only, so nothing here can reproduce or root-cause it. It is named rather than left to look
