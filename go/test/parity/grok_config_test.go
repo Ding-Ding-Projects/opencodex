@@ -18,6 +18,11 @@ type tsGrokSyncCapture struct {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		ContextWindow int    `json:"contextWindow"`
+		// The effort ladder travels with the model on both sides. Capturing it is what
+		// makes this a differential rather than a comparison of two different inputs:
+		// dropping it here fed Go a model with no ladder and then blamed the writer.
+		ReasoningEfforts       []string `json:"reasoningEfforts"`
+		DefaultReasoningEffort string   `json:"defaultReasoningEffort"`
 	} `json:"models"`
 }
 
@@ -76,7 +81,7 @@ process.stdout.write(JSON.stringify({ result, models: captured }));
 	}
 	models := make([]grok.InjectModel, 0, len(captured.Models))
 	for _, model := range captured.Models {
-		models = append(models, grok.InjectModel{ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow})
+		models = append(models, grok.InjectModel{ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow, ReasoningEfforts: model.ReasoningEfforts, DefaultReasoningEffort: model.DefaultReasoningEffort})
 	}
 	result := grok.SyncGrokConfig(context.Background(), 10190, grok.Options{GrokHome: goHome, Hostname: "127.0.0.1"}, grok.SyncDeps{
 		FetchModels: func(context.Context) ([]grok.InjectModel, error) { return models, nil },

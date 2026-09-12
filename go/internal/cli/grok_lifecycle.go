@@ -80,7 +80,7 @@ func visibleGrokCatalogModels(models []types.ModelEntry, cfg config.Config) []ty
 func visibleGrokModels(models []types.ModelEntry) []grok.InjectModel {
 	visible := make([]grok.InjectModel, 0, len(models))
 	for _, model := range models {
-		visible = append(visible, grok.InjectModel{ID: model.ID, ContextWindow: model.ContextWindow})
+		visible = append(visible, grok.InjectModel{ID: model.ID, ContextWindow: model.ContextWindow, ReasoningEfforts: model.ReasoningEfforts})
 	}
 	return visible
 }

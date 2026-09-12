@@ -28,6 +28,14 @@ type InjectModel struct {
 	ID            string
 	Name          string
 	ContextWindow int
+	// ReasoningEfforts is the model's effort ladder in catalog order. An empty ladder
+	// omits the effort scalars and the picker tables entirely, which is what a model
+	// without reasoning levels should produce.
+	ReasoningEfforts []string
+	// DefaultReasoningEffort is the configured default. It is honoured only when it is
+	// on the sanitized ladder; otherwise the same fallback the model advertisement uses
+	// picks one.
+	DefaultReasoningEffort string
 }
 
 type Options struct {
@@ -98,6 +106,28 @@ func BuildGrokManagedBlock(port int, models []InjectModel, hostname string, rese
 		)
 		if model.ContextWindow > 0 {
 			lines = append(lines, fmt.Sprintf("context_window = %d", model.ContextWindow))
+		}
+		// The array-of-tables MUST follow every parent keyval, the inline extra_headers
+		// included, or the tables bind to the wrong parent. Keep every picker option inside
+		// Grok's accepted CLI vocabulary; ultra is Codex-only and is dropped above.
+		efforts := sanitizeGrokReasoningEfforts(model.ReasoningEfforts)
+		if defaultEffort := grokDefaultReasoningEffort(efforts, model.DefaultReasoningEffort); defaultEffort != "" {
+			lines = append(lines,
+				"supports_reasoning_effort = true",
+				"reasoning_effort = "+tomlString(defaultEffort),
+			)
+			for _, effort := range efforts {
+				option := grokReasoningEffortOption(effort, effort == defaultEffort)
+				lines = append(lines,
+					"",
+					"[[model."+alias+".reasoning_efforts]]",
+					"id = "+tomlString(option.id),
+					"value = "+tomlString(option.value),
+					"label = "+tomlString(option.label),
+					"description = "+tomlString(option.description),
+					fmt.Sprintf("default = %t", option.isDefault),
+				)
+			}
 		}
 	}
 	lines = append(lines, EndMarker)

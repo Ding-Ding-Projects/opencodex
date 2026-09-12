@@ -20,6 +20,10 @@ type grokCandidateModel struct {
 	ID            string `json:"id"`
 	ContextWindow int    `json:"contextWindow,omitempty"`
 	Native        bool   `json:"native"`
+	// Carried through to the managed fence so the generated `[model.*]` table keeps the
+	// model's effort picker. The registry already knows the ladder; dropping it here was
+	// what left the native port writing a Grok config with no reasoning menu at all.
+	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
 }
 
 type grokStatusModel struct {
@@ -115,7 +119,7 @@ func (a *API) grokCandidates() []grokCandidateModel {
 	models := codex.FilterVisibleRuntimeModels(a.registry.ListModels(), cfg)
 	result := make([]grokCandidateModel, 0, len(models))
 	for _, model := range models {
-		result = append(result, grokCandidateModel{ID: model.ID, ContextWindow: model.ContextWindow, Native: model.Provider == "openai" && !strings.Contains(model.ID, "/")})
+		result = append(result, grokCandidateModel{ID: model.ID, ContextWindow: model.ContextWindow, Native: model.Provider == "openai" && !strings.Contains(model.ID, "/"), ReasoningEfforts: model.ReasoningEfforts})
 	}
 	return result
 }
@@ -137,7 +141,7 @@ func (a *API) applyGrok(w http.ResponseWriter, r *http.Request) {
 		candidates := a.grokCandidates()
 		models := make([]grok.InjectModel, 0, len(candidates))
 		for _, model := range candidates {
-			models = append(models, grok.InjectModel{ID: model.ID, ContextWindow: model.ContextWindow})
+			models = append(models, grok.InjectModel{ID: model.ID, ContextWindow: model.ContextWindow, ReasoningEfforts: model.ReasoningEfforts})
 		}
 		return models, nil
 	}})
