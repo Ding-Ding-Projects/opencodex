@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getConfigDir, loadConfig, readPid, readRuntimePort } from "../config";
 import { resolveBunCommand } from "../lib/bun-runtime";
+import { preferredDurableRuntime } from "../lib/runtime-entry";
 import { npmInvocation } from "./npm-invocation.mjs";
 import { checkNpmCacheOwnership, formatNpmCacheOwnershipFailure } from "./npm-cache-preflight.mjs";
 import {
@@ -31,11 +32,23 @@ export const PKG = "@bitkyc08/opencodex";
 const HERE = dirname(fileURLToPath(import.meta.url)); // .../opencodex/src/update
 const PACKAGE_ROOT = join(HERE, "..", "..");
 
-function postInstallRuntimeEntry(): { runtime: string; cli: string } {
+export function postInstallRuntimeEntry(): { runtime: string; cli: string } {
   return preferredDurableRuntime(PACKAGE_ROOT, {
     runtime: process.execPath,
     cli: process.argv[1],
   });
+}
+
+/**
+ * The durable post-install runtime pair, or null when the package carries no verified native
+ * binary and the resolver fell back to the current process. Restart paths use this so a
+ * durable install restarts through its recorded Node executable while every other install
+ * keeps the runtime it already runs on.
+ */
+export function postInstallDurableRuntime(): { runtime: string; cli: string } | null {
+  const fallback = { runtime: process.execPath, cli: process.argv[1] };
+  const entry = preferredDurableRuntime(PACKAGE_ROOT, fallback);
+  return entry === fallback ? null : entry;
 }
 
 export type Installer = "bun" | "npm" | "source" | "desktop";

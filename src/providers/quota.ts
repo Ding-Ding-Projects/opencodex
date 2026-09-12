@@ -2,8 +2,14 @@ import { fetchMainAccountInfo, listCodexAuthAccounts } from "../codex/auth-api";
 import { MAIN_CODEX_ACCOUNT_ID } from "../codex/main-account";
 import { resolveEnvValue } from "../config";
 import { resolveProviderCredential } from "../lib/provider-credentials";
-import { getValidAccessToken, getValidAccessTokenForAccount } from "../oauth";
-import { getAccountCredential, getAccountSet, getCredential } from "../oauth/store";
+import {
+  assertOAuthAccessSnapshotCurrent,
+  getValidAccessToken,
+  getValidAccessTokenForAccount,
+  getValidAccessTokenSnapshot,
+  type OAuthAccessSnapshot,
+} from "../oauth";
+import { credentialGeneration, getAccountCredential, getAccountSet, getCredential } from "../oauth/store";
 import { antigravityUserAgent } from "../adapters/client-fingerprint";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "./registry";
 import type { OcxConfig, OcxProviderConfig } from "../types";

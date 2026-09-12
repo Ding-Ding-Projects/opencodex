@@ -747,7 +747,7 @@ describe("GUI update execution decisions", () => {
   });
 
   test("service reinstall failure falls back to a direct proxy start", async () => {
-    const spawned: Array<{ port: number; entry: { runtime: string; cli: string } }> = [];
+    const spawned: Array<{ port: number; launcher: string | undefined; runtime: string | undefined }> = [];
     const job: UpdateJobState = {
       id: "svc-fallback",
       status: "restarting",
@@ -767,14 +767,16 @@ describe("GUI update execution decisions", () => {
       runtimeEntryFn: () => ({ runtime: "/stable/node", cli: "/pkg/bin/ocx.mjs" }),
       waitForPort: async () => true,
       runService: () => ({ status: 1 }),
-      spawnStart: (_job, _installer, port, entry) => {
-        spawned.push({ port: port ?? 0, entry });
+      spawnStart: (_job, _installer, port, launcher, runtime) => {
+        spawned.push({ port: port ?? 0, launcher, runtime });
       },
     });
-    // The fallback must fire: direct proxy start instead of throwing.
+    // The fallback must fire: direct proxy start instead of throwing, on the durable runtime
+    // and through the package launcher (the supervised npm launcher, never the raw CLI).
     expect(spawned).toEqual([{
       port: 19999,
-      entry: { runtime: "/stable/node", cli: "/pkg/bin/ocx.mjs" },
+      launcher: expect.stringMatching(/[\\/]bin[\\/]ocx\.mjs$/),
+      runtime: "/stable/node",
     }]);
   });
 
@@ -1565,9 +1567,12 @@ describe("GUI update execution decisions", () => {
 
     expect(ok).toBe(true);
     expect(serviceCalls).toBe(1);
+    // The durable runtime runs the reinstall; the launcher is the package's supervised
+    // npm launcher rather than the durable pair's recorded cli, so a hidden recovery
+    // launcher can still be substituted without changing which executable runs it.
     expect(serviceCommands).toEqual([{
       bin: "/stable/node",
-      args: ["/pkg/bin/ocx.mjs", "service", "install"],
+      args: [expect.stringMatching(/[\\/]bin[\\/]ocx\.mjs$/), "service", "install"],
     }]);
     expect(readUpdateJob(job.id)?.log.some(line =>
       line.includes("Proxy restart confirmed") && line.includes("pid changed"),

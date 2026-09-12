@@ -10,6 +10,7 @@ import {
 import { parseRequest } from "../../responses/parser";
 import { buildCompactV1Output, COMPACT_PROMPT, decodeCompactionSummary, extractCompactUserMessages } from "../../responses/compaction";
 import { FORWARD_HEADERS, sanitizeReasoningInputContent } from "../../adapters/openai-responses";
+import type { ProviderAdapter } from "../../adapters/base";
 import { expandPreviousResponseInput, previousResponseProviderState, rememberResponseState } from "../../responses/state";
 import { routeModel, type RouteResult } from "../../router";
 import { warnRetainedModel404Once } from "../../codex/catalog/provider-fetch";

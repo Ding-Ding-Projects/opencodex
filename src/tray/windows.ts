@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandUserPath, getConfigDir } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
+import { preferredDurableRuntime } from "../lib/runtime-entry";
 import { launchTrayHostWithCrashRetry } from "../lib/tray-host-supervisor.mjs";
 import { hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
@@ -14,6 +15,11 @@ const RUN_PARENT_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion";
 const TRAY_STATE_VERSION = 1;
 const TRAY_CRASH_STATE_VERSION = 1;
 const TRAY_CRASH_EVIDENCE_MAX_ENTRIES = 8;
+// One well-formed record is a few dozen bytes. A record carrying kilobytes of
+// anything is not evidence this module ever wrote; it is dropped whole rather
+// than trimmed, so a hostile writer cannot smuggle a large payload through the
+// known fields either.
+const TRAY_CRASH_ENTRY_MAX_BYTES = 1024;
 const FOREIGN_RUN_VALUE = "<foreign-or-unreadable-registry-value>";
 const TRAY_ICON_FILES = [
   "opencodex-tray-online.ico",
@@ -365,6 +371,11 @@ function trayCrashPath(): string {
 
 function parseTrayCrashEntry(value: unknown): TrayCrashEvidenceEntry | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  try {
+    if (Buffer.byteLength(JSON.stringify(value), "utf8") > TRAY_CRASH_ENTRY_MAX_BYTES) return null;
+  } catch {
+    return null;
+  }
   const entry = value as Record<string, unknown>;
   if (!Number.isSafeInteger(entry.at) || (entry.at as number) <= 0) return null;
   if (typeof entry.source !== "string" || entry.source.length === 0 || entry.source.length > 64) return null;
@@ -433,7 +444,8 @@ export function latestTrayCrash(entries = readTrayCrashEvidence()): TrayCrashEvi
 }
 
 export function describeTrayCrash(crash: TrayCrashEvidenceEntry, now = Date.now()): string {
-  const ageMinutes = Math.max(0, Math.round((now - crash.at) / 60_000));
+  // Whole minutes elapsed: a crash 30 seconds ago is "<1m ago", not rounded up to a minute.
+  const ageMinutes = Math.max(0, Math.floor((now - crash.at) / 60_000));
   const ageText = ageMinutes < 1 ? "<1m ago" : `${ageMinutes}m ago`;
   if (crash.source === "tray-dispatch") {
     return `menu action ${crash.command ?? "(unknown)"} failed with exit code ${crash.exitCode ?? "unknown"} ${ageText}`;

@@ -262,6 +262,32 @@ export function getOAuthAccountHealthSnapshot(
   return { cooldownUntil: entry.cooldownUntil, cooldownSource: entry.cooldownSource };
 }
 
+/**
+ * Record a cooldown for one pooled account. A parseable Retry-After wins over the default
+ * window; a positive `durationOverrideMs` (terminal provider failures) wins over both. An
+ * existing longer cooldown is never shortened, and the account's session affinity is cleared so
+ * the next request on that session can move to a healthy account.
+ */
+export function recordOAuthAccountCooldown(
+  provider: string,
+  accountId: string,
+  retryAfterHeader: string | null | undefined,
+  now = Date.now(),
+  durationOverrideMs?: number,
+): void {
+  const parsedRetry = parseRetryAfterMs(retryAfterHeader, now);
+  const cooldownMs = typeof durationOverrideMs === "number" && Number.isFinite(durationOverrideMs) && durationOverrideMs > 0
+    ? durationOverrideMs
+    : parsedRetry ?? DEFAULT_COOLDOWN_MS;
+  const map = healthMap(provider);
+  const current = map.get(accountId);
+  const until = now + cooldownMs;
+  if (!current || current.cooldownUntil < until) {
+    map.set(accountId, { cooldownUntil: until, cooldownSource: parsedRetry ? "retry-after" : "default" });
+  }
+  clearOAuthSessionAffinityForAccount(provider, accountId);
+}
+
 export function clearOAuthAccountCooldown(provider: string, accountId: string): boolean {
   return healthMap(provider).delete(accountId);
 }

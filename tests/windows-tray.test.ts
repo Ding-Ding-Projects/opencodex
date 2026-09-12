@@ -201,7 +201,12 @@ describe("Windows tray packaging and command safety", () => {
     const source = readFileSync(join(import.meta.dir, "..", "src", "tray", "windows-tray.ps1"), "utf8");
     expect(typescript).not.toContain("\u0000");
     expect(typescript).toContain("OCX_TRAY_ENTRY_B64");
-    expect(typescript).toContain('detached: true');
+    // The tray host is launched detached through the crash-retry supervisor: the controller
+    // hands the spawn to it, and the supervisor owns the detached, hidden, stderr-piped spawn.
+    const supervisor = readFileSync(join(import.meta.dir, "..", "src", "lib", "tray-host-supervisor.mjs"), "utf8");
+    expect(typescript).toContain("launchTrayHostWithCrashRetry(");
+    expect(supervisor).toContain("detached: true");
+    expect(supervisor).toContain("windowsHide: true");
     expect(source).toContain("System.Threading.Mutex");
     expect(source).toContain("System.Threading.EventWaitHandle");
     expect(source).toContain("GetFullPath");

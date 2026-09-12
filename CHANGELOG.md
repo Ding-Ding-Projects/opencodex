@@ -6,6 +6,10 @@ An `## Unreleased` section, if one is present, is hand-written and carried acros
 
 ## Unreleased
 
+- fix(build): repair the merge residue on `main` that stopped the CLI from loading: `src/config.ts` declared `configMutationDepth` and `withConfigMutationLockSync` twice (one lock implementation now serves both the config writers and the reset-credit ledger), five modules lost the imports for symbols their own files still exported (`credentialGeneration`, the OAuth access-snapshot helpers, `ProviderAdapter`, `preferredDurableRuntime`, `DurableRuntimeEntry`, `postInstallRuntimeEntry`), `recordOAuthAccountCooldown` was called by the Google adapter but no longer exported by the pool, and the tray-host supervisor module had no type declaration; typecheck went from 30 errors to 0
+- fix(update): thread the durable post-install runtime back into service reinstall and direct restarts, so a package that carries its verified native binary restarts on its recorded Node executable instead of whatever `node` is first on PATH; installs without one keep the runtime they already run on
+- fix(tray): drop crash records larger than 1 KiB instead of trusting them, and report a crash younger than a minute as `<1m ago` rather than rounding it up
+- fix(gui): add the three Cantonese strings for the Go runtime memory card (`dash.mem.goHeap`, `dash.mem.goroutines`, `dash.mem.hintGo`) that the locale-coverage guard reported missing
 - fix(docs): point `/troubleshooting` at `troubleshooting/bun-startup-crashes` so the redirect lands on the section's first sidebar entry instead of one article below it
 - fix(cli): route `start`, `dev`, and `dev:proxy` package scripts through the supervised npm launcher so every visible-terminal proxy start gets the one bounded Bun-crash retry instead of dying on the first native panic
 - fix(kiro): accept client parallel_tool_calls permission while retaining the parsed hint and omitting unsupported parallel fields from the CodeWhisperer wire

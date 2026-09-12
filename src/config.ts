@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -2370,9 +2371,9 @@ export function backupInvalidConfig(configPath: string): string | null {
   }
 }
 
-// Shared SQLite path used by durable reset-credit operations. These helpers are intentionally
-// tiny in this compatibility line; the ledger owns its own transaction and never stores secrets.
-let configMutationDepth = 0;
+// Shared SQLite path used by durable reset-credit operations. The ledger owns its own transaction
+// and never stores secrets; it shares the mutation-depth counter of withConfigMutationLockSync
+// above so a nested preparation inside the lock is refused instead of deadlocking on the file.
 function assertNoConfigMutationLinkComponents(target: string): void {
   const absolute = resolve(target);
   const root = resolve(parsePathRoot(absolute));
@@ -2413,11 +2414,7 @@ export function prepareConfigMutationDatabasePathForWrite(): string {
   const dir = getConfigDir();
   assertNoConfigMutationLinkComponents(dir);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const databasePath = join(dir, "config-mutation.sqlite");
+  const databasePath = join(dir, CONFIG_MUTATION_DB_FILENAME);
   assertNoConfigMutationLinkComponents(databasePath);
   return databasePath;
-}
-export function withConfigMutationLockSync<T>(fn: () => T): T {
-  configMutationDepth += 1;
-  try { return fn(); } finally { configMutationDepth -= 1; }
 }

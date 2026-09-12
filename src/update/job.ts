@@ -21,6 +21,7 @@ import {
 import { isProcessAlive, killProxy } from "../lib/process-control";
 import { readProcessIdentity, type ProcessIdentity } from "../lib/process-identity";
 import { resolveBunCommand } from "../lib/bun-runtime";
+import type { DurableRuntimeEntry } from "../lib/runtime-entry";
 import { reclaimListenPort } from "../server/port-reclaim";
 import {
   findLiveProxy,
@@ -40,6 +41,8 @@ import {
   defaultUpdateTag,
   detectInstall,
   latestVersion,
+  postInstallDurableRuntime,
+  postInstallRuntimeEntry,
   updateCommand,
   updateCommandStr,
 } from "./index";
@@ -708,8 +711,9 @@ function spawnDetachedStart(
   installer: Installer,
   port?: number,
   launcher = packageLauncherPath(),
+  runtime?: string,
 ): StartedRecoveryProcess | null {
-  const cmd = restartCommand(false, installer, launcher, port);
+  const cmd = restartCommand(false, installer, launcher, port, undefined, runtime);
   const env = { ...process.env };
   delete env.OCX_SERVICE;
   // Do not persist cmd.display here: a retired npm launcher contains the absolute
@@ -745,7 +749,14 @@ export type FailedUpdateRecovery = "not-needed" | "still-running" | "restarted" 
 /** Test seam: the wait/spawn pair is injectable so the restart path is verifiable. */
 export interface RestartIo {
   waitForPort?: typeof reclaimListenPort;
-  spawnStart?: (job: UpdateJobState, installer: Installer, port?: number, launcher?: string) => RestartStartResult;
+  spawnStart?: (job: UpdateJobState, installer: Installer, port?: number, launcher?: string, runtime?: string) => RestartStartResult;
+  /**
+   * Selects the durable post-install runtime once per restart. Returning the recorded
+   * `{ runtime, cli }` pair makes both the service reinstall and the direct start run on
+   * that executable; the default resolves it from the package root and yields null (keep
+   * the current runtime) when the package carries no verified native binary.
+   */
+  runtimeEntryFn?: () => DurableRuntimeEntry | null;
   serviceInstalledFn?: () => boolean;
   readPidFn?: () => number | null;
   probeProxy?: (port: number, hostname?: string) => Promise<boolean>;
@@ -811,7 +822,10 @@ async function restartAfterUpdate(
     } catch { /* fallback to default service install */ }
   }
   const launcher = captured?.recoveryLauncher ?? packageLauncherPath();
-  const cmd = restartCommand(persistentServiceRestart, job.installer, launcher, port, svcArgs);
+  // A durable install restarts on its recorded Node executable (the pair the native
+  // launcher rebaked at install time); every other install keeps the runtime it runs on.
+  const durableRuntime = (io.runtimeEntryFn ?? postInstallDurableRuntime)()?.runtime;
+  const cmd = restartCommand(persistentServiceRestart, job.installer, launcher, port, svcArgs, durableRuntime);
   const waitFn = io.waitForPort ?? reclaimListenPort;
   const reclaimOpts = {
     timeoutMs: RESTART_PORT_RECLAIM_MS,
@@ -881,7 +895,7 @@ async function restartAfterUpdate(
   }
   if (readPidForRestart("after direct port reclaim").refused) return null;
   return normalizeStartedRecoveryProcess(
-    (io.spawnStart ?? spawnDetachedStart)(job, job.installer, port, launcher),
+    (io.spawnStart ?? spawnDetachedStart)(job, job.installer, port, launcher, durableRuntime),
   );
 }
 
