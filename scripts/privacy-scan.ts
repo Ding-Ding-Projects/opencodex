@@ -37,6 +37,16 @@ const EXCLUDED_PREFIXES = [
   "design/",
   "devlog/",
   "gui/dist/",
+  // Committed, generated copy of `gui/dist/` — the tree `//go:embed`ed into the Go binary.
+  // It is excluded for the same reason `gui/dist/` above is, and the exclusion costs no
+  // coverage: `scripts/embed-gui.ts --check` fails the Go job unless the two are byte-identical,
+  // so every byte here comes from `gui/src/`, which this scan does read. Scanning the built
+  // bundle instead reads minified output, where the bundler has already concatenated literals
+  // that the source deliberately keeps apart — `gui/src/pages/RegexBuilder.tsx` assembles its
+  // demo API-key sample from pieces precisely so no key-shaped literal is written down, and the
+  // bundle then joins them back up. That is a false positive produced by reading a build
+  // product, not a leak, and no amount of tuning the patterns fixes reading the wrong file.
+  "go/internal/server/static/",
   "node_modules/",
   "tests/.tmp-",
 ];
