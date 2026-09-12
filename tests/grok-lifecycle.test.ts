@@ -145,8 +145,11 @@ describe("POST /api/stop teardown", () => {
     expect(handler).toContain("isServiceOwnershipError(err)");
     expect(handler).toContain("}, 409, req, config)");
     // The refusal must return BEFORE the shutdown is scheduled: a refused stop keeps running.
+    // The actual drain now runs inside the shared scheduleDrainAndExit helper (lifecycle.ts),
+    // not inline here, so the ordering check anchors on that call instead of "drainAndShutdown".
     const refusalAt = handler.indexOf("409");
-    const shutdownAt = handler.indexOf("drainAndShutdown");
+    const shutdownAt = handler.indexOf("scheduleDrainAndExit");
+    expect(shutdownAt).toBeGreaterThan(-1);
     expect(refusalAt).toBeLessThan(shutdownAt);
   });
 

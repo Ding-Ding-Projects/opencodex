@@ -171,7 +171,7 @@ export function countLines(revision = "HEAD") {
 
 if (import.meta.main) {
   const { countLinesWithAttribution, formatLineAttributionTable } = await import("./line-attribution");
-  const report = countLinesWithAttribution();
+  const report = await countLinesWithAttribution();
   if (process.argv.includes("--json")) console.log(JSON.stringify(report, null, 2));
   else console.log(formatLineAttributionTable(report));
 }

@@ -19,7 +19,10 @@ import {
 } from "../scripts/line-attribution";
 
 const counted = countLines();
-const attributed = countLinesWithAttribution();
+// Pass the already-computed `counted` through so this report does not run the full tracked-file
+// scan a second time; `countLinesWithAttribution()` would otherwise call `countLines()` again
+// internally for the exact same revision.
+const attributed = await countLinesWithAttribution(counted.revision, counted);
 
 describe("release line attribution", () => {
   test("keeps the release-ready row and table shape", () => {

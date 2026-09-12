@@ -64,7 +64,7 @@ import {
   restoreToolConfig,
   withDeadline,
 } from "../../lib/quick-restore";
-import { drainAndShutdown, getServerListenHostname, quiesceActiveTurns, setDraining } from "../lifecycle";
+import { getServerListenHostname, quiesceActiveTurns, scheduleDrainAndExit, setDraining } from "../lifecycle";
 import { acceptSystemRestartAfterExternalDrain } from "./system-restart";
 import { isLoopbackHostname, jsonResponse } from "../auth-cors";
 import type { OcxConfig } from "../../types";
@@ -754,10 +754,7 @@ export async function handleHostRoutes(ctx: ManagementContext): Promise<Response
     const grok = stripGrokConfig();
 
     // Exit after the response has flushed, exactly as POST /api/stop does.
-    setTimeout(async () => {
-      await drainAndShutdown(undefined, config.shutdownTimeoutMs ?? 5000);
-      process.exit(0);
-    }, 200);
+    scheduleDrainAndExit(config.shutdownTimeoutMs ?? 5000);
 
     return jsonResponse({
       success: true,

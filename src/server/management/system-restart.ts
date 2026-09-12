@@ -16,6 +16,11 @@
  *   reset cannot recover serving. Clear inherited `OCX_SERVICE` so exit cleanup
  *   can restore Codex/Grok fences. Log only a stable errno code — never the raw message
  *   (paths in ENOENT often include the OS username).
+ * - If `drainAndShutdown` itself throws: unlike the two cases above, nothing past that
+ *   point has run, so the listen socket may still be up — neither exiting nor spawning a
+ *   replacement is safe to assume. Reset `restartAccepted` and `draining` and resume
+ *   serving instead, so a failed drain cannot wedge the daemon in permanent 503s with no
+ *   exit and no replacement on the way.
  */
 import { spawn } from "node:child_process";
 import {
@@ -154,7 +159,23 @@ export function acceptSystemRestart(io: SystemRestartIo = restartIo): {
     (io.setDraining ?? setDraining)(true);
     schedule(async () => {
       const drain = io.drainAndShutdown ?? drainAndShutdown;
-      await drain(undefined, MEMORY_DRAIN_RESTART_MS);
+      try {
+        await drain(undefined, MEMORY_DRAIN_RESTART_MS);
+      } catch {
+        // A throwing drain must not leave `restartAccepted` (and the server) stuck in permanent
+        // drain: nothing past this point has run, so respawning here could race a listener that
+        // never actually came down. Undo the accept latch and resume serving instead — the
+        // fire-and-forget-timer failure mode this guards against is the same one
+        // `scheduleDrainAndExit` (lifecycle.ts) exists to prevent for /api/stop and
+        // /api/host/exit, except there the right answer is "exit anyway"; here it is "the
+        // recycle didn't happen, so un-wedge and let the daemon keep serving".
+        console.warn(
+          "⚠️  Drain-and-restart's drain failed before any respawn attempt; resuming service instead of exiting",
+        );
+        restartAccepted = false;
+        (io.setDraining ?? setDraining)(false);
+        return;
+      }
       let supervised: boolean;
       try {
         supervised = (io.isSupervisedServiceChild ?? isSupervisedServiceChild)();
