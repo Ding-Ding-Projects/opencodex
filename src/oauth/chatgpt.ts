@@ -1,6 +1,7 @@
 import { OAuthCallbackFlow } from "./callback-server";
 import type { OAuthController, OAuthCredentials } from "./types";
 import { generatePKCE } from "./pkce";
+import { redactSecretString } from "../lib/redact";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -160,11 +161,20 @@ export class ChatGPTOAuthFlow extends OAuthCallbackFlow {
   }
 }
 
+// Extracts a client-safe diagnostic string from a failed token response. The upstream
+// `error` code (e.g. "invalid_grant") is a small allowlisted OAuth vocabulary and is kept
+// verbatim -- `isTerminalRefreshError`/`terminal()` in oauth/index.ts substring-match on it
+// to decide whether a refresh failure is terminal. `error_description` has no such
+// contract: it is free-form text an upstream can populate with request/header content
+// (including the refresh token that failed), so the combined string is always passed
+// through `redactSecretString` before it can reach a thrown Error's `.message` -- the same
+// helper the sibling upstream-error sinks in src/server/responses/core.ts already apply.
 function safeErrorDescription(resp: Response): Promise<string> {
   return resp.text().catch(() => "").then(text => {
     try {
       const parsed = JSON.parse(text) as { error?: string; error_description?: string };
-      return [parsed.error, parsed.error_description].filter(Boolean).join(": ") || `HTTP ${resp.status}`;
+      const combined = [parsed.error, parsed.error_description].filter(Boolean).join(": ") || `HTTP ${resp.status}`;
+      return redactSecretString(combined);
     } catch { return `HTTP ${resp.status}`; }
   });
 }

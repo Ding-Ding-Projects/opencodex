@@ -1509,7 +1509,11 @@ export async function handleResponses(
           `${err.message}. Remove or reconfigure provider '${route.providerName}' in ${getConfigPath()}.`,
         );
       }
-      return formatErrorResponse(401, "authentication_error", err instanceof Error ? err.message : String(err));
+      // Defense in depth: the OAuth refresh helpers already redact upstream error text
+      // before throwing, but this sink returns the message straight to the client, so it
+      // redacts again here too -- the same helper the sibling upstream-error sinks below
+      // in this file already call (e.g. ~line 2310, ~2361, ~2708, ~2865, ~2890).
+      return formatErrorResponse(401, "authentication_error", redactSecretString(err instanceof Error ? err.message : String(err)));
     }
   }
   route.provider = resolveProviderTransport(
@@ -2531,7 +2535,9 @@ export async function handleResponses(
           refreshed = await forceRefreshOAuthAccessSnapshot(sentOAuthSnapshot);
         } catch (err) {
           cleanupUpstreamAbort();
-          return formatErrorResponse(401, "authentication_error", err instanceof Error ? err.message : String(err));
+          // Defense in depth: see the matching comment on the other authentication_error
+          // sink above (single-account/pool OAuth token resolution).
+          return formatErrorResponse(401, "authentication_error", redactSecretString(err instanceof Error ? err.message : String(err)));
         }
         // The forced refresh is account-scoped, so the routing it implies is too.
         assertOAuthAccessSnapshotCurrent(
