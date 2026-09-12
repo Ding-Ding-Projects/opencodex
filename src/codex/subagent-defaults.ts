@@ -7,6 +7,8 @@
  * this transform may later remove has its own immediately preceding marker.
  */
 
+import { advanceStructuralScan, createStructuralScanState } from "./toml-structure";
+
 export const MANAGED_SUBAGENT_DEFAULT_MARKER = "# Managed by opencodex: native subagent default";
 export const MANAGED_AGENTS_TABLE_MARKER = "# Managed by opencodex: native subagent defaults table";
 
@@ -86,86 +88,21 @@ function splitSourceLines(content: string): SourceLine[] {
   return lines;
 }
 
-type MultilineStringKind = "basic" | "literal" | null;
-
 /**
  * TOML table-looking text inside a multiline string is data, not syntax. Keep
  * a deliberately small lexical state machine so the format-preserving editor
  * never treats those physical lines as headers, keys, or ownership markers.
+ *
+ * The state machine itself lives in `./toml-structure` so every other module
+ * that needs the same "is this line really at the document's structural top
+ * level" answer (inject.ts, paths.ts, injected-marker.ts,
+ * project-config-warnings.ts) shares this exact lexical behavior instead of a
+ * naive, unaware copy.
  */
 function markStructuralLines(lines: SourceLine[]): void {
-  let multiline: MultilineStringKind = null;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-
+  const state = createStructuralScanState();
   for (const line of lines) {
-    line.structural = multiline === null && squareDepth === 0 && curlyDepth === 0;
-    let single: "basic" | "literal" | null = null;
-
-    for (let index = 0; index < line.text.length;) {
-      if (multiline === "basic") {
-        if (line.text.startsWith('"""', index)) {
-          multiline = null;
-          index += 3;
-        } else if (line.text[index] === "\\") {
-          index += 2;
-        } else {
-          index += 1;
-        }
-        continue;
-      }
-      if (multiline === "literal") {
-        if (line.text.startsWith("'''", index)) {
-          multiline = null;
-          index += 3;
-        } else {
-          index += 1;
-        }
-        continue;
-      }
-      if (single === "basic") {
-        if (line.text[index] === "\\") index += 2;
-        else if (line.text[index] === '"') {
-          single = null;
-          index += 1;
-        } else index += 1;
-        continue;
-      }
-      if (single === "literal") {
-        if (line.text[index] === "'") single = null;
-        index += 1;
-        continue;
-      }
-
-      if (line.text[index] === "#") break;
-      if (line.text.startsWith('"""', index)) {
-        multiline = "basic";
-        index += 3;
-      } else if (line.text.startsWith("'''", index)) {
-        multiline = "literal";
-        index += 3;
-      } else if (line.text[index] === '"') {
-        single = "basic";
-        index += 1;
-      } else if (line.text[index] === "'") {
-        single = "literal";
-        index += 1;
-      } else if (line.text[index] === "[") {
-        squareDepth += 1;
-        index += 1;
-      } else if (line.text[index] === "]") {
-        squareDepth = Math.max(0, squareDepth - 1);
-        index += 1;
-      } else if (line.text[index] === "{") {
-        curlyDepth += 1;
-        index += 1;
-      } else if (line.text[index] === "}") {
-        curlyDepth = Math.max(0, curlyDepth - 1);
-        index += 1;
-      } else {
-        index += 1;
-      }
-    }
+    line.structural = advanceStructuralScan(state, line.text);
   }
 }
 

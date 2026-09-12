@@ -6,6 +6,7 @@ import { DEFAULT_INJECT_LOCK_TIMEOUT_MS } from "./inject-coordination";
 import { withCodexWriteLock, withCodexWriteLockSync } from "./codex-write-lock";
 import { markJournalInjectedState, removeJournal, restoreJournalState, writeJournal } from "./journal";
 import { restoreCodexCatalog } from "./catalog";
+import { activeDefaultCatalogPath, resolveActiveCodexConfigPath, samePath } from "./catalog/parsing";
 import { migrateHistoryToOpenai, syncCodexHistoryProvider } from "./history-provider";
 import {
   OCX_SECTION_MARKER,
@@ -23,6 +24,7 @@ import {
   transformManagedSubagentDefaults,
   type ManagedSubagentDefaults,
 } from "./subagent-defaults";
+import { firstStructuralTableIndex } from "./toml-structure";
 import type { OcxConfig } from "../types";
 
 // Ownership predicates live in `./injected-marker` so `journal.ts` can reach them
@@ -150,7 +152,7 @@ export function buildOpenaiBaseUrlLine(port: number, hostname?: string): string 
  */
 export function setRootOpenaiBaseUrl(content: string, port: number, hostname?: string): { content: string; keptUserBaseUrl: boolean } {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const rootEnd = firstTable === -1 ? lines.length : firstTable;
   const key = buildOpenaiBaseUrlLine(port, hostname);
 
@@ -178,7 +180,7 @@ export function setRootOpenaiBaseUrl(content: string, port: number, hostname?: s
  */
 export function stripInjectedOpenaiBaseUrl(content: string): string {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const rootEnd = firstTable === -1 ? lines.length : firstTable;
   const drop = new Set<number>();
   for (let i = 0; i < rootEnd; i++) {
@@ -286,7 +288,7 @@ export function getCodexRoutingKind(): CodexRoutingKind {
  */
 function stripExistingModelProvider(content: string): string {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const out: string[] = [];
   lines.forEach((line, i) => {
     if (/^\s*model_provider\s*=/.test(line)) {
@@ -307,7 +309,7 @@ function stripExistingModelProvider(content: string): string {
 
 function stripRootRoutedModel(content: string): string {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   return lines
     .filter((line, i) => {
       const isRoot = firstTable === -1 || i < firstTable;
@@ -326,7 +328,7 @@ function stripRootRoutedModel(content: string): string {
  */
 function setRootModelProvider(content: string): string {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const key = 'model_provider = "opencodex"';
   if (firstTable === -1) {
     return content.replace(/\n+$/, "") + "\n" + key + "\n";
@@ -343,7 +345,7 @@ function readRootModelCatalogPath(content: string): string | null {
 
 function setRootModelCatalogPath(content: string, catalogPath: string): string {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const key = `model_catalog_json = ${tomlString(catalogPath)}`;
   const rootEnd = firstTable === -1 ? lines.length : firstTable;
   for (let i = 0; i < rootEnd; i++) {
@@ -412,8 +414,21 @@ function ensureFastModeFeature(content: string): string {
   return lines.join("\n");
 }
 
+/**
+ * True only when `path` resolves to THIS install's own default catalog file
+ * (`$CODEX_HOME/opencodex-catalog.json`, honoring a runtime `CODEX_HOME`
+ * override so this matches whatever install/test is actually running).
+ *
+ * Matching by basename alone (the previous implementation) treated any file
+ * merely named `opencodex-catalog.json` as opencodex-owned regardless of
+ * directory, so a user's own catalog file that happened to share that name in
+ * an unrelated directory was silently overwritten or deleted by the fallback
+ * default (setRootModelCatalogPath), stripped on restore
+ * (stripOpencodexCatalogPath), or replaced by chooseCatalogPathForInjection —
+ * none of them ours to touch.
+ */
 function isOpencodexCatalogPath(path: string): boolean {
-  return path.replace(/\\/g, "/").split("/").pop() === "opencodex-catalog.json";
+  return samePath(resolveActiveCodexConfigPath(path), activeDefaultCatalogPath());
 }
 
 function stripOpencodexCatalogPath(content: string): string {

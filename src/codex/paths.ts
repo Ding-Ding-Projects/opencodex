@@ -2,6 +2,7 @@ import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { expandUserPath } from "../config";
 import { defaultCodexHome } from "./home";
+import { firstStructuralTableIndex } from "./toml-structure";
 
 function resolveCodexHome(): string {
   const raw = process.env.CODEX_HOME?.trim();
@@ -51,7 +52,7 @@ export function parseTomlString(raw: string): string {
 
 export function readRootTomlString(content: string, key: string): string | null {
   const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
+  const firstTable = firstStructuralTableIndex(lines);
   const rootLines = firstTable === -1 ? lines : lines.slice(0, firstTable);
   for (const line of rootLines) {
     const m = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(\"(?:\\\\.|[^\"])*\"|'[^']*')`));
