@@ -62,7 +62,10 @@ describe("ocx.mjs npm launcher (source invariants)", () => {
     expect(source).toContain("const overridePath = resolve(override);");
     expect(source).toContain("if (isRealBunBinary(overridePath)) return overridePath;");
 
-    const resolveStart = source.indexOf("function resolveBun() {");
+    // The invariant is the ORDER inside resolveBun, not its signature: anchor on the declaration
+    // rather than an exact parameter list, so restoring the `required` parameter the soft-failure
+    // callers pass does not read as an ordering regression.
+    const resolveStart = source.indexOf("function resolveBun(");
     const overrideCheck = source.indexOf("process.env[BUN_OVERRIDE_ENV]?.trim()", resolveStart);
     const overrideResolve = source.indexOf("resolve(override)", overrideCheck);
     const bundledLookup = source.indexOf("bunDir = bunBinDir()", resolveStart);

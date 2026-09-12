@@ -636,7 +636,11 @@ function fail(msg) {
   process.exit(1);
 }
 
-function resolveBun() {
+// `required` is what the two soft-failure callers below depend on: they pass false and expect a
+// null they can recover from, rather than the process dying. The parameter was lost in a merge
+// while the guards that read it stayed, so every launch reached a ReferenceError the moment the
+// bundled runtime could not be resolved. The default keeps the bare `resolveBun()` call fatal.
+function resolveBun(required = true) {
   // Keep direct npm-launcher starts aligned with durable service/shim installs:
   // a valid explicit runtime must win even when the bundled dependency exists.
   const override = process.env[BUN_OVERRIDE_ENV]?.trim();

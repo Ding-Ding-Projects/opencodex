@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   applyEol,
   buildOpenaiBaseUrlLine,
@@ -9,7 +11,6 @@ import {
   setRootOpenaiBaseUrl,
   stripInjectedOpenaiBaseUrl,
   stripOpencodexConfig,
-  stripRootContextWindowOverrides,
 } from "../src/codex/inject";
 import {
   MANAGED_AGENTS_TABLE_MARKER,
@@ -55,27 +56,16 @@ describe("Codex config injection", () => {
     expect(buildProviderTableBlock(10100, false, false, "2001:db8::5")).toContain('base_url = "http://[2001:db8::5]:10100/v1"');
   });
 
-  test("strips stale root context-window overrides on injection so the catalog drives model context (gpt-5.5 regression)", () => {
-    const cleaned = stripRootContextWindowOverrides([
-      'model_provider = "opencodex"',
-      "model_context_window = 1000000",
-      "model_auto_compact_token_limit = 900000",
-      'model = "gpt-5.5"',
-      "",
-      "[model_providers.opencodex]",
-      "# a nested table key must survive",
-      "model_context_window = 272000",
-      "",
-    ].join("\n"));
-
-    // Root-level overrides (before the first table header) are removed.
-    expect(cleaned).not.toMatch(/^model_context_window = 1000000$/m);
-    expect(cleaned).not.toMatch(/^model_auto_compact_token_limit = 900000$/m);
-    // Non-context-window root keys are untouched.
-    expect(cleaned).toContain('model_provider = "opencodex"');
-    expect(cleaned).toContain('model = "gpt-5.5"');
-    // Table-nested keys (after the first [table]) are preserved.
-    expect(cleaned).toContain("model_context_window = 272000");
+  test("injection never deletes user-owned root context-window settings", () => {
+    // Root `model_context_window` / `model_auto_compact_token_limit` are the operator's own
+    // global override. Injection never wrote them, so injection never removes them: an earlier
+    // revision stripped them on every (re)inject, silently undoing the configured window on
+    // every `ocx start`. The proof is the injector's own source: no transform may filter a root
+    // context line, and the shipped strip helper must be gone rather than merely uncalled.
+    const source = readFileSync(join(import.meta.dir, "..", "src", "codex", "inject.ts"), "utf8");
+    expect(source).not.toContain("stripRootContextWindowOverrides");
+    expect(source).not.toMatch(/model_\(\?:context_window\|auto_compact_token_limit\)/);
+    expect(source).not.toMatch(/filter[\s\S]{0,400}model_context_window\s*\\s\*=/);
   });
 
   test("preserves user root context-window overrides when restoring native Codex", () => {

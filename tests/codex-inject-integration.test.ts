@@ -101,6 +101,48 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(second).toBe(first);
   });
 
+  test("every operator-owned setting survives injection, re-injection and native restore", () => {
+    // An operator who configures Codex by hand keeps those settings. The regression this pins:
+    // injection used to delete the two root context keys on every start, so a window the
+    // operator had set was silently gone after `ocx start` and stayed gone. Restore must also
+    // return the file byte-for-byte, including the tables injection writes into.
+    const original = [
+      'model = "gpt-5.5"',
+      "model_context_window = 1000000",
+      "model_auto_compact_token_limit = 900000",
+      "",
+      "[agents]",
+      "max_concurrent_threads_per_session = 50",
+      "",
+      "[features]",
+      "default_mode_request_user_input = true",
+      "",
+    ].join("\n");
+    writeFileSync(join(codexHome, "config.toml"), original, "utf8");
+
+    expect(runInject(codexHome, ocxHome).status).toBe(0);
+    const injected = readFileSync(join(codexHome, "config.toml"), "utf8");
+    for (const setting of [
+      'model = "gpt-5.5"',
+      "model_context_window = 1000000",
+      "model_auto_compact_token_limit = 900000",
+      "max_concurrent_threads_per_session = 50",
+      "default_mode_request_user_input = true",
+    ]) {
+      expect(injected).toContain(setting);
+    }
+    // Routing did land, so this is preservation rather than a skipped injection.
+    expect(injected).toContain("openai_base_url");
+
+    // A second start must not erode them either.
+    expect(runInject(codexHome, ocxHome).status).toBe(0);
+    const reinjected = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(reinjected).toBe(injected);
+
+    expect(runRestore(codexHome, ocxHome).status).toBe(0);
+    expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toBe(original);
+  });
+
   test("opt-in injects native subagent defaults, removes them when disabled, and restores the native config", () => {
     const original = [
       'model = "gpt-5.5"',

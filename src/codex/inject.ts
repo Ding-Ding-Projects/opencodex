@@ -299,22 +299,11 @@ function stripExistingModelProvider(content: string): string {
   return out.join("\n");
 }
 
-/**
- * Drop ROOT-level `model_context_window` / `model_auto_compact_token_limit` overrides (keys before
- * the first table header). Codex treats these root keys as a global override that wins over the
- * per-model catalog values, so a stale `model_context_window = 1000000` makes every model (e.g.
- * gpt-5.5) report a 1M window. Stripping them on (re)injection lets the catalog drive context size.
- */
-export function stripRootContextWindowOverrides(content: string): string {
-  const lines = content.split("\n");
-  const firstTable = lines.findIndex(l => /^\s*\[/.test(l));
-  return lines
-    .filter((line, i) => {
-      const isRoot = firstTable === -1 || i < firstTable;
-      return !isRoot || !/^\s*model_(?:context_window|auto_compact_token_limit)\s*=/.test(line);
-    })
-    .join("\n");
-}
+// Root-level `model_context_window` / `model_auto_compact_token_limit` are user-owned. Codex reads
+// them as a global override that wins over the per-model catalog values, and an operator who sets
+// them has chosen exactly that; injection never wrote them, so injection never removes them. An
+// earlier revision stripped them on (re)injection to let the catalog drive context size, which
+// silently undid the user's own configuration on every `ocx start`.
 
 function stripRootRoutedModel(content: string): string {
   const lines = content.split("\n");
@@ -581,7 +570,6 @@ export async function injectCodexConfig(port: number, config?: OcxConfig, option
   }
   content = removeProfileSection(content);
   content = stripExistingModelProvider(content);
-  content = stripRootContextWindowOverrides(content);
   content = normalizeServiceTier(content);
   content = ensureFastModeFeature(content);
 

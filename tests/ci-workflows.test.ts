@@ -2525,3 +2525,64 @@ describe("doctor-gui-if-changed", () => {
     expect(run.stderr.toString()).toContain("exceeded buffer");
   });
 });
+
+describe("workflow package scripts", () => {
+  // The defect this pins: the Go-port lane added workflow steps calling `npm run
+  // verify:native-package` and `npm run build:publish`, but the merge that brought the workflow
+  // half onto this line left the package.json half behind. Nothing failed until Windows CI ran
+  // and npm reported `Missing script`, because a workflow naming a script and a package.json
+  // defining one were wired at opposite ends with no check in between. A script that exists in
+  // neither package.json is the failure; which of the two holds it is a per-step working
+  // directory decision the runner makes, so the union is the honest target here.
+  test("every script a workflow invokes is defined in package.json", async () => {
+    const workflows = [
+      "auto-release.yml",
+      "cheap-lfs-cloud-compression.yml",
+      "ci.yml",
+      "deploy-docs.yml",
+      "desktop-installer.yml",
+      "enforce-issue-quality.yml",
+      "enforce-pr-target.yml",
+      "go-ci.yml",
+      "gui-preview.yml",
+      "issue-quality-tests.yml",
+      "issue-triage.yml",
+      "pr-labeler.yml",
+      "react-doctor.yml",
+      "release.yml",
+      "service-lifecycle.yml",
+      "stale-needs-info.yml",
+      "super-express-release.yml",
+    ];
+    const rootScripts = Object.keys(
+      (JSON.parse(await readText("package.json")) as { scripts: Record<string, string> }).scripts,
+    );
+    const guiScripts = Object.keys(
+      (JSON.parse(await readText("gui/package.json")) as { scripts: Record<string, string> }).scripts,
+    );
+    const defined = new Set([...rootScripts, ...guiScripts]);
+
+    const missing: string[] = [];
+    for (const file of workflows) {
+      const text = await readText(`.github/workflows/${file}`);
+      // `bun run scripts/x.ts` runs a FILE, not a named script: a token carrying a path
+      // separator or a source extension is not a package.json entry and never should be.
+      for (const match of text.matchAll(/\b(?:npm|bun) run ([A-Za-z][A-Za-z0-9:_-]*)(?![A-Za-z0-9:_./-])/g)) {
+        const name = match[1]!;
+        if (!defined.has(name)) missing.push(`${file}: ${name}`);
+      }
+    }
+
+    expect(missing).toEqual([]);
+  });
+
+  test("the native package and publish scripts the release path needs are present", async () => {
+    const scripts = (JSON.parse(await readText("package.json")) as { scripts: Record<string, string> }).scripts;
+    // Each one is called by name from a workflow step, so a rename here is a red CI run there.
+    expect(scripts["verify:native-package"]).toBe("bun scripts/prepare-package.ts --verify-pack pack.json");
+    expect(scripts["verify:native-install"]).toBe("node scripts/verify-native-install.mjs pack.json");
+    expect(scripts["prepare:native-package"]).toBe("bun scripts/prepare-package.ts --native");
+    expect(scripts["test:native-launcher"]).toBe("node --test scripts/ocx-native-launcher.test.mjs");
+    expect(scripts["build:publish"]).toContain("build:gui");
+  });
+});
