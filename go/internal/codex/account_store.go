@@ -101,11 +101,19 @@ func (s *AccountStore) loadRecords() (map[string]AccountRecord, error) {
 	var raw map[string]json.RawMessage
 	decoder := json.NewDecoder(io.LimitReader(file, maxAccountStoreBytes))
 	if err := decoder.Decode(&raw); err != nil {
+		// Close before renaming: os.Open's syscall.Open on Windows requests
+		// FILE_SHARE_READ|FILE_SHARE_WRITE but not FILE_SHARE_DELETE, so
+		// os.Rename on the still-open handle below fails outright (renaming
+		// a file out from under yourself needs that third sharing bit). The
+		// deferred Close above still runs at return; a second Close on an
+		// already-closed file is a harmless no-op error, same as this one.
+		_ = file.Close()
 		_ = s.backupInvalid()
 		return map[string]AccountRecord{}, nil
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
+		_ = file.Close()
 		_ = s.backupInvalid()
 		return map[string]AccountRecord{}, nil
 	}
