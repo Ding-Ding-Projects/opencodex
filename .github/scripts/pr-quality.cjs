@@ -7,9 +7,6 @@ const {
   hasSubstantialStructuredContent,
 } = require(path.join(__dirname, "issue-quality.cjs"));
 
-const ANCESTRY_BEHIND_THRESHOLD = 20;
-/** Cap on ahead_by vs main so stale `dev` forks (many commits ahead of main) are not flagged. */
-const ANCESTRY_AHEAD_MAIN_MAX = 5;
 const MIN_SECTION_LEN = 40;
 const MIN_RICH_SECTIONS = 2;
 const UNSTRUCTURED_MIN_LEN = 120;
@@ -26,24 +23,6 @@ const PR_TEMPLATE_BOILERPLATE_LINES = new Set([
   "docs or release notes were updated when needed.",
   "security-sensitive changes were reviewed for secrets, auth, and unsafe defaults.",
 ]);
-
-function isWrongAncestry({
-  behindMain,
-  behindBase,
-  aheadMain = 0,
-  threshold = ANCESTRY_BEHIND_THRESHOLD,
-  aheadMainMax = ANCESTRY_AHEAD_MAIN_MAX,
-}) {
-  return (
-    behindMain === 0 &&
-    behindBase >= threshold &&
-    aheadMain <= aheadMainMax
-  );
-}
-
-function authorHasPushPermission(permission) {
-  return permission === "admin" || permission === "maintain" || permission === "write";
-}
 
 /**
  * True when the body uses literal backslash-n as the dominant line break
@@ -124,33 +103,11 @@ function assessPrDescription(body) {
   return { ok: false, reason: "thin" };
 }
 
-function collectPrQualityFailures({
-  baseRef,
-  allowedBases,
-  body,
-  behindMain,
-  behindBase,
-  aheadMain = 0,
-  authorPermission,
-  permissionLookupFailed = false,
-  ancestryLookupFailed = false,
-}) {
+function collectPrQualityFailures({ baseRef, allowedBases, body }) {
   const failures = [];
   const wrongBase = !allowedBases.includes(baseRef);
   if (wrongBase) {
     failures.push({ code: "wrong_base" });
-  } else {
-    // Permission lookup fails closed (still evaluate ancestry). Compare API
-    // failures skip ancestry — zeros would falsely pass the #644 heuristic.
-    const skipAncestry =
-      ancestryLookupFailed ||
-      (!permissionLookupFailed && authorHasPushPermission(authorPermission));
-    if (
-      !skipAncestry &&
-      isWrongAncestry({ behindMain, behindBase, aheadMain })
-    ) {
-      failures.push({ code: "wrong_ancestry" });
-    }
   }
 
   const desc = assessPrDescription(body);
@@ -161,10 +118,6 @@ function collectPrQualityFailures({
 }
 
 module.exports = {
-  ANCESTRY_BEHIND_THRESHOLD,
-  ANCESTRY_AHEAD_MAIN_MAX,
-  isWrongAncestry,
-  authorHasPushPermission,
   assessPrDescription,
   collectPrQualityFailures,
   hasEscapedNewlines,
