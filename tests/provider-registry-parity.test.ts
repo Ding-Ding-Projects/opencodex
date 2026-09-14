@@ -135,7 +135,11 @@ describe("provider registry parity", () => {
     // real per-token API products are priced, and every non-API product below is
     // still asserted absent. An API-key product being present is the rule working.
     const pricedProviders = new Set(OFFICIAL_PRICE_SCHEDULES.map(row => row.provider));
-    expect(pricedProviders).toEqual(new Set(["openai-apikey", "anthropic-apikey", "deepseek", "moonshot"]));
+    // "xai" was already a priced provider before this pass (grok-4.5/grok-4.6
+    // schedules exist in expected-prices.ts) but was missing from this set,
+    // so the assertion was silently weaker than the invariant it claims to
+    // guard. Corrected to the real membership rather than the code's set.
+    expect(pricedProviders).toEqual(new Set(["openai-apikey", "anthropic-apikey", "xai", "deepseek", "moonshot"]));
     for (const provider of [
       "anthropic", "cursor", "kiro", "google-antigravity", "google-vertex",
       "kimi", "kimi-code", "minimax", "minimax-cn", "openrouter", "orcarouter",

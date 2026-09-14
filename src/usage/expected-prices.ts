@@ -8,8 +8,8 @@
  */
 
 /** The OpenCodex release carrying this immutable pricing authority. */
-export const OFFICIAL_PRICE_CATALOG_VERSION = "2.7.42+build.152" as const;
-export const OFFICIAL_PRICE_CATALOG_RELEASE_VERSION = "2.7.42" as const;
+export const OFFICIAL_PRICE_CATALOG_VERSION = "2.7.43+build.153" as const;
+export const OFFICIAL_PRICE_CATALOG_RELEASE_VERSION = "2.7.43" as const;
 
 export interface Cost4 {
   input: number;
@@ -90,8 +90,16 @@ export type OfficialPriceResolution =
   | { kind: "matched"; schedule: OfficialPriceSchedule }
   | { kind: "unavailable"; reason: PricingUnavailableReason };
 
-const VERIFIED_AT = "2026-08-07" as const;
-const OPENAI_VERIFIED_AT = "2026-08-09" as const;
+const VERIFIED_AT = "2026-09-14" as const;
+/**
+ * Kept for the exact two rows a 2026-09-14 re-check could not confirm: DeepSeek
+ * now publishes peak/UTC-hour-conditional pricing this schema has no field for
+ * (see the comments on those two rows), and Moonshot's chat-k25 page no longer
+ * carries a price at all. Every other row that used to share `VERIFIED_AT` at
+ * the old date was re-verified today and now uses the bumped value above.
+ */
+const STALE_VERIFIED_AT = "2026-08-07" as const;
+const OPENAI_VERIFIED_AT = "2026-09-14" as const;
 const ANTHROPIC_PRICING = "https://platform.claude.com/docs/en/about-claude/pricing";
 const OPENAI_PRICING = "https://developers.openai.com/api/docs/pricing";
 const DEEPSEEK_PRICING = "https://api-docs.deepseek.com/quick_start/pricing";
@@ -100,19 +108,32 @@ const XAI_PRIORITY_PRICING = "https://docs.x.ai/developers/advanced-api-usage/pr
 
 /**
  * OpenAI Fast mode (`service_tier=priority`) price factors, by exact model slug.
- * Source: https://openai.com/api-fast-mode/. Fast applies ONE uniform factor to
- * every token type — input, output, cache read and cache write alike.
+ * Source: https://developers.openai.com/api/docs/pricing (the "Fast mode" rows;
+ * https://openai.com/api-fast-mode/ 403s to this catalog's re-check route and
+ * is not this table's verified source). Fast applies ONE uniform factor to
+ * every token type: input, output, cache read and cache write alike.
  *
  * A model absent from this map has no published Fast rate, so it gets no
  * priority row at all and a Fast request against it resolves to
  * `pricing_condition_unmatched`. That is deliberate: billing an unlisted model
  * at its standard rate would under-charge it by exactly the factor we could not
  * find, which is the failure this table exists to prevent.
+ *
+ * Re-verified 2026-09-14 against the published Fast-mode table: every current
+ * gpt-5.6-* model now carries the same 2x uniform factor (gpt-5.5 stays 2.5x).
+ * `gpt-5.6-terra` was recorded at 1.6x and `gpt-5.6-luna` at 0.4x before this
+ * pass. The 0.4x figure in particular would have billed Fast mode BELOW
+ * standard price, the opposite of what a premium speed tier means. Verified via
+ * the published rows: terra Fast $4.00/$0.40/$5.00/$24.00 vs standard
+ * $2.00/$0.20/$2.50/$12.00 (exactly 2x every field); luna Fast
+ * $0.40/$0.04/$0.50/$2.40 vs standard $0.20/$0.02/$0.25/$1.20 (also exactly
+ * 2x). `gpt-5.4-mini` and `gpt-5.4` are not re-verified here: no schedule row
+ * below resolves either model id, so nothing currently reads these two entries.
  */
 export const OPENAI_PRIORITY_MULTIPLIERS: Readonly<Record<string, number>> = {
   "gpt-5.6-sol": 2,
-  "gpt-5.6-terra": 1.6,
-  "gpt-5.6-luna": 0.4,
+  "gpt-5.6-terra": 2,
+  "gpt-5.6-luna": 2,
   "gpt-5.5": 2.5,
   "gpt-5.4-mini": 2,
   "gpt-5.4": 2,
@@ -261,6 +282,15 @@ function anthropicSchedules(
   ];
 }
 
+/**
+ * Re-verified 2026-09-14 against https://docs.x.ai/developers/pricing (short
+ * and long-context standard rows unchanged for both grok-4.5 and grok-4.6) and
+ * https://docs.x.ai/developers/advanced-api-usage/priority-processing, which
+ * confirms a uniform 2x multiplier on every token type (input, output, cached
+ * and reasoning) and otherwise defers the actual per-model figures to the
+ * pricing page above. The `uniformMultiplier(2)` this function already
+ * applies for the priority band matches that confirmed 2x factor exactly.
+ */
 function xaiSchedules(
   modelId: "grok-4.5" | "grok-4.6",
   shortCacheRead: number,
@@ -281,7 +311,7 @@ function xaiSchedules(
     modelId,
     cost4,
     sourceUrl,
-    verifiedAt: "2026-08-21",
+    verifiedAt: "2026-09-14",
     status: "verified",
     conditions: { serviceTier, ...promptRange },
     tier: { band, multiplier: band === "priority" ? uniformMultiplier(2) : band === "long_context" ? uniformMultiplier(2) : NO_MULTIPLIER },
@@ -294,10 +324,35 @@ function xaiSchedules(
   ];
 }
 
+// Full 2026-09-14 re-check of every row below against its own `sourceUrl`. A
+// row still carrying `verifiedAt: VERIFIED_AT` (now 2026-09-14) and no
+// inline comment was fetched today and its cost4 matched the published figure
+// exactly: unchanged, not merely un-rechecked. That covers claude-fable-5,
+// claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6,
+// claude-sonnet-4-6, claude-haiku-4-5 (https://platform.claude.com/docs/en/about-claude/pricing);
+// grok-4.5 and grok-4.6 standard/long-context/priority rows
+// (https://docs.x.ai/developers/pricing and
+// https://docs.x.ai/developers/advanced-api-usage/priority-processing);
+// gpt-5.6-terra and gpt-5.6-luna base standard/long-context cost4, and gpt-5.5
+// standard/long-context/priority (https://developers.openai.com/api/docs/pricing;
+// only gpt-5.6-terra's and gpt-5.6-luna's Fast-mode multiplier changed, see
+// OPENAI_PRIORITY_MULTIPLIERS above). Every row now carrying
+// `verifiedAt: STALE_VERIFIED_AT` (2026-08-07) could not be re-confirmed today
+// and keeps its prior value with an explanatory comment; every other changed
+// row carries its own before/after comment at its call site below.
 export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
+  // Re-verified 2026-09-14 against https://developers.openai.com/api/docs/pricing:
+  // standard input/cached/cache-write/output moved from $5/$0.50/$6.25/$30 to
+  // $4/$0.40/$5.00/$20 per MTok (the long-context and Fast-mode rows derive from
+  // this tuple automatically and were confirmed to match the published Fast and
+  // long-context columns exactly at the new figures). The page also notes:
+  // "GPT-5.6 Sol's promotional pricing is available at least through November
+  // 21, 2026." That is a forward-looking expiry, not a currently-wrong price,
+  // so it is recorded here rather than guessed at; re-check this row again
+  // before/at that date.
   ...openAiSchedules(
     "gpt-5.6-sol",
-    { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+    { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 },
   ),
   ...openAiSchedules(
     "gpt-5.6-terra",
@@ -327,11 +382,21 @@ export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
     4,
     { validThrough: "2026-08-31" },
   ),
+  // Re-verified 2026-09-14. This row was recorded at the $3/$15 rate Anthropic
+  // had announced as a scheduled 2026-09-01 increase. The official pricing page
+  // now carries a standing note: "The $2/$10 per million input/output token
+  // pricing for Claude Sonnet 5, announced at launch as introductory pricing
+  // through August 31, 2026, is now the standard price. The previously
+  // scheduled increase to $3/$15 per million input/output tokens on September
+  // 1, 2026 will not occur." The increase never took effect, so every request
+  // dated on/after 2026-09-01 was being billed here at a price Anthropic never
+  // actually charged; this row is corrected to the confirmed $2/$10 figure that
+  // matches the row above it.
   ...anthropicSchedules(
     "claude-sonnet-5",
-    { input: 3, output: 15, cacheRead: 0.3 },
-    3.75,
-    6,
+    { input: 2, output: 10, cacheRead: 0.2 },
+    2.5,
+    4,
     { validFrom: "2026-09-01" },
   ),
   ...anthropicSchedules(
@@ -370,24 +435,49 @@ export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
     1.25,
     2,
   ),
+  // Re-check attempted 2026-09-14, kept at the last-verified 2026-08-07 figures
+  // below: UNVERIFIABLE, not unchanged. DEEPSEEK_PRICING now publishes
+  // peak/off-peak conditional pricing ("Peak hours are 01:00-04:00 and
+  // 06:00-10:00 UTC, Monday through Friday (all other hours are off-peak)."
+  // "Off-peak rates are half of the peak rates.") for what the page now calls
+  // deepseek-flash (served by DeepSeek-V4.1-Flash; the page states the legacy
+  // "deepseek-v4-flash" name "is still accepted... billed at the Flash price"):
+  // cache hit $0.003 off-peak / $0.006 peak, cache miss (input) $0.15 off-peak /
+  // $0.30 peak, output $0.60 off-peak / $1.20 peak, all per 1M tokens. Neither
+  // figure matches the row below, and this schema's `OfficialPriceConditions`
+  // has no time-of-day field to pick between them, so recording either one
+  // would be a guess about which price a given request actually got. The row
+  // is left at its old value rather than guessed; the next pass needs either an
+  // hour-of-day condition added to the schema or an explicit decision to price
+  // one tier only.
   {
     scheduleId: "deepseek/deepseek-v4-flash/standard",
     provider: "deepseek",
     modelId: "deepseek-v4-flash",
     cost4: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
     sourceUrl: DEEPSEEK_PRICING,
-    verifiedAt: VERIFIED_AT,
+    verifiedAt: STALE_VERIFIED_AT,
     status: "verified",
   },
+  // Re-check attempted 2026-09-14, kept at the last-verified 2026-08-07 figures
+  // below: UNVERIFIABLE, not unchanged, for the same peak/off-peak reason as
+  // deepseek-v4-flash above. deepseek-v4-pro (page model version
+  // "DeepSeek-V4-Pro-0813"): cache hit $0.022 off-peak / $0.044 peak, cache miss
+  // (input) $0.66 off-peak / $1.32 peak, output $1.98 off-peak / $3.96 peak,
+  // all per 1M tokens, all higher than the row below under either tier.
   {
     scheduleId: "deepseek/deepseek-v4-pro/standard",
     provider: "deepseek",
     modelId: "deepseek-v4-pro",
     cost4: { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0.435 },
     sourceUrl: DEEPSEEK_PRICING,
-    verifiedAt: VERIFIED_AT,
+    verifiedAt: STALE_VERIFIED_AT,
     status: "verified",
   },
+  // The next four Moonshot rows (kimi-k3, kimi-k2.7-code,
+  // kimi-k2.7-code-highspeed, kimi-k2.6) were re-verified 2026-09-14 against
+  // their platform.kimi.ai/docs/pricing/chat-* pages and are unchanged: cache
+  // hit, cache miss (input) and output all match exactly.
   {
     scheduleId: "moonshot/kimi-k3/standard",
     provider: "moonshot",
@@ -424,13 +514,23 @@ export const OFFICIAL_PRICE_SCHEDULES: readonly OfficialPriceSchedule[] = [
     verifiedAt: VERIFIED_AT,
     status: "verified",
   },
+  // Re-check attempted 2026-09-14, kept at the last-verified 2026-08-07 figure
+  // below: UNVERIFIABLE, not unchanged. chat-k25 no longer carries a price at
+  // all. The page states Kimi K2.5 "was officially retired on August 31, 2026"
+  // and "calls to these models now return a 404 (model not found) error," and
+  // only lists kimi-k3/kimi-k2.7-code/kimi-k2.7-code-highspeed/kimi-k2.6 as
+  // current models. The model itself is gone upstream, not merely re-priced;
+  // this row's price cannot be re-confirmed from a page that no longer states
+  // one, so the old figure is kept rather than guessed. Whether OpenCodex
+  // should keep routing "kimi-k2.5" at all is a model-roster question outside
+  // this pricing-only pass.
   {
     scheduleId: "moonshot/kimi-k2.5/standard",
     provider: "moonshot",
     modelId: "kimi-k2.5",
     cost4: { input: 0.6, output: 3, cacheRead: 0.1, cacheWrite: 0.6 },
     sourceUrl: "https://platform.kimi.ai/docs/pricing/chat-k25",
-    verifiedAt: VERIFIED_AT,
+    verifiedAt: STALE_VERIFIED_AT,
     status: "verified",
   },
 ];

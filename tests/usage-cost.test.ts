@@ -112,7 +112,11 @@ describe("authoritative official schedules", () => {
     const providers = new Set(OFFICIAL_PRICE_SCHEDULES.map(row => row.provider));
     expect(providers).toEqual(new Set(["anthropic-apikey", "openai-apikey", "xai", "deepseek", "moonshot"]));
     for (const row of OFFICIAL_PRICE_SCHEDULES) {
-      expect(row.verifiedAt).toMatch(/^2026-08-(07|09|21)$/);
+      // 2026-09-14 re-check: every row is either freshly re-verified today, or
+      // (deepseek-v4-flash, deepseek-v4-pro, moonshot/kimi-k2.5 only) kept at the
+      // prior 2026-08-07 verification because today's source could not confirm a
+      // single figure for it (see the inline comments in expected-prices.ts).
+      expect(row.verifiedAt).toMatch(/^2026-(08-07|09-14)$/);
       expect(row.status).toBe("verified");
       expect(row.sourceUrl.startsWith("https://")).toBe(true);
     }
@@ -160,8 +164,10 @@ describe("authoritative official schedules", () => {
       ["claude-haiku-4-5", { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 }],
     ] as const;
     for (const [modelId, cost4] of cases) {
+      // Re-verified 2026-09-14 against platform.claude.com/docs/en/about-claude/pricing;
+      // every one of these rows matched exactly, so only the date moves.
       expect(resolveMatchedPrice("anthropic-apikey", modelId, { cacheRetention: "short" }))
-        .toMatchObject({ provider: "anthropic-apikey", modelId, cost4, verifiedAt: VERIFIED_AT });
+        .toMatchObject({ provider: "anthropic-apikey", modelId, cost4, verifiedAt: "2026-09-14" });
     }
   });
 
@@ -188,7 +194,13 @@ describe("authoritative official schedules", () => {
       .toBe("pricing_context_missing");
   });
 
-  test("switches Sonnet 5 from introductory to standard pricing at 2026-09-01", () => {
+  test("keeps Sonnet 5 at $2/$10 across the 2026-09-01 boundary (announced $3/$15 increase never happened)", () => {
+    // Re-verified 2026-09-14: the official pricing page now states "The
+    // previously scheduled increase to $3/$15 per million input/output tokens
+    // on September 1, 2026 will not occur." The schedule still carries two
+    // rows either side of that date (the boundary itself is real, and a future
+    // repriced product could reuse the same shape), but both rows now carry
+    // the same confirmed $2/$10 figure rather than a phantom increase.
     const introductory = requestCost("anthropic-apikey", "claude-sonnet-5", {
       cacheRetention: "short",
       timestamp: Date.parse("2026-08-31T23:59:59.999Z"),
@@ -206,10 +218,10 @@ describe("authoritative official schedules", () => {
       timestamp: Date.parse("2026-09-01T00:00:00.000Z"),
     });
     expect(standard?.price?.cost4).toEqual({
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 3.75,
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
     });
     expect(standard?.price?.scheduleId).toEndWith("from-2026-09-01");
   });
@@ -274,7 +286,11 @@ describe("authoritative official schedules", () => {
         usage: { inputTokens: 1_000_000, outputTokens: 0 },
       },
     ], undefined, { timestamp: Date.parse("2026-08-31T00:00:00.000Z") });
-    expect(combo?.cost.total).toBeCloseTo(5, 9);
+    // Both attempts bill 1M input tokens at $2/MTok now that the confirmed
+    // 2026-09-01 row matches the pre-boundary row (see the "keeps Sonnet 5 at
+    // $2/$10..." test above): $2 + $2 = $4, not the pre-2026-09-14-re-check $5
+    // this test asserted while the second row still carried the phantom $3/MTok.
+    expect(combo?.cost.total).toBeCloseTo(4, 9);
     expect(combo?.attempts?.map(attempt => attempt.price.scheduleId)).toEqual([
       "anthropic-apikey/claude-sonnet-5/cache-5m/through-2026-08-31",
       "anthropic-apikey/claude-sonnet-5/cache-5m/from-2026-09-01",
@@ -343,11 +359,15 @@ describe("product and condition isolation", () => {
   test("OpenAI direct API prices the standard short-context row", () => {
     const usage = { inputTokens: 1_000, outputTokens: 100 };
     const standard = requestCost("openai-apikey", "gpt-5.6-sol", { usage, promptInputTokens: 1_000 });
+    // Re-verified 2026-09-14 against developers.openai.com/api/docs/pricing:
+    // gpt-5.6-sol standard moved from $5/$30/cacheRead $0.50 to $4/$20/cacheRead
+    // $0.40 per MTok (promotional pricing per the page, through at least
+    // 2026-11-21).
     expect(standard?.price).toMatchObject({
       provider: "openai-apikey",
       modelId: "gpt-5.6-sol",
-      cost4: { input: 5, cacheRead: 0.5, output: 30 },
-      verifiedAt: "2026-08-09",
+      cost4: { input: 4, cacheRead: 0.4, output: 20 },
+      verifiedAt: "2026-09-14",
       tier: { band: "standard" },
     });
     expect(standard?.price?.scheduleId).toContain("standard/short-context");
@@ -484,10 +504,13 @@ describe("product and condition isolation", () => {
     // this row as 900k uncached input + 100k output + 100k cache read — never 1M
     // input alongside a separately charged 100k, which would bill the cached tokens
     // twice. Each total below is that split against the published per-1M rates:
-    //   sol   (5 / 30 / 0.5)     -> 0.9*5    + 0.1*30   + 0.1*0.5   = 7.55
+    //   sol   (4 / 20 / 0.4)     -> 0.9*4    + 0.1*20   + 0.1*0.4   = 5.64
+    //     (re-verified 2026-09-14: sol's own standard rate dropped from
+    //     5/30/0.5, which is why sol and 5.5 no longer land on the same total
+    //     despite starting from an identical rate before this pass.)
     //   terra (2 / 12 / 0.2)     -> 0.9*2    + 0.1*12   + 0.1*0.2   = 3.02
     //   luna  (0.2 / 1.2 / 0.02) -> 0.9*0.2  + 0.1*1.2  + 0.1*0.02  = 0.302
-    //   5.5   (5 / 30 / 0.5)     -> same as sol; its cache WRITE is unavailable,
+    //   5.5   (5 / 30 / 0.5)     -> unchanged; its cache WRITE is unavailable,
     //                               which this row never exercises (no cache write).
     const usage = { inputTokens: 1_000_000, outputTokens: 100_000, cachedInputTokens: 100_000 };
     // Two lanes touched this block and disagreed, so the resolution is recorded
@@ -506,7 +529,7 @@ describe("product and condition isolation", () => {
     // than on paper: `inputTokens` is inclusive, so the usage below is 900k
     // uncached input, 100k output and 100k cache read.
     const short = { usage, promptInputTokens: 1_000 };
-    expect(requestCost("openai-apikey", "gpt-5.6-sol", short)?.cost.total).toBeCloseTo(7.55, 9);
+    expect(requestCost("openai-apikey", "gpt-5.6-sol", short)?.cost.total).toBeCloseTo(5.64, 9);
     expect(requestCost("openai-apikey", "gpt-5.6-terra", short)?.cost.total).toBeCloseTo(3.02, 9);
     expect(requestCost("openai-apikey", "gpt-5.6-luna", short)?.cost.total).toBeCloseTo(0.302, 9);
     expect(requestCost("openai-apikey", "gpt-5.5", short)?.cost.total).toBeCloseTo(7.55, 9);
