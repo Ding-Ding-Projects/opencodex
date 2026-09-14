@@ -25,6 +25,7 @@ import {
   selectOldestPercent,
   type ExecuteCleanupOptions,
 } from "../src/storage/cleanup";
+import { retryTransientFsError } from "../src/lib/fsync-path";
 import { removeTempDir } from "./helpers/temp-dir";
 
 const OLD = new Date("2026-01-01T00:00:00Z");
@@ -267,6 +268,76 @@ describe("normalizeArchivedRolloutPath", () => {
     // ISO timestamps in filenames must not be treated as Windows drive letters.
     expect(normalizeArchivedRolloutPath("archived_sessions/rollout-2026-01-01T10:00:00.jsonl", home))
       .toBe("archived_sessions/rollout-2026-01-01T10:00:00.jsonl");
+  });
+});
+
+// writeSatelliteBackup's fsync (the durability flush for satellite-backup.json, used by
+// every archived-cleanup run) calls this. On Windows, antivirus or an indexer can hold a
+// just-created temp file for a moment, so a bare unretried fsync intermittently fails with
+// EPERM even though nothing is actually wrong with the file (devlog: root-baseline-red #1).
+describe("retryTransientFsError", () => {
+  function errnoError(code: string): NodeJS.ErrnoException {
+    const error = new Error(`${code}: synthetic`) as NodeJS.ErrnoException;
+    error.code = code;
+    return error;
+  }
+
+  test("recovers once a transient EPERM/EACCES/EBUSY clears, where a bare call would fail", () => {
+    for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+      let calls = 0;
+      const run = () => {
+        calls += 1;
+        if (calls < 2) throw errnoError(code);
+        return "flushed";
+      };
+      // A bare unretried call sees only the first attempt and throws.
+      expect(() => run()).toThrow(`${code}: synthetic`);
+      calls = 0;
+      // The retrying helper absorbs the same transient failure and returns the real result.
+      expect(retryTransientFsError(run)).toBe("flushed");
+      expect(calls).toBe(2);
+    }
+  });
+
+  test("never retries a non-transient error — rethrows on the first attempt", () => {
+    let calls = 0;
+    const run = () => {
+      calls += 1;
+      throw errnoError("ENOENT");
+    };
+    expect(() => retryTransientFsError(run)).toThrow("ENOENT: synthetic");
+    expect(calls).toBe(1);
+    calls = 0;
+    const plain = () => { calls += 1; throw new Error("no code at all"); };
+    expect(() => retryTransientFsError(plain)).toThrow("no code at all");
+    expect(calls).toBe(1);
+  });
+
+  test("still throws — never silently succeeds — once a transient error outlasts every attempt", () => {
+    let calls = 0;
+    const run = () => {
+      calls += 1;
+      throw errnoError("EPERM");
+    };
+    expect(() => retryTransientFsError(run, 3)).toThrow("EPERM: synthetic");
+    expect(calls).toBe(3);
+  });
+
+  test("the decision is made from the error code alone, never from process.platform", () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
+    try {
+      let calls = 0;
+      const run = () => {
+        calls += 1;
+        if (calls < 2) throw errnoError("EBUSY");
+        return "flushed";
+      };
+      expect(retryTransientFsError(run)).toBe("flushed");
+      expect(calls).toBe(2);
+    } finally {
+      Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
+    }
   });
 });
 

@@ -36,6 +36,7 @@ import { Database } from "bun:sqlite";
 import { resolveCodexHomeDir } from "../codex/home";
 import { readThreadFieldsFromRollout } from "../codex/history-provider";
 import { renameAtomicFile } from "../config";
+import { retryTransientFsError } from "../lib/fsync-path";
 
 export const ARCHIVED_SESSIONS_DIR = "archived_sessions";
 export const TRASH_DIR = ".trash";
@@ -1066,7 +1067,10 @@ function writeSatelliteBackup(
     while (offset < payload.length) {
       offset += writeSync(fd, payload, offset, payload.length - offset, null);
     }
-    fsyncSync(fd);
+    // A brand-new temp file's fsync can answer EPERM/EACCES/EBUSY for a moment while
+    // antivirus or an indexer still holds the handle it just watched get created —
+    // retry only that transient window; any other failure still aborts immediately.
+    retryTransientFsError(() => fsyncSync(fd));
   } catch (error) {
     try { closeSync(fd); } catch { /* */ }
     try { unlinkSync(tmp); } catch { /* */ }
