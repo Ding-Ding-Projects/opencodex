@@ -22,11 +22,15 @@ asking when not silent.
 
 `build-installer.bat` rebuilds from the same path, removes only the generated
 `dist-desktop` directory, invokes the pinned `electron-builder@26.15.3` Squirrel
-Windows route with `--publish never`, and validates `Setup.exe`, `RELEASES`, a full
-`.nupkg`, SHA-256 values, and an unsigned Authenticode status. It reports the source
-commit and artifact paths. The installer is intentionally unsigned, so Windows may
-show its unknown-publisher or SmartScreen warning. The script never requests or
-invokes signing.
+Windows route with `--publish never`, and validates `Setup.exe`, `RELEASES`, the
+full `*-full.nupkg` update package, SHA-256 values, and an unsigned Authenticode
+status. Selection is restricted to the full package by name, so a `*-delta.nupkg`
+sitting next to it (Squirrel writes one once a prior release exists to diff
+against) is never mistaken for the full one; when a delta package is present the
+script reports its path and SHA-256 separately, clearly labelled as the delta. It
+reports the source commit and artifact paths. The installer is intentionally
+unsigned, so Windows may show its unknown-publisher or SmartScreen warning. The
+script never requests or invokes signing.
 
 The shell equivalents support the Bun-based source build on Unix-like hosts. The
 packaged desktop target is Windows-only; `build-installer.sh` exits with that exact

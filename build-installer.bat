@@ -38,8 +38,11 @@ if errorlevel 1 goto failed
 set "SETUP="
 set "RELEASES="
 set "NUPKG="
+set "DELTA_NUPKG="
 for /r "%ROOT%dist-desktop" %%F in (*Setup*.exe) do if not defined SETUP set "SETUP=%%F"
 for /r "%ROOT%dist-desktop" %%F in (RELEASES) do if not defined RELEASES set "RELEASES=%%F"
+for /r "%ROOT%dist-desktop" %%F in (*-full.nupkg) do if not defined NUPKG set "NUPKG=%%F"
+for /r "%ROOT%dist-desktop" %%F in (*-delta.nupkg) do if not defined DELTA_NUPKG set "DELTA_NUPKG=%%F"
 for /r "%ROOT%dist-desktop" %%F in (*.nupkg) do if not defined NUPKG set "NUPKG=%%F"
 if not defined SETUP (
   echo [build-installer] Setup.exe was not produced under dist-desktop.
@@ -71,12 +74,21 @@ if not defined NUPKG_SHA256 (
   echo [build-installer] Could not calculate the full nupkg SHA-256.
   goto failed
 )
+set "DELTA_NUPKG_SHA256="
+if defined DELTA_NUPKG (
+  set "OCX_DELTA_NUPKG=%DELTA_NUPKG%"
+  for /f "delims=" %%H in ('pwsh.exe -NoProfile -Command "(Get-FileHash -LiteralPath $env:OCX_DELTA_NUPKG -Algorithm SHA256).Hash"') do set "DELTA_NUPKG_SHA256=%%H"
+)
 for /f "delims=" %%H in ('git rev-parse HEAD 2^>nul') do set "BUILD_COMMIT=%%H"
 echo [build-installer] Commit: %BUILD_COMMIT%
 echo [build-installer] Setup.exe: %SETUP%
 echo [build-installer] Setup SHA-256: %SETUP_SHA256%
 echo [build-installer] Full nupkg: %NUPKG%
 echo [build-installer] Full nupkg SHA-256: %NUPKG_SHA256%
+if defined DELTA_NUPKG (
+  echo [build-installer] Delta nupkg: %DELTA_NUPKG%
+  echo [build-installer] Delta nupkg SHA-256: %DELTA_NUPKG_SHA256%
+)
 echo [build-installer] Unsigned installer verified; Windows may show an unknown-publisher warning.
 set "CODE=0"
 goto finish
