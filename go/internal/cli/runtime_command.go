@@ -135,12 +135,29 @@ func (packaged packagedRuntime) unchanged() bool {
 	return runtimeFileUnchanged(packaged.executable) && runtimeFileUnchanged(packaged.manifest) && runtimeFileUnchanged(packaged.launcher)
 }
 
+// isExecutableModeForTarget decides whether a regular file's mode satisfies
+// "executable" for a simulated update/runtime target. It is a package var,
+// not an inline check, because the answer cannot always come from the local
+// disk: a test that simulates a non-Windows target (see update_test.go,
+// which deliberately fixes goos/goarch rather than using runtime.GOOS,
+// because runUpdate refuses outright on a real Windows target and there
+// would be nothing left to test) still runs its os.WriteFile(..., 0o755)
+// on this host's real filesystem. On Windows, os.Chmod cannot set a POSIX
+// execute bit at all, so Mode().Perm()&0o111 is always 0 for every file
+// regardless of the mode requested -- there is no real file on a Windows
+// disk this predicate could ever accept for a simulated POSIX target.
+// Production never overrides this; the default below is exactly the
+// previous inline check.
+var isExecutableModeForTarget = func(mode os.FileMode, goos string) bool {
+	return goos == "windows" || mode.Perm()&0o111 != 0
+}
+
 func snapshotRuntimeFile(path string, executable bool, goos string) (runtimeFileSnapshot, bool) {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return runtimeFileSnapshot{}, false
 	}
-	if executable && goos != "windows" && info.Mode().Perm()&0o111 == 0 {
+	if executable && !isExecutableModeForTarget(info.Mode(), goos) {
 		return runtimeFileSnapshot{}, false
 	}
 	return runtimeFileSnapshot{path: path, info: info}, true

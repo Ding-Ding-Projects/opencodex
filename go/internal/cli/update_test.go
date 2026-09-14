@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -29,6 +30,20 @@ func newNativeUpdateFixture(t *testing.T, current, latest string, channel update
 	nativeDir := filepath.Join(root, "bin", "native")
 	if err := os.MkdirAll(nativeDir, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		// These tests simulate a non-Windows update target on purpose: runUpdate
+		// refuses outright on an actually-Windows target (deps.goos == "windows"),
+		// so there would be nothing left of the channel/version/policy logic below
+		// to exercise otherwise. os.Chmod cannot set a POSIX execute bit on a real
+		// Windows disk no matter what mode os.WriteFile is asked for, so the
+		// 0o755 below can never make isExecutableModeForTarget's real check pass
+		// for that simulated target -- there is no real file on this filesystem
+		// that could. Honor what the fixture asked for instead of leaving every
+		// test built on it permanently unable to run on a Windows host.
+		previous := isExecutableModeForTarget
+		isExecutableModeForTarget = func(os.FileMode, string) bool { return true }
+		t.Cleanup(func() { isExecutableModeForTarget = previous })
 	}
 	executable := filepath.Join(nativeDir, updatepkg.ReleaseArtifactName(current, goos, goarch))
 	for path, file := range map[string]struct {
