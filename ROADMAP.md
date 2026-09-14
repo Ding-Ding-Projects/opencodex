@@ -4,7 +4,7 @@
 
 - [x] Main-only integration policy; GitHub Actions build and publish only, no test, typecheck, lint, vet, race or e2e steps (`9f4b737e`).
 - [x] Multi-lens defect hunt: 14 finder lenses, independent refutation, 23 repairs merged, each with a red-then-green regression under `tests/hunt-*` or `gui/tests/hunt-*`.
-- [x] Pricing catalog re-verified against dated sources (45 rows, 7 corrected); fixture usernames scrubbed from tracked files.
+- [x] Pricing catalog re-verified against dated sources (45 rows, 7 corrected); fixture usernames that matched a private term scrubbed from tracked files.
 - [ ] Finish and merge the four checkpoint branches: `task/fix-sec-01`, `task/fix-l10n-01`, `task/fix-rel-02`, `task/go-baseline-red` (17 green Go fixes, `internal/server` owes two).
 - [ ] Isolate the test path that rewrites the repository's `.git/config` identity through `src/lib/state-history.ts:247`; two `main` commits (`49223d88`, `292cde78`) carry the wrong identity.
 - [ ] Guard `handleEnsure()` the way `handleStart()` now is; port the DATA-02 backup-name fix to `go/internal/config/recovery.go`.
