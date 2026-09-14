@@ -29,16 +29,37 @@
  * Generated files are separated rather than hidden: `gui/src/icons.tsx` is
  * emitted by `scripts/gen-icons.ts` and the dim sum catalogue is a data table.
  * A reader should be able to see how much of this a person actually wrote.
+ *
+ * ## Why the per-file measurement is concurrent
+ *
+ * `countLines()` used to spawn `git show <rev>:<path>` once per tracked code file in a plain
+ * serial `for` loop. Each spawn is independent of every other, so at ~4,900 tracked code files
+ * and tens of milliseconds of process-launch overhead apiece, that loop alone could cost minutes
+ * — and it ran at module import time in a test file, outside any per-test timeout, which is what
+ * eventually stalled the whole root suite past its wall-clock ceiling. `line-attribution.ts` had
+ * already solved the identical shape of problem for its own per-file `git blame` calls by routing
+ * them through {@link mapWithConcurrency}; this does the same for `git show`, through the exact
+ * same helper (see `./concurrency`).
  */
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { extname, join } from "node:path";
+import { promisify } from "node:util";
+import { mapWithConcurrency } from "./concurrency";
+
+const execFileAsync = promisify(execFile);
 
 const ROOT = join(import.meta.dir, "..");
 const MAX_TRACKED_FILES = 10_000;
 const MAX_FILE_BYTES = 8 << 20;
 const GIT_TIMEOUT_MS = 120_000;
 const utf8 = new TextDecoder("utf-8", { fatal: true });
+/**
+ * Default fan-out for the per-file `git show` calls in {@link countLines}. Matches
+ * `line-attribution.ts`'s `ATTRIBUTION_CONCURRENCY`: generous enough to shorten the real wall
+ * clock without opening thousands of git processes at once on a modest CI runner.
+ */
+const DEFAULT_MEASURE_CONCURRENCY = 8;
 
 /** Extensions that have lines worth counting. Everything else is an asset. */
 const CODE_EXTENSIONS = new Set([
@@ -85,9 +106,25 @@ export interface CountedFile {
   code: number;
 }
 
-function trackedFiles(revision: string): string[] {
+/** Reads one tracked file's raw bytes at a revision, or `null` if it could not be read. */
+export type GitShow = (path: string, revision: string, root: string) => Promise<Buffer | null>;
+
+export interface CountLinesOptions {
+  /** Repository root `trackedFiles`/`measure` run `git` in. Defaults to this project's own root. */
+  root?: string;
+  /** How many `git show` measurements run at once. Defaults to {@link DEFAULT_MEASURE_CONCURRENCY}. */
+  concurrency?: number;
+  /**
+   * Overrides the per-file `git show` read. Exists so a test can prove the per-file fan-out is
+   * real concurrency — inject a worker with an artificial delay and time the wall clock — without
+   * spawning dozens of real git processes. Defaults to {@link defaultGitShow}.
+   */
+  gitShow?: GitShow;
+}
+
+function trackedFiles(revision: string, root: string): string[] {
   const out = spawnSync("git", ["ls-tree", "-r", "-z", "--name-only", revision], {
-    cwd: ROOT,
+    cwd: root,
     encoding: "buffer",
     maxBuffer: 64 << 20,
     timeout: GIT_TIMEOUT_MS,
@@ -103,19 +140,35 @@ function trackedFiles(revision: string): string[] {
   return paths;
 }
 
+/**
+ * The real per-file read: `git show <rev>:<path>`, run asynchronously (not `spawnSync`) so many
+ * of these can be in flight at once through {@link mapWithConcurrency} instead of one after
+ * another. Returns `null` on any failure — a non-zero exit, a spawn error, a timeout, or output
+ * over `maxBuffer` — exactly as the previous synchronous version treated every one of those the
+ * same way: the file becomes "unreadable" rather than the whole count failing.
+ */
+const defaultGitShow: GitShow = async (path, revision, root) => {
+  try {
+    const { stdout } = await execFileAsync("git", ["show", `${revision}:${path}`], {
+      cwd: root,
+      encoding: "buffer",
+      maxBuffer: MAX_FILE_BYTES + 1,
+      timeout: GIT_TIMEOUT_MS,
+      windowsHide: true,
+    }) as { stdout: Buffer };
+    return stdout;
+  } catch {
+    return null;
+  }
+};
+
 /** Total lines and non-blank lines. A file with no trailing newline still counts its last line. */
-function measure(path: string, revision: string): { total: number; code: number } | null {
-  const out = spawnSync("git", ["show", `${revision}:${path}`], {
-    cwd: ROOT,
-    encoding: "buffer",
-    maxBuffer: MAX_FILE_BYTES + 1,
-    timeout: GIT_TIMEOUT_MS,
-    windowsHide: true,
-  });
-  if (out.status !== 0 || out.error || out.stdout.length > MAX_FILE_BYTES || out.stdout.includes(0)) return null;
+async function measure(path: string, revision: string, root: string, gitShow: GitShow): Promise<{ total: number; code: number } | null> {
+  const stdout = await gitShow(path, revision, root);
+  if (!stdout || stdout.length > MAX_FILE_BYTES || stdout.includes(0)) return null;
   let text: string;
   try {
-    text = utf8.decode(out.stdout);
+    text = utf8.decode(stdout);
   } catch {
     return null;
   }
@@ -124,9 +177,15 @@ function measure(path: string, revision: string): { total: number; code: number 
   return { total: lines.length, code: lines.filter(line => line.trim() !== "").length };
 }
 
-export function countLines(revision = "HEAD") {
+export async function countLines(revision = "HEAD", options: CountLinesOptions = {}) {
+  const root = options.root ?? ROOT;
+  const concurrency = options.concurrency ?? DEFAULT_MEASURE_CONCURRENCY;
+  const gitShow = options.gitShow ?? defaultGitShow;
+  // Resolving the revision and listing tracked files are each a single git process, not a
+  // per-file loop, so they stay the plain synchronous calls they always were — only the O(n)
+  // measurement below needed to change.
   const resolved = spawnSync("git", ["rev-parse", "--verify", `${revision}^{commit}`], {
-    cwd: ROOT,
+    cwd: root,
     encoding: "utf8",
     maxBuffer: 1024,
     timeout: GIT_TIMEOUT_MS,
@@ -136,14 +195,23 @@ export function countLines(revision = "HEAD") {
     throw new Error(`cannot resolve ${JSON.stringify(revision)} to a commit: ${resolved.error?.message ?? resolved.stderr.trim()}`);
   }
   const target = resolved.stdout.trim();
+
+  // Split into code files (measured) and assets (counted only), preserving `trackedFiles()`'s
+  // order, so the per-path bucket assignment and `entries` order below are unchanged from the
+  // previous serial loop regardless of which measurement finishes first.
+  const paths = trackedFiles(target, root);
+  const codePaths = paths.filter(path => CODE_EXTENSIONS.has(extname(path).toLowerCase()));
+  const assets = paths.length - codePaths.length;
+
+  const measured = await mapWithConcurrency(codePaths, concurrency, path => measure(path, target, root, gitShow));
+
   const rows = new Map<string, Row>(BUCKETS.map(b => [b.name, { name: b.name, files: 0, total: 0, code: 0 }]));
   const entries: CountedFile[] = [];
-  let assets = 0;
   let unreadable = 0;
 
-  for (const path of trackedFiles(target)) {
-    if (!CODE_EXTENSIONS.has(extname(path).toLowerCase())) { assets += 1; continue; }
-    const counted = measure(path, target);
+  for (let index = 0; index < codePaths.length; index += 1) {
+    const path = codePaths[index];
+    const counted = measured[index];
     if (!counted) { unreadable += 1; continue; }
     // The catch-all guarantees this find always succeeds; the assertion below
     // proves the sum, so a bucket that silently stopped matching is a failure

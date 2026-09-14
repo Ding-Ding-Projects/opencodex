@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { mapWithConcurrency } from "./concurrency";
 import { countLines } from "./count-lines";
 
 const execFileAsync = promisify(execFile);
@@ -361,6 +362,13 @@ export function sortAttributionRows<T extends AttributionRow>(rows: readonly T[]
   });
 }
 
+/**
+ * Re-exported from `./concurrency` so existing callers that imported the bounded fan-out helper
+ * from this module keep working unchanged. The implementation itself moved so `count-lines.ts`
+ * could use the exact same helper without a static import cycle (see `./concurrency`).
+ */
+export { mapWithConcurrency };
+
 export function batchPathsByUtf8Bytes(paths: readonly string[], maxBytes: number): string[][] {
   positiveLimit(maxBytes, maxBytes, "maxBytes");
   const encoder = new TextEncoder();
@@ -384,25 +392,6 @@ export function batchPathsByUtf8Bytes(paths: readonly string[], maxBytes: number
   return batches;
 }
 
-export async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  positiveLimit(concurrency, concurrency, "concurrency");
-  const results = new Array<R>(items.length);
-  let next = 0;
-  async function run(): Promise<void> {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      results[index] = await worker(items[index], index);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => run()));
-  return results;
-}
-
 interface CountedEntry {
   path: string;
   name: string;
@@ -418,9 +407,12 @@ interface CountedEntry {
  */
 export async function countLinesWithAttribution(
   revision = "HEAD",
-  precomputed?: ReturnType<typeof countLines> & { entries?: CountedEntry[] },
+  precomputed?: Awaited<ReturnType<typeof countLines>> & { entries?: CountedEntry[] },
 ): Promise<LineAttributionReport> {
-  const counted = precomputed ?? (countLines(revision) as ReturnType<typeof countLines> & { entries?: CountedEntry[] });
+  // `countLines()` fans its own per-file `git show` calls out through `mapWithConcurrency` (see
+  // count-lines.ts), so this now awaits it instead of calling it as a synchronous function.
+  const counted = precomputed
+    ?? (await countLines(revision) as Awaited<ReturnType<typeof countLines>> & { entries?: CountedEntry[] });
   if (!counted.entries) {
     throw new Error("countLines() must expose tracked entries before attribution can run");
   }
