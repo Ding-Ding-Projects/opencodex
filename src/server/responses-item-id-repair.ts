@@ -4,10 +4,15 @@ import { relaySseWithPayloadRewrite, type SsePayloadRewrite } from "./sse-payloa
 
 type RepairableItemType = "message" | "reasoning";
 
+interface MappedIdEntry {
+  readonly mappedId: string;
+  readonly originRawId: string;
+}
+
 interface ResponsesItemIdRepairState {
   readonly repairMissingTerminalIds: boolean;
   readonly placeholders: Record<RepairableItemType, ReadonlySet<string>>;
-  readonly outputIds: Record<RepairableItemType, Map<number, string>>;
+  readonly outputIds: Record<RepairableItemType, Map<number, MappedIdEntry>>;
   readonly scope: string;
 }
 
@@ -56,8 +61,8 @@ function createRepairState(config: ResponsesItemIdRepairConfig): ResponsesItemId
       reasoning: new Set(config.reasoning ?? []),
     },
     outputIds: {
-      message: new Map<number, string>(),
-      reasoning: new Map<number, string>(),
+      message: new Map<number, MappedIdEntry>(),
+      reasoning: new Map<number, MappedIdEntry>(),
     },
     scope: randomUUID().replace(/-/g, ""),
   };
@@ -70,9 +75,19 @@ function rememberMappedId(
 ): string | null {
   const type = repairableItemType(item);
   if (!type) return null;
-  const existing = state.outputIds[type].get(outputIndex);
-  if (existing) return existing;
   const rawId = typeof item.id === "string" ? item.id : undefined;
+  const existing = state.outputIds[type].get(outputIndex);
+  if (existing) {
+    // Continuation events for the item that produced this cache entry either repeat
+    // its own raw id, or omit the id on a terminal event we are asked to repair. Both
+    // still describe the same item, so the remembered mapping still applies.
+    if (rawId === undefined || rawId === existing.originRawId) return existing.mappedId;
+    // A different, real raw id showed up at the same (type, outputIndex): the slot
+    // has moved on to a new item. The old mapping no longer describes anything at
+    // this index, so it must not keep answering for events that belong to the new
+    // item; drop it before deciding the new item's own mapping below.
+    state.outputIds[type].delete(outputIndex);
+  }
   if (!rawId) return null;
   const mapped = state.placeholders[type].has(rawId)
     ? mintCanonicalId(type, state.scope, outputIndex)
@@ -80,7 +95,7 @@ function rememberMappedId(
       ? rawId
       : null;
   if (!mapped) return null;
-  state.outputIds[type].set(outputIndex, mapped);
+  state.outputIds[type].set(outputIndex, { mappedId: mapped, originRawId: rawId });
   return mapped;
 }
 
@@ -104,8 +119,9 @@ function rewriteItemIdField(
 ): { event: Record<string, unknown>; changed: boolean } {
   const eventType = typeof event.type === "string" ? ITEM_ID_EVENT_TYPES[event.type] : undefined;
   if (!eventType) return { event, changed: false };
-  const mapped = state.outputIds[eventType].get(outputIndex);
-  if (!mapped) return { event, changed: false };
+  const entry = state.outputIds[eventType].get(outputIndex);
+  if (!entry) return { event, changed: false };
+  const mapped = entry.mappedId;
   const currentId = typeof event.item_id === "string" ? event.item_id : undefined;
   if (currentId === mapped) return { event, changed: false };
   if (currentId === undefined && !state.repairMissingTerminalIds) return { event, changed: false };
