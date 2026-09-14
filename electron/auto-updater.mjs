@@ -153,32 +153,41 @@ export function createDesktopAutoUpdater({
     onState({ ...state });
   };
 
-  updater.on("checking-for-update", () => publish({ status: "checking", error: null }));
-  updater.on("update-available", info => publish({
-    status: "available",
-    version: typeof info?.version === "string" ? info.version : null,
-    progress: 0,
-    error: null,
-  }));
-  updater.on("download-progress", info => publish({
-    status: "downloading",
-    progress: Math.max(0, Math.min(100, Number(info?.percent) || 0)),
-    error: null,
-  }));
-  updater.on("update-not-available", info => publish({
-    status: "current",
-    version: typeof info?.version === "string" ? info.version : state.version,
-    progress: 0,
-    error: null,
-  }));
-  updater.on("update-downloaded", info => publish({
-    status: "ready",
-    version: typeof info?.version === "string" ? info.version : state.version,
-    progress: 100,
-    releaseNotesUrl: safeReleaseNotes(info?.releaseNotes) ?? state.releaseNotesUrl,
-    error: null,
-  }));
-  updater.on("error", error => publish({ status: errorStatus(error), error: String(error?.message ?? error) }));
+  // Every [event, handler] pair registered here is exactly what stop() must
+  // detach. A caller that rebuilds this engine against the same long-lived
+  // Electron `autoUpdater` singleton (a retry path, a settings change that
+  // re-runs startDesktopUpdater(), a second fixture reusing one fake updater)
+  // must not leave a stale generation's listeners publishing into an
+  // abandoned onState.
+  const listenerPairs = [
+    ["checking-for-update", () => publish({ status: "checking", error: null })],
+    ["update-available", info => publish({
+      status: "available",
+      version: typeof info?.version === "string" ? info.version : null,
+      progress: 0,
+      error: null,
+    })],
+    ["download-progress", info => publish({
+      status: "downloading",
+      progress: Math.max(0, Math.min(100, Number(info?.percent) || 0)),
+      error: null,
+    })],
+    ["update-not-available", info => publish({
+      status: "current",
+      version: typeof info?.version === "string" ? info.version : state.version,
+      progress: 0,
+      error: null,
+    })],
+    ["update-downloaded", info => publish({
+      status: "ready",
+      version: typeof info?.version === "string" ? info.version : state.version,
+      progress: 100,
+      releaseNotesUrl: safeReleaseNotes(info?.releaseNotes) ?? state.releaseNotesUrl,
+      error: null,
+    })],
+    ["error", error => publish({ status: errorStatus(error), error: String(error?.message ?? error) })],
+  ];
+  for (const [event, handler] of listenerPairs) updater.on(event, handler);
 
   const check = async () => {
     if (!packaged) return { ...state };
@@ -220,6 +229,11 @@ export function createDesktopAutoUpdater({
     if (timer !== null) clearIntervalFn(timer);
     timer = null;
     started = false;
+    // Detach exactly the pairs this construction attached, then clear the
+    // list so a repeated stop() call (idempotent, like start()) has nothing
+    // left to remove and never double-calls removeListener.
+    for (const [event, handler] of listenerPairs) updater.removeListener(event, handler);
+    listenerPairs.length = 0;
   };
 
   return {
