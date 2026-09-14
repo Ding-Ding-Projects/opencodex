@@ -41,6 +41,18 @@ const KEY_ESCAPE = "\x1b";
 const KEY_INTERRUPT = "\x03";
 const KEY_TAB = "\t";
 
+// Every multi-byte sequence onData ever has to reassemble. All of them start
+// with KEY_ESCAPE, which is what makes a lone escape byte ambiguous: it is
+// either a complete Escape keypress, or the first byte of one of these.
+const ESCAPE_SEQUENCES = [...KEY_YES_SIDE, ...KEY_NO_SIDE];
+
+// A lone escape byte waits this long for the rest of a sequence before it is
+// resolved as a standalone Escape keypress. Long enough for bytes split
+// across reads by a loaded terminal, a slow pipe, or a multiplexer to catch
+// up; short enough that a real Escape press still reads as effectively
+// instant.
+const ESCAPE_DEADLINE_MS = 50;
+
 function renderChoices(question: string, yes: boolean, hint: string): string {
   const yesLabel = yes ? `${REVERSE} Yes ${RESET}` : `${DIM} Yes ${RESET}`;
   const noLabel = yes ? `${DIM} No ${RESET}` : `${REVERSE} No ${RESET}`;
@@ -87,6 +99,7 @@ export async function interactiveConfirm(options: InteractiveConfirmOptions): Pr
 
   return await new Promise<boolean>(resolve => {
     let yes = options.defaultYes;
+    let settled = false;
     const wasRaw = input.isRaw === true;
     const hadOtherReaders = input.listenerCount("data") > 0;
 
@@ -94,7 +107,33 @@ export async function interactiveConfirm(options: InteractiveConfirmOptions): Pr
       output.write(renderChoices(options.question, yes, hint));
     };
 
+    // Bytes that open with KEY_ESCAPE and have not yet resolved into either a
+    // standalone Escape or a complete multi-byte sequence. Read events, not
+    // physical keypresses, are what data arrives in, and a chunk boundary can
+    // fall in the middle of a sequence (see the module comment above and
+    // hunt-ux-02.test.ts). This buffer, together with escapeTimer, is what
+    // lets a sequence split across reads still reassemble correctly.
+    let escapeBuffer = "";
+    let escapeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearEscapeTimer = () => {
+      if (escapeTimer !== null) {
+        clearTimeout(escapeTimer);
+        escapeTimer = null;
+      }
+    };
+
+    const isStrictPrefixOfKnownSequence = (candidate: string): boolean => {
+      for (const sequence of ESCAPE_SEQUENCES) {
+        if (sequence.length > candidate.length && sequence.startsWith(candidate)) return true;
+      }
+      return false;
+    };
+
     const finish = (answer: boolean, interrupted: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearEscapeTimer();
       input.off("data", onData);
       if (!wasRaw) input.setRawMode(false);
       if (!hadOtherReaders) input.pause();
@@ -105,23 +144,95 @@ export async function interactiveConfirm(options: InteractiveConfirmOptions): Pr
       if (interrupted) process.kill(process.pid, "SIGINT");
     };
 
-    const onData = (chunk: Buffer | string) => {
-      const key = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      if (key === KEY_INTERRUPT) return finish(false, true);
-      if (key === KEY_ESCAPE) return finish(false, false);
-      if (KEY_ENTER.has(key)) return finish(yes, false);
+    // Resolves one complete key: a control character, a letter, or a full
+    // multi-byte sequence. Returns whether `key` was actually recognised, so
+    // callers can tell a real key from bytes that matched nothing.
+    const dispatchKey = (key: string): boolean => {
+      if (key === KEY_INTERRUPT) {
+        finish(false, true);
+        return true;
+      }
+      if (key === KEY_ESCAPE) {
+        finish(false, false);
+        return true;
+      }
+      if (KEY_ENTER.has(key)) {
+        finish(yes, false);
+        return true;
+      }
       const lower = key.toLowerCase();
-      if (lower === "y") return finish(true, false);
-      if (lower === "n") return finish(false, false);
+      if (lower === "y") {
+        finish(true, false);
+        return true;
+      }
+      if (lower === "n") {
+        finish(false, false);
+        return true;
+      }
       if (KEY_YES_SIDE.has(key)) {
         yes = true;
         paint();
-        return;
+        return true;
       }
       if (KEY_NO_SIDE.has(key) || key === KEY_TAB) {
         yes = key === KEY_TAB ? !yes : false;
         paint();
+        return true;
+      }
+      return false;
+    };
+
+    const armEscapeTimer = () => {
+      clearEscapeTimer();
+      escapeTimer = setTimeout(() => {
+        escapeTimer = null;
+        const pending = escapeBuffer;
+        escapeBuffer = "";
+        if (pending) dispatchKey(pending);
+      }, ESCAPE_DEADLINE_MS);
+    };
+
+    // Feeds one byte through the escape-sequence buffer. While the buffer is
+    // still a strict prefix of a known sequence it is held rather than
+    // dispatched, since more bytes could complete it. Any byte that instead
+    // completes the buffer into a full key, or that the buffer cannot absorb
+    // at all, flushes immediately: there is no need to wait for the deadline
+    // once the next chunk already answers the question.
+    const feedByte = (ch: string) => {
+      if (settled) return;
+      const candidate = escapeBuffer + ch;
+
+      if (isStrictPrefixOfKnownSequence(candidate)) {
+        escapeBuffer = candidate;
+        armEscapeTimer();
         return;
+      }
+
+      const previouslyBuffered = escapeBuffer;
+      clearEscapeTimer();
+      escapeBuffer = "";
+
+      if (dispatchKey(candidate)) return;
+
+      if (previouslyBuffered) {
+        // `ch` cannot extend the buffered prefix into anything real. Give the
+        // prefix its own chance to resolve first (a lone KEY_ESCAPE is a
+        // complete key by itself; anything else buffered was never
+        // independently meaningful and is dropped here exactly as an
+        // unrecognised chunk always was), then evaluate `ch` again with a
+        // clean buffer.
+        dispatchKey(previouslyBuffered);
+        if (settled) return;
+        feedByte(ch);
+      }
+      // else: a single fresh byte matching nothing at all. Ignore, as before.
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      const data = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      for (const ch of data) {
+        feedByte(ch);
+        if (settled) return;
       }
     };
 
