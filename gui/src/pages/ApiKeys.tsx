@@ -444,6 +444,14 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
     }
   };
 
+  // Same check `command-palette-teleport.ts` uses: a reduced-motion request
+  // turns off the animated scroll, since the global CSS backstop cannot reach
+  // native `scrollIntoView` and an explicit `behavior` argument overrides it.
+  const handleManageClick = () => {
+    const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById("api-active-keys")?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+  };
+
   // Subtitle carries two inline <code> chips; split the localized string on both tokens.
   const subtitleParts = t("api.subtitle").split(/\{authHeader\}|\{altHeader\}/);
 
@@ -474,7 +482,7 @@ export default function ApiKeys({ apiBase }: { apiBase: string }) {
         newKeyVisible={newKey !== null}
         localeTag={localeTag}
         onGenerate={() => { void handleCreate(t("api.copilotKeyName"), "github-copilot-desktop"); }}
-        onManage={() => document.getElementById("api-active-keys")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        onManage={handleManageClick}
       />
 
       <ApiKeysEndpointsPanel

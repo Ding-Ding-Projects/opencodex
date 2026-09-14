@@ -145,7 +145,11 @@ export default function LocksPage() {
     setTicketContext(label);
     // A fresh id so the anchor exists after the state update commits.
     window.requestAnimationFrame(() => {
-      document.getElementById("support-tickets-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Same check `command-palette-teleport.ts` uses: a reduced-motion request
+      // turns off the animated scroll, since the global CSS backstop cannot
+      // reach native `scrollIntoView` and an explicit `behavior` overrides it.
+      const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      document.getElementById("support-tickets-title")?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
     });
   };
 
