@@ -3,10 +3,11 @@
  * Release helper (jawcode-style, single package). Not shipped in the npm tarball.
  *
  * Usage:
- *   bun scripts/release.ts <version> [--tag latest|preview] [--publish]
+ *   bun scripts/release.ts <version> [--tag latest] [--publish]
  *       Preflight (clean tree + typecheck + tests + privacy scan) → bump package.json → commit → push →
- *       wait for Cross-platform CI and Service lifecycle → verify the immutable remote candidate →
- *       dispatch the Release workflow → watch it.
+ *       wait for Cross-platform CI → verify the immutable remote candidate →
+ *       dispatch the Release workflow → watch it. Runs only from main: it is the sole
+ *       integration and release branch, so there is no separate preview channel to select.
  *       The version bump commit/push is real; the Release workflow publish step is dry-run by default.
  *       Pass --publish to publish.
  *   bun scripts/release.ts watch
@@ -38,7 +39,6 @@ interface CommandResult {
 }
 
 const CI_WORKFLOW = "ci.yml";
-const SERVICE_WORKFLOW = "service-lifecycle.yml";
 const CI_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
 const CI_POLL_MS = 10 * 1000;
 
@@ -257,25 +257,22 @@ if (args[0] === "watch") {
 
 const version = args[0];
 if (!version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
-  console.error("Usage: bun scripts/release.ts <version> [--tag latest|preview] [--publish]\n       bun scripts/release.ts watch");
+  console.error("Usage: bun scripts/release.ts <version> [--tag latest] [--publish]\n       bun scripts/release.ts watch");
   process.exit(1);
 }
 const dryRun = !args.includes("--publish");
 
-// 1. Preflight — must be on main or preview, and local verification must pass.
+// 1. Preflight: must be on main, and local verification must pass. main is the
+// only integration and release branch; there is no separate preview channel.
 const branch = (await runRequired(["git", "rev-parse", "--abbrev-ref", "HEAD"])).trim();
-const allowedBranches = ["main", "preview"];
-const expectedTag = branch === "preview" ? "preview" : "latest";
+const allowedBranches = ["main"];
+const expectedTag = "latest";
 const tag = args.includes("--tag") ? (args[args.indexOf("--tag") + 1] ?? expectedTag) : expectedTag;
 if (tag !== expectedTag) {
-  console.error(`Release tag mismatch: ${branch} releases must use npm dist-tag '${expectedTag}' (got '${tag}').`);
+  console.error(`Release tag mismatch: main releases must use npm dist-tag '${expectedTag}' (got '${tag}').`);
   process.exit(1);
 }
-if (branch === "preview" && !version.includes("-preview.")) {
-  console.error(`Preview releases must use a preview prerelease version (got ${version}).`);
-  process.exit(1);
-}
-if (branch === "main" && version.includes("-")) {
+if (version.includes("-")) {
   console.error(`Main releases must use a stable semver version (got ${version}).`);
   process.exit(1);
 }
@@ -305,12 +302,6 @@ await runRequired(["git", "push", "origin", branch]);
 // 4. Wait for the pushed release commit to pass CI, then dispatch the Release workflow.
 console.log(`→ wait for Cross-platform CI (${releaseSha})`);
 await waitForSuccessfulCi(releaseSha);
-
-// The release bump always touches package.json, which is a service-lifecycle trigger path —
-// and release.yml's service gate requires an already-successful Service lifecycle run for
-// the release SHA. Wait for it too, or the dispatch races the still-running workflow.
-console.log(`→ wait for Service lifecycle (${releaseSha})`);
-await waitForSuccessfulCi(releaseSha, SERVICE_WORKFLOW, "Service lifecycle");
 
 // 5. Live-remote guard: re-read the actual remote head over the network immediately
 // before dispatch. The local remote-tracking ref can be minutes stale, and the
