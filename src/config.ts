@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
+import { constants as fsConstants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, truncateSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
@@ -2397,16 +2397,29 @@ function warnAndBackupInvalidConfig(configPath: string, error: unknown): void {
   console.error(`Could not load opencodex config at ${configPath}: ${reason}. Using default config.${backupNote}`);
 }
 
+// Corruption events can land in the same millisecond (two providers writing bad JSON to the
+// same file back to back, or two processes racing the same path), so the timestamp alone is not
+// a unique name. Append a process id and a monotonic per-process counter, and use COPYFILE_EXCL
+// so the filesystem itself refuses to overwrite a same-named backup rather than trusting a
+// separate existsSync check that could race with another writer between the check and the copy.
+// A colliding name (same pid, same counter value, reused across a process restart in the same
+// millisecond) simply retries with the next counter value instead of clobbering the earlier
+// forensic copy.
 export function backupInvalidConfig(configPath: string): string | null {
   if (!existsSync(configPath)) return null;
-  const backupPath = `${configPath}.invalid-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  try {
-    copyFileSync(configPath, backupPath);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const backupPath = `${configPath}.invalid-${stamp}-${process.pid}-${++_atomicSeq}`;
+    try {
+      copyFileSync(configPath, backupPath, fsConstants.COPYFILE_EXCL);
+    } catch (error) {
+      if (isAlreadyExistsError(error)) continue;
+      return null;
+    }
     try { chmodSync(backupPath, 0o600); } catch { /* best-effort */ }
     return backupPath;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 // Shared SQLite path used by durable reset-credit operations. The ledger owns its own transaction
