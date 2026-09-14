@@ -16,8 +16,8 @@ Bun-native TypeScript with no separate server compile step.
   `tests/helpers/`, broader scenarios in `tests/e2e-style/`.
 - `gui/` — React + Vite dashboard; packaged output is served from `gui/dist`.
 - `docs-site/` — public docs (Astro + Starlight), deployed to GitHub Pages.
-- `go/` — retired Go native-runtime experiment; kept only where the TypeScript
-  runtime still references it. New work does not go here.
+- `go/`: native Go runtime port, tracked by issue #17, active again and
+  developed directly on `main`.
 - `structure/` — maintainer invariants and architecture notes; read before
   changing shared subsystems.
 - `scripts/` — release and maintenance tooling; `scripts/release.ts` is the
@@ -107,30 +107,20 @@ non-trivial change. CI runs these on Windows only.
 
 ## Branch policy
 
-- `dev` — the single integration branch and the target for every pull request.
-- `main` — release branch. It only moves by maintainer-controlled promotion
-  from `dev` (releases, docs deploys). Do not open feature PRs against `main`.
-- `preview` — prerelease train (`x.y.z-preview.*` versions).
+- `main`: the single integration branch and the release branch. Every pull
+  request targets `main`; there is no separate integration branch.
 
-Bun-native TypeScript on `dev` is the only runtime line. If native code
-returns, the expectation is an incremental module (for example Rust via N-API)
-landing on `dev`, not a second full-runtime branch.
-
-Stacked child pull requests that target another **open** PR's head branch are
-an intentional review workflow, not an alternate integration line. The
-**`enforce-target`** check skips the wrong-base gate for those children; after
-the parent lands or closes, retarget the child to `dev`.
+Bun-native TypeScript and the native Go runtime under `go/` (tracked by issue
+#17) are both developed directly on `main`.
 
 Rebase pull requests are welcome. Bringing a stale branch onto the current head
 is ordinary maintenance — open it as a normal pull request and name the source
 commits in the description.
 
-The **`enforce-target`** CI check rejects pull requests whose head
-ancestry sits on the **`main`** tip while far behind **`dev`**, and rejects
-empty, thin, or malformed descriptions; authors with repository push permission
-skip the ancestry heuristic only. As with approval requirements in
-[`MAINTAINERS.md`](./MAINTAINERS.md), this is enforced by convention until
-branch protection is configured.
+The **`enforce-target`** CI check rejects pull requests that do not target
+`main`, and rejects empty, thin, or malformed descriptions. As with approval
+requirements in [`MAINTAINERS.md`](./MAINTAINERS.md), this is enforced by
+convention until branch protection is configured.
 
 [`MAINTAINERS.md`](./MAINTAINERS.md) is authoritative for review and merge
 policy (approvals, CI requirements, security review, promotion). This file

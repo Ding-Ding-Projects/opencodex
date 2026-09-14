@@ -10,14 +10,12 @@ Thanks for helping with opencodex.
 
 ## Branches
 
-- `dev` — the only integration target for pull requests.
-- `main` — releases only; moves by maintainer-controlled promotion from `dev`.
-- `preview` — prerelease train.
+- `main`: the only integration target for pull requests, and the release
+  branch. There is no separate integration branch.
 
-The `dev2-go` Go native-port line has been retired. Its history is archived at
-[lidge-jun/opencodex-go-archive](https://github.com/lidge-jun/opencodex-go-archive),
-and everything now goes to `dev`. See [`MAINTAINERS.md`](./MAINTAINERS.md) for
-the reasoning.
+The native Go runtime port under `go/` is active again, tracked by issue #17,
+and developed directly on `main`. See [`MAINTAINERS.md`](./MAINTAINERS.md) for
+the branch history.
 
 Rebase pull requests are welcome: bringing a stale branch onto the current head
 is normal contribution. Note the source commits in the description.
