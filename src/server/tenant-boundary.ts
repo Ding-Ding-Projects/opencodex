@@ -133,8 +133,18 @@ export class TenantBoundary {
 
   async modelFromRequest(request: Request): Promise<string | undefined> {
     if (request.method === "GET" || request.method === "HEAD") return undefined;
-    const length = Number(request.headers.get("content-length") ?? "0");
-    if (Number.isFinite(length) && length > 1_048_576) throw new Error("tenant admission body exceeds 1 MiB");
+    // Consistency fix alongside the management-plane gate in management-api.ts: a header that is
+    // present but not a finite non-negative integer (Number("not-a-number") is NaN) must fail the
+    // same way a genuinely oversized header does, rather than being read as "0, so proceed". The
+    // chunked read loop below still bounds the real byte count on its own, so this was never able
+    // to admit an oversized body the way the management-plane gap did; it is still the wrong shape
+    // to leave unfixed next to it.
+    const lengthHeader = request.headers.get("content-length");
+    if (lengthHeader !== null) {
+      const length = Number(lengthHeader);
+      if (!Number.isInteger(length) || length < 0) throw new Error("invalid content-length header");
+      if (length > 1_048_576) throw new Error("tenant admission body exceeds 1 MiB");
+    }
     const clone = request.clone();
     const reader = clone.body?.getReader();
     if (!reader) return undefined;

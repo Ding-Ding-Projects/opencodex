@@ -149,10 +149,25 @@ export async function handleManagementAPI(req: Request, url: URL, config: OcxCon
   }
   // Management bodies are small JSON (provider names, key ids, settings). Reject oversized
   // payloads before any handler buffers them — the data plane has its own decompression cap.
+  //
+  // A Content-Length header that is present but not a finite non-negative integer (for example
+  // "not-a-number") used to be treated as if the size were simply unknown: Number("not-a-number")
+  // is NaN, Number.isFinite(NaN) is false, and the old check below required both isFinite AND
+  // "over the cap" before rejecting, so a malformed header made the whole guard a no-op and a
+  // genuinely oversized body sailed straight through to the route handlers below, each of which
+  // reads its body with a plain req.json() and no size check of its own. Reject a malformed
+  // header outright before any handler runs, and keep the 413 for a header that parses cleanly
+  // and is simply too big.
   if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
-    const contentLength = Number(req.headers.get("content-length") ?? "0");
-    if (Number.isFinite(contentLength) && contentLength > 2 * 1024 * 1024) {
-      return jsonResponse({ error: "request body too large" }, 413, req, config);
+    const contentLengthHeader = req.headers.get("content-length");
+    if (contentLengthHeader !== null) {
+      const contentLength = Number(contentLengthHeader);
+      if (!Number.isInteger(contentLength) || contentLength < 0) {
+        return jsonResponse({ error: "invalid content-length header" }, 400, req, config);
+      }
+      if (contentLength > 2 * 1024 * 1024) {
+        return jsonResponse({ error: "request body too large" }, 413, req, config);
+      }
     }
   }
   async function refreshCodexCatalogBestEffort(): Promise<void> {
