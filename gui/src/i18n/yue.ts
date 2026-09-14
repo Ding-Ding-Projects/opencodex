@@ -60,9 +60,16 @@ export const yue: Partial<Record<TKey, string>> = {
   "desktopUpdater.later": "遲啲先",
   "desktopUpdater.cancel": "取消下載",
   "desktopUpdater.retry": "再試一次",
+  "desktopUpdater.downloadAgain": "再下載一次",
   "desktopUpdater.failedTitle": "桌面更新要望一望",
   "desktopUpdater.failedBody": "更新未搞掂：{error}",
   "desktopUpdater.unknownError": "驗證唔到呢個更新。",
+  "desktopUpdater.cancelledTitle": "桌面更新取消咗",
+  "desktopUpdater.cancelledBody": "你自己叫停咗個下載，幾時想再嚟都得。",
+  "desktopUpdater.offlineTitle": "桌面更新等緊網絡",
+  "desktopUpdater.offlineBody": "更新程式連唔到更新伺服器，網絡番返嚟就會自動再試。",
+  "desktopUpdater.corruptTitle": "桌面更新驗證唔到",
+  "desktopUpdater.corruptBody": "下載落嚟嘅套件同官方公佈嘅 hash 對唔上，已經丟咗。",
 
   // ---- app chrome ----
   "app.logoAria": "{name} 標誌",
