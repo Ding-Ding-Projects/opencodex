@@ -1068,8 +1068,8 @@ function writeSatelliteBackup(
       offset += writeSync(fd, payload, offset, payload.length - offset, null);
     }
     // A brand-new temp file's fsync can answer EPERM/EACCES/EBUSY for a moment while
-    // antivirus or an indexer still holds the handle it just watched get created —
-    // retry only that transient window; any other failure still aborts immediately.
+    // antivirus or an indexer still holds the handle it just watched get created.
+    // Retry only that transient window; any other failure still aborts immediately.
     retryTransientFsError(() => fsyncSync(fd));
   } catch (error) {
     try { closeSync(fd); } catch { /* */ }

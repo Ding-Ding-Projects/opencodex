@@ -299,7 +299,7 @@ describe("retryTransientFsError", () => {
     }
   });
 
-  test("never retries a non-transient error — rethrows on the first attempt", () => {
+  test("never retries a non-transient error: rethrows on the first attempt", () => {
     let calls = 0;
     const run = () => {
       calls += 1;
@@ -313,7 +313,7 @@ describe("retryTransientFsError", () => {
     expect(calls).toBe(1);
   });
 
-  test("still throws — never silently succeeds — once a transient error outlasts every attempt", () => {
+  test("still throws (never silently succeeds) once a transient error outlasts every attempt", () => {
     let calls = 0;
     const run = () => {
       calls += 1;
