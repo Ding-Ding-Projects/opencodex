@@ -217,15 +217,15 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
     applyLayout(document.documentElement, width);
   }, [width]);
 
-  useEffect(() => {
-    const meta = (awaitedLocale => awaitedLocale)(locale);
-    const localeMeta = [
-      { code: "en", htmlLang: "en" }, { code: "yue", htmlLang: "zh-HK" }, { code: "bi", htmlLang: "en" },
-      { code: "de", htmlLang: "de" }, { code: "ko", htmlLang: "ko" }, { code: "zh", htmlLang: "zh-CN" },
-      { code: "ru", htmlLang: "ru" }, { code: "ja", htmlLang: "ja" },
-    ].find(item => item.code === meta);
-    document.documentElement.lang = localeMeta?.htmlLang ?? "en";
-  }, [locale]);
+  // `document.documentElement.lang` is owned solely by LanguageProvider
+  // (gui/src/i18n/provider.tsx), which folds in the active schedule override
+  // and School Mode before writing it. This component used to write the raw
+  // draft locale here too; since LanguageProvider is mounted as this
+  // component's child (see App.tsx / main.tsx), React commits its effect
+  // first, and this parent effect then ran after it and clobbered the result
+  // with a value that ignored both the override and School Mode. Removing it
+  // leaves LanguageProvider as the single writer, so there is no longer a
+  // last-write-wins race to get wrong.
 
   const setPrefs = useCallback((patch: Partial<Prefs>) => {
     setPrefsState(previous => ({ ...previous, ...patch }));
