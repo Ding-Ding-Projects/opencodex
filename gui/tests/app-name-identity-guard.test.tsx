@@ -484,7 +484,7 @@ describe("resolveAppDataPath — behavioural proof the identity path ignores the
   afterEach(uninstallBridge);
 
   test("the resolved path is byte-identical under the shipped name, a short custom name, and a name containing the shipped name as a substring", async () => {
-    const realPath = "C:\\Users\\swiftie\\AppData\\Local\\opencodex";
+    const realPath = "C:\\Users\\user\\AppData\\Local\\opencodex";
     installBridge(realPath);
     expect(hasDesktopAppDataBridge()).toBe(true);
 
