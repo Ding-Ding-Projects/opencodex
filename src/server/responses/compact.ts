@@ -123,10 +123,24 @@ export async function bufferCompactResponse(upstream: Response, signal: AbortSig
   const reader = upstream.body?.getReader();
   const contentType = upstream.headers.get("content-type") ?? "application/json";
   if (!reader) return new Response(null, { status: upstream.status, headers: { "Content-Type": contentType } });
-  const declaredLength = Number(upstream.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > COMPACT_RESPONSE_MAX_BYTES) {
-    await reader.cancel("compact_response_too_large").catch(() => undefined);
-    return compactResponseTooLargeError();
+  // Consistency fix alongside the management-plane gate in management-api.ts: a content-length
+  // header that is present but not a finite non-negative integer (Number("not-a-number") is NaN)
+  // must fail the same way a genuinely oversized header does, rather than being read as "0, so
+  // proceed". The read loop below still bounds the real byte count against COMPACT_RESPONSE_MAX_BYTES
+  // on its own, so this was never able to admit an oversized body the way the management-plane gap
+  // did; it is still the wrong shape to leave unfixed next to it, and a compact upstream that sends
+  // a garbled length is worth failing fast on rather than trusting further.
+  const declaredLengthHeader = upstream.headers.get("content-length");
+  if (declaredLengthHeader !== null) {
+    const declaredLength = Number(declaredLengthHeader);
+    if (!Number.isInteger(declaredLength) || declaredLength < 0) {
+      await reader.cancel("compact_response_malformed_length").catch(() => undefined);
+      return formatErrorResponse(502, "upstream_error", "Compact upstream returned an invalid content-length header");
+    }
+    if (declaredLength > COMPACT_RESPONSE_MAX_BYTES) {
+      await reader.cancel("compact_response_too_large").catch(() => undefined);
+      return compactResponseTooLargeError();
+    }
   }
   const chunks: Uint8Array[] = [];
   let total = 0;

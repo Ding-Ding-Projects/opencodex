@@ -82,9 +82,21 @@ export async function readJsonRequestBody(
   req: Request,
   maxBytes: number = MAX_DECOMPRESSED_BODY_BYTES,
 ): Promise<unknown> {
-  const contentLength = Number(req.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new DecompressedBodyTooLargeError(contentLength, maxBytes);
+  // Consistency fix alongside the management-plane gate in management-api.ts: a Content-Length
+  // header that is present but not a finite non-negative integer must be rejected up front rather
+  // than read as "0, so proceed". This is a belt-and-braces fix rather than the primary guard —
+  // decodeRequestBody's own assertBodySizeWithinLimit still bounds the actual bytes read below,
+  // so a malformed header here was never able to bypass the real cap the way it did on the
+  // management plane, but the early check should still fail the same way for the same reason.
+  const contentLengthHeader = req.headers.get("content-length");
+  if (contentLengthHeader !== null) {
+    const contentLength = Number(contentLengthHeader);
+    if (!Number.isInteger(contentLength) || contentLength < 0) {
+      throw new Error("invalid content-length header");
+    }
+    if (contentLength > maxBytes) {
+      throw new DecompressedBodyTooLargeError(contentLength, maxBytes);
+    }
   }
   const encoding = req.headers.get("content-encoding");
   const decoded = decodeRequestBody(new Uint8Array(await req.arrayBuffer()), encoding, maxBytes);
