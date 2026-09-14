@@ -5,9 +5,13 @@
  * main `config.toml`/`config.json` this app already owns, so a queue with a
  * dozen in-flight items being written on every progress line never contends
  * with, or risks corrupting, unrelated configuration. Every write is
- * temp-file-then-rename, the same shape `renameAtomicFile` in `src/config.ts`
- * uses, kept self-contained here because this file carries no secrets and so
- * needs none of that helper's Windows ACL hardening.
+ * temp-file-then-rename: the rename itself goes through `renameAtomicFile`
+ * in `src/config.ts`, so a transient Windows sharing violation on the
+ * destination (an antivirus scanner, the indexer, a backup tool) gets
+ * retried instead of silently losing an in-memory mutation that already
+ * happened. This file still skips `atomicWriteFile`'s separate Windows ACL
+ * hardening, since it carries no secrets; that hardening and the rename
+ * retry are different concerns, and only the first one does not apply here.
  *
  * Two read paths are exposed on purpose:
  * - `getQueueState()` — the in-memory cache, always current. The engine
@@ -24,9 +28,10 @@
  * test simulating one via `resetPullQueueStoreForTests`) first asks for it.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { resolveCodexHomeDir } from "../../codex/home";
+import { renameAtomicFile } from "../../config";
 import type { PullItemStatus, PullQueueItem, PullQueueState } from "./pull-queue-types";
 
 let storePathOverride: string | null = null;
@@ -124,7 +129,7 @@ export function flushQueueState(): void {
   const content = JSON.stringify(state, null, 2);
   try {
     writeFileSync(tmp, content, "utf8");
-    renameSync(tmp, path);
+    renameAtomicFile(tmp, path);
   } catch (error) {
     try { unlinkSync(tmp); } catch { /* best-effort cleanup; the real error below is what matters */ }
     throw error;

@@ -8,8 +8,14 @@
  * streaming is written on a throttled cadence (see `chat-engine.ts`), and
  * that must never contend with, or risk corrupting, unrelated state.
  *
- * Every write is temp-file-then-rename, the same atomic shape used
- * throughout this module and by `renameAtomicFile` in `src/config.ts`.
+ * Every write is temp-file-then-rename: the rename itself goes through
+ * `renameAtomicFile` in `src/config.ts`, so a transient Windows sharing
+ * violation on the destination (an antivirus scanner, the indexer, a
+ * backup tool) gets retried instead of silently losing an in-memory
+ * mutation that already happened. This file still skips
+ * `atomicWriteFile`'s separate Windows ACL hardening, since it carries no
+ * secrets; that hardening and the rename retry are different concerns, and
+ * only the first one does not apply here.
  *
  * Shaped exactly like `pull-queue-store.ts`: an always-current in-memory
  * cache (`getChatState`), an explicit flush (`flushChatState`), and a
@@ -27,9 +33,10 @@
  * item.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { resolveCodexHomeDir } from "../../codex/home";
+import { renameAtomicFile } from "../../config";
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
   DEFAULT_CHAT_PARAMETERS,
@@ -207,7 +214,7 @@ export function flushChatState(): void {
   const content = JSON.stringify(state, null, 2);
   try {
     writeFileSync(tmp, content, "utf8");
-    renameSync(tmp, path);
+    renameAtomicFile(tmp, path);
   } catch (error) {
     try { unlinkSync(tmp); } catch { /* best-effort cleanup; the real error below is what matters */ }
     throw error;
