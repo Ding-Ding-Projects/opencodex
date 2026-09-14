@@ -19,9 +19,8 @@ interface LoggedCall {
 
 interface ReleaseScenario {
   branch?: string;
-  ciPollMs?: number;
-  ciWaitTimeoutMs?: number;
-  goCiMissing?: boolean;
+  /** `gh run list --workflow ci.yml` reports this conclusion; default "success". */
+  ciConclusion?: "success" | "failure";
   headSha?: string;
   remoteHeadSha?: string;
   privacyExitCode?: number;
@@ -139,19 +138,8 @@ if (args[0] === "release" && args[1] === "view") {
 
 if (args[0] === "run" && args[1] === "list") {
   if (args.includes("ci.yml")) {
-    stdout(JSON.stringify([{ conclusion: "success", databaseId: 7, headSha, status: "completed", url: "https://example.test/ci" }]));
-    process.exit(0);
-  }
-
-  if (args.includes("service-lifecycle.yml")) {
-    stdout(JSON.stringify([{ conclusion: "success", databaseId: 8, headSha, status: "completed", url: "https://example.test/service" }]));
-    process.exit(0);
-  }
-
-  if (args.includes("go-ci.yml")) {
-    stdout(process.env.FAKE_GO_CI_MISSING === "1"
-      ? "[]"
-      : JSON.stringify([{ conclusion: "success", databaseId: 10, headSha, status: "completed", url: "https://example.test/go-ci" }]));
+    const conclusion = process.env.FAKE_CI_CONCLUSION ?? "success";
+    stdout(JSON.stringify([{ conclusion, databaseId: 7, headSha, status: "completed", url: "https://example.test/ci" }]));
     process.exit(0);
   }
 
@@ -223,13 +211,11 @@ function runRelease(version: string, scenario: ReleaseScenario = {}) {
       FAKE_RELEASE_LOG: logPath,
       FAKE_GIT_BRANCH: scenario.branch ?? "main",
       FAKE_GIT_HEAD_SHA: scenario.headSha ?? "abc123def456",
-      FAKE_GO_CI_MISSING: scenario.goCiMissing ? "1" : "0",
+      FAKE_CI_CONCLUSION: scenario.ciConclusion ?? "success",
       ...(scenario.remoteHeadSha ? { FAKE_GIT_REMOTE_HEAD_SHA: scenario.remoteHeadSha } : {}),
       FAKE_BUN_TSC_EXIT_CODE: String(scenario.typecheckExitCode ?? 0),
       FAKE_BUN_TEST_EXIT_CODE: String(scenario.testExitCode ?? 0),
       FAKE_BUN_PRIVACY_EXIT_CODE: String(scenario.privacyExitCode ?? 0),
-      OCX_RELEASE_CI_TIMEOUT_MS: String(scenario.ciWaitTimeoutMs ?? 20 * 60 * 1000),
-      OCX_RELEASE_CI_POLL_MS: String(scenario.ciPollMs ?? 10 * 1000),
     },
     encoding: "utf8",
   });
@@ -252,16 +238,21 @@ describe("release helper", () => {
     const testIndex = findCallIndex(calls, "bun", call => call.args.join(" ") === "test --isolate tests");
     const privacyIndex = findCallIndex(calls, "bun", call => call.args.join(" ") === "run privacy:scan");
     const versionIndex = findCallIndex(calls, "npm", call => call.args.join(" ") === "version 9.9.9 --no-git-tag-version");
-    const embedIndex = findCallIndex(calls, "bun", call => call.args.join(" ") === "scripts/embed-gui.ts");
+    // The release commit bumps package.json only; the workflow's own `Build
+    // and retain exact release archive` step is what verifies the embedded
+    // GUI bundle (`bun scripts/embed-gui.ts --verify-dist`), not this local
+    // preflight, so there is no embed-gui call and no go/internal/server/*
+    // path to stage here.
     const addIndex = findCallIndex(calls, "git", call =>
-      call.args[0] === "add"
-      && call.args.includes("package.json")
-      && call.args.includes("go/internal/server/static")
-      && call.args.includes("go/internal/server/static-manifest.json"),
+      call.args[0] === "add" && call.args.includes("package.json"),
     );
+    // Only ci.yml is awaited: service-lifecycle.yml is deleted (nothing in
+    // Actions gates a build or a release any more), and there is no separate
+    // go-ci.yml wait either. go/ changes still reach main through the same
+    // ci.yml push trigger, and the release build produces its own native
+    // binaries directly (`prepare-package.ts --native`), it does not read a
+    // Go CI verdict first.
     const ciIndex = findCallIndex(calls, "gh", call => call.args.includes("ci.yml"));
-    const serviceIndex = findCallIndex(calls, "gh", call => call.args.includes("service-lifecycle.yml"));
-    const goCiIndex = findCallIndex(calls, "gh", call => call.args.includes("go-ci.yml"));
     const liveRemoteHeadIndex = findCallIndex(calls, "git", call =>
       call.args.join(" ") === "ls-remote origin refs/heads/main",
     );
@@ -277,13 +268,12 @@ describe("release helper", () => {
     expect(testIndex).toBeGreaterThan(typecheckIndex);
     expect(privacyIndex).toBeGreaterThan(testIndex);
     expect(versionIndex).toBeGreaterThan(privacyIndex);
-    expect(embedIndex).toBeGreaterThan(versionIndex);
-    expect(addIndex).toBeGreaterThan(embedIndex);
+    expect(addIndex).toBeGreaterThan(versionIndex);
     expect(ciIndex).toBeGreaterThan(addIndex);
-    expect(serviceIndex).toBeGreaterThan(ciIndex);
-    expect(goCiIndex).toBeGreaterThan(serviceIndex);
-    expect(liveRemoteHeadIndex).toBeGreaterThan(goCiIndex);
+    expect(liveRemoteHeadIndex).toBeGreaterThan(ciIndex);
     expect(dispatchIndex).toBeGreaterThan(liveRemoteHeadIndex);
+    expect(findCallIndex(calls, "gh", call => call.args.includes("service-lifecycle.yml"))).toBe(-1);
+    expect(findCallIndex(calls, "gh", call => call.args.includes("go-ci.yml"))).toBe(-1);
   });
 
   test("failed privacy scan aborts before version bump, commit, and push", () => {
@@ -296,17 +286,26 @@ describe("release helper", () => {
     expect(findCallIndex(calls, "git", call => call.args[0] === "push")).toBe(-1);
   });
 
-  test("preview branch still defaults to preview tag and dry-run dispatch", () => {
-    const { calls, result } = runRelease("9.9.9-preview.1", { branch: "preview" });
+  test("a preview branch is refused before any dispatch: main is the only release branch", () => {
+    // A plain stable version, so this hits the branch check specifically
+    // rather than tripping the (also correct) "main releases must use a
+    // stable semver version" guard first.
+    const { calls, result } = runRelease("9.9.9", { branch: "preview" });
 
-    expect(result.status).toBe(0);
-    expect(findCallIndex(calls, "gh", call =>
-      call.args[0] === "workflow"
-      && call.args[1] === "run"
-      && call.args.includes("release.yml")
-      && call.args.includes("tag=preview")
-      && call.args.includes("dry-run=true"),
-    )).toBeGreaterThanOrEqual(0);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("must be on main");
+    expect(findCallIndex(calls, "gh", call => call.args[0] === "workflow" && call.args[1] === "run")).toBe(-1);
+    // Refused before the preflight even starts: no point paying for a full
+    // typecheck/test/privacy-scan run on a branch this script will refuse anyway.
+    expect(findCallIndex(calls, "bun", call => call.args.join(" ") === "x tsc --noEmit")).toBe(-1);
+  });
+
+  test("a preview prerelease version is refused on main: there is no preview channel to publish it under", () => {
+    const { calls, result } = runRelease("9.9.9-preview.1");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("must use a stable semver version");
+    expect(findCallIndex(calls, "gh", call => call.args[0] === "workflow" && call.args[1] === "run")).toBe(-1);
   });
 
   test("dispatch pins the audited release SHA via expected-sha", () => {
@@ -332,16 +331,22 @@ describe("release helper", () => {
     expect(findCallIndex(calls, "gh", call => call.args[0] === "workflow" && call.args[1] === "run")).toBe(-1);
   });
 
-  test("aborts before dispatch when the Go CI run is missing", () => {
-    const { calls, result } = runRelease("9.9.9", {
-      ciPollMs: 5,
-      ciWaitTimeoutMs: 50,
-      goCiMissing: true,
-    });
+  test("aborts before dispatch when Cross-platform CI failed for the release commit", () => {
+    // release.ts waits on exactly one workflow now: ci.yml. There is no
+    // separate go-ci.yml or service-lifecycle.yml wait to abort on; those
+    // waits never existed in this script (an earlier version of this test
+    // exercised them anyway; they were dead assertions against a call log
+    // that was always empty for those workflow names). A *failed* run is the
+    // one abort path this fake `gh` can exercise without an unrealistic
+    // multi-minute poll: `waitForSuccessfulCi` reports it synchronously on
+    // the first poll, unlike a genuinely missing run, which would only be
+    // distinguishable from "not started yet" after the real 20-minute
+    // timeout this script hardcodes.
+    const { calls, result } = runRelease("9.9.9", { ciConclusion: "failure" });
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr + result.stdout).toContain("timed out waiting for Go CI");
-    expect(findCallIndex(calls, "gh", call => call.args.includes("go-ci.yml"))).toBeGreaterThanOrEqual(0);
+    expect(result.stderr + result.stdout).toContain("Cross-platform CI failed");
+    expect(findCallIndex(calls, "gh", call => call.args.includes("ci.yml"))).toBeGreaterThanOrEqual(0);
     expect(findCallIndex(calls, "gh", call => call.args[0] === "workflow" && call.args[1] === "run")).toBe(-1);
   });
 

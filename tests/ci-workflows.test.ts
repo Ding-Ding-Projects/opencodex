@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   SCRIPT_BINDINGS,
@@ -25,6 +26,22 @@ async function readText(path: string): Promise<string> {
 
 function count(text: string, fragment: string): number {
   return text.split(fragment).length - 1;
+}
+
+/**
+ * Extract one named step's raw YAML text (its "- name: X" line through the
+ * line before the next step at the same indentation), by splitting on every
+ * step boundary rather than searching for the name once. A step whose name
+ * is a substring of another step's name, or of its own `run:` body, cannot
+ * fool this the way `indexOf(name)` could.
+ */
+function workflowStep(workflow: string, namePattern: RegExp): string {
+  const blocks = workflow.split(/\n {6}- name: /).slice(1);
+  const match = blocks.find(block => namePattern.test(block.split("\n")[0]!.trim()));
+  if (!match) {
+    throw new Error(`no step matching ${namePattern} found in workflow`);
+  }
+  return match;
 }
 
 type WorkflowStep = {
@@ -82,30 +99,103 @@ describe("GitHub Actions hardening", () => {
     expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
     expect(workflow).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
     expect(workflow).toContain("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e");
-    expect(workflow).toContain("bun test --isolate tests");
-    expect(workflow).toContain("bun test --isolate tests --max-concurrency=8 --timeout=30000");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
+  test("Windows CI runs no test, typecheck, or lint step", async () => {
+    // No workflow gates a build or a release on a test/typecheck/lint verdict:
+    // that checking moved to the developer's own machine, before the push.
+    const workflow = await readText(".github/workflows/ci.yml");
+
+    expect(workflow).not.toMatch(/^\s*-\s+name:\s*Typecheck\s*$/m);
+    expect(workflow).not.toMatch(/^\s*-\s+name:\s*Test\s*$/m);
+    expect(workflow).not.toMatch(/^\s*-\s+name:\s*GUI tests\s*$/m);
+    expect(workflow).not.toMatch(/^\s*-\s+name:\s*Privacy scan\s*$/m);
+    expect(workflow).not.toContain("bun test --isolate tests");
+    expect(workflow).not.toContain("bun run privacy:scan");
+    expect(workflow).not.toContain("bun x tsc --noEmit");
+  });
+
+  /**
+   * The repository-wide version of the two tests above: no workflow anywhere
+   * under `.github/workflows/` invokes a test, typecheck, lint, or static-
+   * analysis tool from a `run:` step, and no workflow's branch trigger still
+   * names a retired branch. Parsed per-step rather than grepped, so a
+   * forbidden command sitting inside a comment or a job-name string cannot
+   * satisfy (or defeat) this the way a whole-file substring check could.
+   */
+  test("no workflow runs test/lint tooling, and no branch trigger names a retired branch", async () => {
+    const workflowsDir = fileURLToPath(new URL(".github/workflows/", root));
+    const files = (await readdir(workflowsDir)).filter(name => name.endsWith(".yml")).sort();
+    expect(files.length).toBeGreaterThan(0);
+
+    type TriggerDocument = {
+      jobs?: Record<string, WorkflowJob>;
+      on?: Record<string, { branches?: string[] } | null | undefined>;
+    };
+
+    const forbidden: Array<{ label: string; pattern: RegExp }> = [
+      { label: "bun test", pattern: /\bbun test\b/ },
+      { label: "go test", pattern: /\bgo test\b/ },
+      { label: "tsc", pattern: /\btsc\b/ },
+      { label: "eslint", pattern: /\beslint\b/ },
+      { label: "go vet", pattern: /\bgo vet\b/ },
+      { label: "-race", pattern: /-race\b/ },
+      { label: "react-doctor", pattern: /\breact-doctor\b/ },
+      { label: "privacy:scan", pattern: /privacy:scan/ },
+    ];
+    const retiredBranches = new Set(["dev", "dev2-go", "preview"]);
+
+    const runOffenders: string[] = [];
+    const branchOffenders: string[] = [];
+
+    for (const file of files) {
+      const text = await readText(`.github/workflows/${file}`);
+      const parsed = Bun.YAML.parse(text) as TriggerDocument;
+
+      for (const [jobName, job] of Object.entries(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          if (typeof step.run !== "string") continue;
+          for (const { label, pattern } of forbidden) {
+            if (pattern.test(step.run)) {
+              runOffenders.push(`${file}:${jobName}:${step.name ?? "(unnamed step)"} runs ${label}`);
+            }
+          }
+        }
+      }
+
+      for (const [triggerName, trigger] of Object.entries(parsed.on ?? {})) {
+        for (const branch of trigger?.branches ?? []) {
+          if (retiredBranches.has(branch)) {
+            branchOffenders.push(`${file}:on.${triggerName} names retired branch "${branch}"`);
+          }
+        }
+      }
+    }
+
+    expect(runOffenders).toEqual([]);
+    expect(branchOffenders).toEqual([]);
+  });
+
   test("PR checks reach every branch the target gate accepts", async () => {
-    // These two lists have to move together with enforce-pr-target.yml. The
-    // gate now accepts dev2-go, and a PR that passes the gate but triggers no
-    // checks is worse than one that is blocked: it looks reviewable and has
-    // nothing behind it. Pin the pull_request branch lists to the gate's
-    // allow-list plus main.
+    // These two lists have to move together with enforce-pr-target.yml. main
+    // is the only integration line, and a PR that passes the gate but
+    // triggers no checks is worse than one that is blocked: it looks
+    // reviewable and has nothing behind it. Pin the pull_request branch list
+    // to the gate's allow-list, which is exactly main now.
     const gate = await readText(".github/workflows/enforce-pr-target.yml");
     const allowed = gate.match(/const ALLOWED_BASES = \[([^\]]*)\];/);
     expect(allowed).not.toBeNull();
     const bases = [...(allowed?.[1] ?? "").matchAll(/"([^"]+)"/g)].map(m => m[1]);
-    expect(bases).toEqual(["dev", "dev2-go"]);
+    expect(bases).toEqual(["main"]);
 
-    for (const path of [".github/workflows/ci.yml", ".github/workflows/service-lifecycle.yml"]) {
+    for (const path of [".github/workflows/ci.yml"]) {
       const workflow = Bun.YAML.parse(await readText(path)) as {
         on?: { pull_request?: Record<string, unknown> };
       };
       const trigger = workflow.on?.pull_request ?? {};
       const branches = (trigger.branches as string[] | undefined) ?? [];
-      expect([...branches].sort()).toEqual(["dev", "dev2-go", "main"]);
+      expect([...branches].sort()).toEqual(["main"]);
 
       // Narrowing a default is a mutation that deletes nothing. Omitting
       // `types` means opened + synchronize + reopened; writing
@@ -121,16 +211,15 @@ describe("GitHub Actions hardening", () => {
       }
     }
 
-    // The push trigger is deliberately narrower: dev2-go is an integration
-    // line, not a release-promotion source, and release.yml gates on main and
-    // preview. Widening this one would put dev2-go into that path.
+    // main is the only integration and release-promotion branch, so push and
+    // pull_request now target the identical single-branch list.
     const ci = Bun.YAML.parse(await readText(".github/workflows/ci.yml")) as {
       on?: {
         push?: { branches?: string[]; paths?: string[] };
         pull_request?: { paths?: string[] };
       };
     };
-    expect([...(ci.on?.push?.branches ?? [])].sort()).toEqual(["dev", "main", "preview"]);
+    expect([...(ci.on?.push?.branches ?? [])].sort()).toEqual(["main"]);
 
     // The path filter decides whether the job runs at all. Deleting one entry
     // deletes nothing visible: the workflow still exists, still lists the right
@@ -195,11 +284,9 @@ describe("GitHub Actions hardening", () => {
 
   test("Windows producers retain safe artifacts after failures", async () => {
     const producers: Array<{ path: string; jobs: string[] }> = [
-      { path: ".github/workflows/ci.yml", jobs: ["test", "npm-global-smoke"] },
+      { path: ".github/workflows/ci.yml", jobs: ["build", "npm-global-smoke"] },
       { path: ".github/workflows/release.yml", jobs: ["publish"] },
-      { path: ".github/workflows/service-lifecycle.yml", jobs: ["windows-schtasks"] },
       { path: ".github/workflows/deploy-docs.yml", jobs: ["build"] },
-      { path: ".github/workflows/react-doctor.yml", jobs: ["react-doctor"] },
       { path: ".github/workflows/auto-release.yml", jobs: ["release"] },
       { path: ".github/workflows/desktop-installer.yml", jobs: ["build"] },
       { path: ".github/workflows/gui-preview.yml", jobs: ["build"] },
@@ -317,25 +404,12 @@ describe("GitHub Actions hardening", () => {
     expect(text).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
   });
 
-  test("Windows service lifecycle is least-privilege, bounded, and cannot swallow health failures", async () => {
-    const workflow = await readText(".github/workflows/service-lifecycle.yml");
-
-    expect(workflow).toContain("permissions:\n  contents: read");
-    expect(workflow).toContain("group: service-lifecycle-${{ github.ref }}");
-    expect(workflow).toContain("cancel-in-progress: true");
-    expect(count(workflow, "timeout-minutes: 10")).toBe(1);
-    expect(count(workflow, "if: ${{ !cancelled() }}")).toBe(1);
-    expect(workflow).toContain("if: ${{ always() }}");
-    expect(workflow).not.toContain('healthz || echo "healthz not ready yet"');
-    expect(workflow).not.toContain("sleep 8");
-    expect(workflow).toContain("windows-schtasks:");
-    expect(workflow).not.toContain("linux-systemd:");
-    expect(workflow).not.toContain("macos-launchd:");
-    expect(workflow).not.toContain("ubuntu-latest");
-    expect(workflow).not.toContain("macos-latest");
-    expect(workflow).toContain("Get-ScheduledTask -TaskName opencodex-proxy -ErrorAction SilentlyContinue");
-    expect(workflow).toContain("scheduled task or proxy survived uninstall");
-    expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
+  test("service-lifecycle.yml stays deleted, not reintroduced by another name", async () => {
+    // It was a test-only workflow (Windows Scheduled Tasks install/uninstall
+    // smoke), and this project runs no tests in Actions. Pin the deletion
+    // itself, the way the file inventory test below pins every survivor.
+    await expect(Bun.file(new URL(".github/workflows/service-lifecycle.yml", root)).exists()).resolves.toBe(false);
+    expect(await readText("scripts/release.ts")).not.toContain("service-lifecycle.yml");
   });
 
   test("release workflow publishes the exact SHA and channel without quality-gate waits or injection", async () => {
@@ -376,13 +450,16 @@ describe("GitHub Actions hardening", () => {
     }
 
     // Delivery never runs or waits for a code-quality workflow verdict.
-    expect(workflow).not.toMatch(/gh run (?:list|watch)[^\n]*(?:ci\.yml|service-lifecycle\.yml)/);
+    expect(workflow).not.toMatch(/gh run (?:list|watch)[^\n]*ci\.yml/);
     expect(workflow).not.toMatch(/(?:bun|npm|pnpm|yarn) (?:run )?(?:test|lint|typecheck)\b/);
 
-    // Channel guards stay branch-exact.
-    expect(workflow).toContain("Release must run from main or preview");
+    // Channel guard is branch-exact: main only, no preview branch or channel.
+    expect(workflow).toContain("Release must run from main");
+    expect(workflow).not.toContain("Release must run from main or preview");
     expect(workflow).toContain("main releases must use a stable semver version");
-    expect(workflow).toContain("preview releases must use a preview prerelease version");
+    expect(workflow).not.toContain("preview releases must use a preview prerelease version");
+    expect(workflow).not.toContain("refs/heads/preview");
+    expect(workflow).not.toMatch(/options:\s*\n\s*- latest\s*\n\s*- preview/);
 
     // Release notes must include PR categories and the full channel commit range
     // (branch merges + direct commits). Stable releases also carry matching preview notes.
@@ -428,7 +505,7 @@ describe("GitHub Actions hardening", () => {
     // Notes must be assembled before tagging so a notes API failure does not leave
     // a remote tag that blocks release retries at preflight.
     const createStep = workflow.split("- name: Create/reconcile GitHub release")[1]!.split(/\n {6}- name:/)[0]!;
-    const notesAssembly = createStep.split('upload_root=')[0]!;
+    const notesAssembly = createStep.split('git tag "$release_tag"')[0]!;
     // Preview carry lookup must use tag-specific API status, not `gh release view` stderr prose.
     expect(notesAssembly).toContain("releases/tags/");
     expect(notesAssembly).not.toContain("gh release view");
@@ -437,8 +514,13 @@ describe("GitHub Actions hardening", () => {
       expect(line).not.toMatch(/\|\|\s*(true|echo|:)/);
     }
     expect(createStep).not.toContain("set +e\n            pr_notes");
+    // Notes assembly's gh api reads land before the tag/release mutation, so a
+    // notes-API failure never leaves a dangling tag with no release behind it.
     expect(createStep.indexOf("gh api")).toBeGreaterThan(-1);
-    expect(createStep.indexOf("bun scripts/reconcile-release-assets.ts")).toBeGreaterThan(createStep.indexOf("gh api"));
+    expect(createStep.indexOf('git tag "$release_tag"')).toBeGreaterThan(createStep.indexOf("gh api"));
+    expect(createStep.indexOf('gh release create "$release_tag"')).toBeGreaterThan(
+      createStep.indexOf('git tag "$release_tag"'),
+    );
     // First-channel releases must not call generate-notes without an explicit baseline
     // (GitHub would otherwise pick the newest repo tag, possibly from the other channel).
     // Scope to the single if-block that owns generate-notes; createStep has two
@@ -506,26 +588,30 @@ describe("GitHub Actions hardening", () => {
 
   const SCRIPT_LOAD = ["require", "require"] as const;
 
-  /** Reads every allowed-base PR performs before any enforcement writes. */
+  // There is no more ancestry check and no more permission lookup (the
+  // permission lookup existed only to decide whether to skip ancestry): main
+  // is the only allowed base, there is no second base to compare ancestry
+  // against, and every scenario's reads collapse to the same shape whether
+  // the base is allowed or not. `readsAllowedBase` and `readsWrongBase` keep
+  // separate names at each call site to say which scenario is being read,
+  // even though their bodies are now identical.
+
+  /** Reads every PR performs before any enforcement writes. */
   function readsAllowedBase(tail: string[] = []): string[] {
     return [
       ...SCRIPT_LOAD,
       "pulls.get",
       "issues.listComments",
-      "repos.getCollaboratorPermissionLevel",
-      "repos.compareCommitsWithBasehead",
-      "repos.compareCommitsWithBasehead",
       ...tail,
     ];
   }
 
-  /** Reads for a PR whose base is outside the allow-list (no ancestry compares). */
+  /** Same reads for a PR whose base is outside the allow-list. */
   function readsWrongBase(tail: string[] = []): string[] {
     return [
       ...SCRIPT_LOAD,
       "pulls.get",
       "issues.listComments",
-      "repos.getCollaboratorPermissionLevel",
       ...tail,
     ];
   }
@@ -537,9 +623,6 @@ describe("GitHub Actions hardening", () => {
       "pulls.get",
       "issues.listComments",
       "issues.listComments",
-      "repos.getCollaboratorPermissionLevel",
-      "repos.compareCommitsWithBasehead",
-      "repos.compareCommitsWithBasehead",
       ...tail,
     ];
   }
@@ -730,16 +813,19 @@ describe("GitHub Actions hardening", () => {
       "synchronize",
     ]);
 
-    // The verdict is a live PR read plus ancestry/description checks.
+    // The verdict is a live PR read plus a base/description check. There is
+    // no ancestry check any more, and no permission lookup: main is the only
+    // allowed base, so there is no second base to compare ancestry against,
+    // and nothing left for a permission lookup to gate.
     expect(script).toContain("github.rest.pulls.get");
     expect(script).toContain("collectPrQualityFailures");
-    expect(script).toContain("github.rest.repos.getCollaboratorPermissionLevel");
-    expect(script).toContain("github.rest.repos.compareCommitsWithBasehead");
+    expect(script).not.toContain("github.rest.repos.getCollaboratorPermissionLevel");
+    expect(script).not.toContain("github.rest.repos.compareCommitsWithBasehead");
     // The allow-list is the gate's whole policy, so it is pinned by value and
     // not just by shape: a widened list is the one edit that opens every base
     // at once while every behavioural scenario below still passes.
-    expect(script).toMatch(/const ALLOWED_BASES = \["dev", "dev2-go"\];/);
-    expect(script).toMatch(/const DEFAULT_BASE = "dev";/);
+    expect(script).toMatch(/const ALLOWED_BASES = \["main"\];/);
+    expect(script).toMatch(/const DEFAULT_BASE = "main";/);
 
     // Every mutation targets the PR the event fired for. `pull_number` is the
     // only handle the script has, and an audit round repointed it at
@@ -883,7 +969,7 @@ describe("GitHub Actions hardening", () => {
      * the check that closes them has to be able to look from the same place.
      */
     async function runProbe(body: string): Promise<Record<string, unknown>> {
-      const result = await runEnforcePrTarget(body, { pr: { base: { ref: "dev" } } });
+      const result = await runEnforcePrTarget(body, { pr: { base: { ref: "main" } } });
       return result.returnValue as Record<string, unknown>;
     }
 
@@ -903,68 +989,16 @@ describe("GitHub Actions hardening", () => {
       };
     }
 
-    test("a PR targeting dev is left completely alone", async () => {
-      const result = await run({ pr: { base: { ref: "dev" } } });
+    test("a PR targeting main is left completely alone", async () => {
+      const result = await run({ pr: { base: { ref: "main" } } });
 
       // Reads only. If a rewrite adds a write here, it appears in this list.
       expect(methodsOf(result)).toEqual(readsAllowedBase());
       expect(result.logs.join(" ")).toContain("All PR quality gates passed");
     });
 
-    test("a PR targeting dev2-go is left completely alone, exactly like dev", async () => {
-      // The whole point of the allow-list. dev2-go is the Go native-port
-      // integration line; before this change the gate prefixed and drafted
-      // every PR aimed at it, and GitHub refuses to merge a draft — so the
-      // line existed but nothing could land on it.
-      const result = await run({ pr: { base: { ref: "dev2-go" }, title: "Port the runtime entry", draft: false } });
-
-      expect(methodsOf(result)).toEqual(readsAllowedBase());
-      expect(result.logs.join(" ")).toContain("All PR quality gates passed");
-      // No comment either. Silence is the acceptance signal.
-      expect(callsTo(result, "issues.createComment")).toEqual([]);
-    });
-
-    const HEAD_SHA = "3f1c0de0a6a4d0a3f9a1b2c3d4e5f60718293a4b";
-    const ANCESTRY_FAIL_COMPARES = {
-      [`main...${HEAD_SHA}`]: { ahead_by: 1, behind_by: 0 },
-      [`dev...${HEAD_SHA}`]: { ahead_by: 0, behind_by: 44 },
-    } as const;
-
-    test("wrong ancestry on dev fails without title prefix (#644)", async () => {
-      const result = await run({
-        pr: { base: { ref: "dev" } },
-        authorPermission: "read",
-        compareByBasehead: ANCESTRY_FAIL_COMPARES,
-      });
-
-      expect(callsTo(result, "pulls.update")).toEqual([]);
-      expect(methodsOf(result)).toEqual(readsAllowedBase([
-        "issues.createComment",
-        "issues.updateComment",
-        "graphql",
-        "issues.updateComment",
-        "issues.updateComment",
-      ]));
-      const commentBody = lastEnforcerCommentBody(result);
-      expect(commentBody).toContain("Wrong branch ancestry");
-      expect(commentBody).not.toContain("Wrong target branch");
-      expect(result.warnings.some((w) => w.startsWith("setFailed:"))).toBe(true);
-      expect(result.warnings.some((w) => w.includes("wrong ancestry"))).toBe(true);
-    });
-
-    test("maintainers skip ancestry enforcement with the same compares", async () => {
-      const result = await run({
-        pr: { base: { ref: "dev" } },
-        authorPermission: "write",
-        compareByBasehead: ANCESTRY_FAIL_COMPARES,
-      });
-
-      expect(methodsOf(result)).toEqual(readsAllowedBase());
-      expect(result.warnings.some((w) => w.startsWith("setFailed:"))).toBe(false);
-    });
-
     test("empty PR description fails and drafts", async () => {
-      const result = await run({ pr: { base: { ref: "dev" }, body: "" } });
+      const result = await run({ pr: { base: { ref: "main" }, body: "" } });
 
       expect(result.warnings.some((w) => w.startsWith("setFailed:"))).toBe(true);
       expect(lastEnforcerCommentBody(result)).toContain("Pull request description");
@@ -975,7 +1009,7 @@ describe("GitHub Actions hardening", () => {
     test("literal backslash-n in the body fails the description gate", async () => {
       const result = await run({
         pr: {
-          base: { ref: "dev" },
+          base: { ref: "main" },
           body: "## Summary\\n\\nThis uses escaped newlines instead of real breaks.\\n\\n## Test plan\\n\\nAlso escaped here.",
         },
       });
@@ -986,13 +1020,13 @@ describe("GitHub Actions hardening", () => {
 
     test("clears prior bot state when every gate passes again", async () => {
       const result = await run({
-        pr: { base: { ref: "dev" }, draft: true },
+        pr: { base: { ref: "main" }, draft: true },
         comments: [botComment({
           version: 1,
           active: true,
           autoDraftedByBot: true,
           titlePrefixedByBot: false,
-          ancestryFailed: true,
+          ancestryFailed: false,
           descriptionFailed: true,
         })],
       });
@@ -1009,10 +1043,11 @@ describe("GitHub Actions hardening", () => {
 
     test("every base outside the allow-list is still blocked", async () => {
       // Widening a list is a one-token edit, and the danger is widening it too
-      // far. These four are the bases a contributor actually reaches for:
-      // the release branch, its old name, the prerelease train, and a topic
-      // branch. None of them is an integration line.
-      for (const ref of ["main", "master", "preview", "feature/x"]) {
+      // far. These four are bases a contributor might actually reach for: the
+      // retired integration branch, the release branch's old name, the
+      // retired prerelease train, and an ordinary topic branch. None of them
+      // is the integration line any more.
+      for (const ref of ["dev", "master", "preview", "feature/x"]) {
         const result = await run({ pr: { base: { ref }, title: "Add a thing", draft: false } });
 
         expect(methodsOf(result)).toEqual(readsWrongBase([
@@ -1028,76 +1063,24 @@ describe("GitHub Actions hardening", () => {
       }
     });
 
-    test("a PR retargeted from main to dev2-go is restored, not left prefixed", async () => {
-      // The migration case the allow-list creates: `wrongBase` now goes false
-      // for two bases, so the restoration path has to fire for dev2-go the
-      // same way it fires for dev. If it does not, a contributor who follows
-      // the bot's own instruction ends up with a permanently renamed, drafted
-      // PR and no state left to explain it.
+    test("the wrong-target explanation names the one allowed base", async () => {
+      // main is the only legitimate target now, so the message no longer
+      // ranks it against an alternate integration line. It just says where
+      // to go.
       const result = await run({
-        pr: { base: { ref: "dev2-go" }, draft: true, title: "[WRONG BRANCH] Port the runtime entry" },
-        comments: [botComment({ version: 1, active: true, autoDraftedByBot: true, titlePrefixedByBot: true })],
-      });
-
-      expect(methodsOf(result)).toEqual(readsAllowedBase([
-        "pulls.update",
-        "graphql",
-        "issues.updateComment",
-      ]));
-      expect(callsTo(result, "pulls.update")).toEqual([
-        { owner: "lidge-jun", repo: "opencodex", pull_number: 42, title: "Port the runtime entry" },
-      ]);
-      const [cleared] = callsTo(result, "issues.updateComment") as [{ body: string }];
-      expect(cleared.body).toContain('"active":false');
-      // The confirmation names where the PR actually went, not a hard-coded
-      // default — otherwise it tells a dev2-go contributor they landed on dev.
-      expect(cleared.body).toContain("now targets `dev2-go`");
-    });
-
-    test("a PR moved from dev2-go back to main is enforced again from a cleared state", async () => {
-      // The other half of the round trip. After a restoration the marker is
-      // inactive, so a move back out has to build fresh state rather than
-      // reuse the cleared one, and must not stack a second prefix.
-      const result = await run({
-        pr: { base: { ref: "main" }, draft: false, title: "Port the runtime entry" },
-        comments: [botComment({ version: 1, active: false, autoDraftedByBot: false, titlePrefixedByBot: false })],
-      });
-
-      expect(methodsOf(result)).toEqual(readsWrongBase([
-        "issues.updateComment",
-        "pulls.update",
-        "issues.updateComment",
-        "graphql",
-        "issues.updateComment",
-        "issues.updateComment",
-      ]));
-      expect(callsTo(result, "pulls.update")).toEqual([
-        { owner: "lidge-jun", repo: "opencodex", pull_number: 42, title: "[WRONG BRANCH] Port the runtime entry" },
-      ]);
-      expect(lastEnforcerCommentBody(result)).toContain('"active":true');
-      expect(lastEnforcerCommentBody(result)).toContain('"autoDraftedByBot":true');
-      expect(lastEnforcerCommentBody(result)).toContain('"titlePrefixedByBot":true');
-      expect(result.warnings.some((w) => w.startsWith("setFailed:"))).toBe(true);
-    });
-
-    test("the wrong-target explanation lists every allowed base and names the default", async () => {
-      // Two branches are legitimate and only one is the default, so listing
-      // them without ranking them sends ordinary contributions to the Go port
-      // line. The instruction has to say which one to pick and why the other
-      // exists.
-      const result = await run({
-        pr: { base: { ref: "main" }, title: "Add a thing", draft: false },
+        pr: { base: { ref: "dev" }, title: "Add a thing", draft: false },
       });
       const commentBody = lastEnforcerCommentBody(result);
 
-      expect(commentBody).toContain("must target one of `dev` or `dev2-go`");
-      expect(commentBody).toContain("Please retarget this PR to `dev`");
-      expect(commentBody).toContain("only for scoped Go native-port work");
+      expect(commentBody).toContain("must target `main`");
+      expect(commentBody).toContain("Please retarget this PR to `main`");
+      expect(commentBody).toContain("the only integration branch");
+      expect(commentBody).not.toContain("dev2-go");
     });
 
-    test("a PR targeting main is prefixed, drafted, and explained — and nothing else", async () => {
+    test("a PR targeting dev is prefixed, drafted, and explained, and nothing else", async () => {
       const result = await run({
-        pr: { base: { ref: "main" }, title: "Add a thing", draft: false },
+        pr: { base: { ref: "dev" }, title: "Add a thing", draft: false },
       });
 
       // Pending ownership first, then title prefix, then claim autoDraftedByBot and
@@ -1139,7 +1122,7 @@ describe("GitHub Actions hardening", () => {
 
     test("a PR that was already a draft is not un-drafted afterwards", async () => {
       const wrong = await run({
-        pr: { base: { ref: "main" }, draft: true },
+        pr: { base: { ref: "dev" }, draft: true },
       });
 
       // No draft conversion: it is already a draft. Pending ownership first,
@@ -1155,7 +1138,7 @@ describe("GitHub Actions hardening", () => {
 
       // Now retarget it correctly, feeding that state back in.
       const restored = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: false, titlePrefixedByBot: true })],
       });
 
@@ -1171,7 +1154,7 @@ describe("GitHub Actions hardening", () => {
 
     test("a corrected PR gets its title and ready state back", async () => {
       const result = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: true, titlePrefixedByBot: true })],
       });
 
@@ -1196,7 +1179,7 @@ describe("GitHub Actions hardening", () => {
 
     test("only this workflow's own prefix is removed, not a contributor's edits", async () => {
       const result = await run({
-        pr: { base: { ref: "dev" }, draft: false, title: "[WRONG BRANCH] Add a thing (v2)" },
+        pr: { base: { ref: "main" }, draft: false, title: "[WRONG BRANCH] Add a thing (v2)" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: false, titlePrefixedByBot: true })],
       });
 
@@ -1207,7 +1190,7 @@ describe("GitHub Actions hardening", () => {
 
     test("a rerun on an already-handled PR does not stack prefixes or re-draft", async () => {
       const result = await run({
-        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: true, titlePrefixedByBot: true })],
       });
 
@@ -1225,8 +1208,8 @@ describe("GitHub Actions hardening", () => {
       // `Object.assign(pr, context.payload.pull_request)` — invisible in a
       // harness where the two were the same object.
       const wentWrong = await run({
-        pr: { base: { ref: "main" }, title: "Add a thing", draft: false },
-        eventPayload: { base: { ref: "dev" }, title: "Add a thing", draft: false },
+        pr: { base: { ref: "dev" }, title: "Add a thing", draft: false },
+        eventPayload: { base: { ref: "main" }, title: "Add a thing", draft: false },
       });
       // Exact equality, not `toContain`. An audit round hung an extra
       // `github.request("POST /repos/attacker/other/issues", …)` off precisely
@@ -1243,10 +1226,10 @@ describe("GitHub Actions hardening", () => {
         { owner: "lidge-jun", repo: "opencodex", pull_number: 42, title: "[WRONG BRANCH] Add a thing" },
       ]);
 
-      // …and the reverse: the event says main, the live PR says dev. No writes.
+      // …and the reverse: the event says dev, the live PR says main. No writes.
       const wasFixed = await run({
-        pr: { base: { ref: "dev" } },
-        eventPayload: { base: { ref: "main" } },
+        pr: { base: { ref: "main" } },
+        eventPayload: { base: { ref: "dev" } },
       });
       expect(methodsOf(wasFixed)).toEqual(readsAllowedBase());
     });
@@ -1255,27 +1238,27 @@ describe("GitHub Actions hardening", () => {
       // Half of this gate is what it says. Reading `context.payload
       // .pull_request.base.ref` for the message alone keeps every call and
       // every argument identical while the text lies: a PR that actually
-      // targets main gets drafted and told it "currently targets dev", so the
+      // targets dev gets drafted and told it "currently targets main", so the
       // author sees nothing to fix. The corrected-path sentence has the same
       // hole in reverse.
       const wrongTarget = await run({
-        pr: { base: { ref: "main" }, title: "Add a thing", draft: false },
-        eventPayload: { base: { ref: "dev" }, title: "Add a thing", draft: false },
+        pr: { base: { ref: "dev" }, title: "Add a thing", draft: false },
+        eventPayload: { base: { ref: "main" }, title: "Add a thing", draft: false },
       });
-      expect(lastEnforcerCommentBody(wrongTarget)).toContain("currently targets `main`");
-      expect(lastEnforcerCommentBody(wrongTarget)).not.toContain("currently targets `dev`");
+      expect(lastEnforcerCommentBody(wrongTarget)).toContain("currently targets `dev`");
+      expect(lastEnforcerCommentBody(wrongTarget)).not.toContain("currently targets `main`");
 
       // The corrected-path sentence: the event still carries the old wrong
-      // base, the live PR is on dev2-go. Naming the event's base here tells the
-      // author their retarget did not take.
+      // base, the live PR is now on main. Naming the event's base here tells
+      // the author their retarget did not take.
       const corrected = await run({
-        pr: { base: { ref: "dev2-go" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
-        eventPayload: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        eventPayload: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: false, titlePrefixedByBot: true })],
       });
       const [edited] = callsTo(corrected, "issues.updateComment") as [{ body: string }];
-      expect(edited.body).toContain("now targets `dev2-go`");
-      expect(edited.body).not.toContain("now targets `main`");
+      expect(edited.body).toContain("now targets `main`");
+      expect(edited.body).not.toContain("now targets `dev`");
     });
 
     test("the bot finds its own comment even when it has scrolled onto a later page", async () => {
@@ -1290,7 +1273,7 @@ describe("GitHub Actions hardening", () => {
       }));
 
       const result = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         commentPages: [
           filler,
           [botComment({ version: 1, active: true, autoDraftedByBot: true, titlePrefixedByBot: true })],
@@ -1313,7 +1296,7 @@ describe("GitHub Actions hardening", () => {
       // return;` — a wrong-target PR with one corrupted comment became a
       // permanent no-op, and every scenario still passed.
       const result = await run({
-        pr: { base: { ref: "main" }, title: "Add a thing", draft: false },
+        pr: { base: { ref: "dev" }, title: "Add a thing", draft: false },
         comments: [{
           id: 7,
           user: { login: BOT },
@@ -1349,7 +1332,7 @@ describe("GitHub Actions hardening", () => {
 
       // Still wrong: refresh the explanation. Nothing to re-apply.
       const stillWrong = await run({
-        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment(noRecordedChanges)],
       });
       expect(methodsOf(stillWrong)).toEqual(readsWrongBase([
@@ -1360,7 +1343,7 @@ describe("GitHub Actions hardening", () => {
       // Corrected: nothing to undo, but the state must still be cleared or the
       // next wrong-target event resumes from a stale record.
       const corrected = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment(noRecordedChanges)],
       });
       expect(methodsOf(corrected)).toEqual(readsAllowedBase(["issues.updateComment"]));
@@ -1371,12 +1354,12 @@ describe("GitHub Actions hardening", () => {
 
     test("a PR undrafted by hand before the retarget still gets its state cleared", async () => {
       // The bot drafted it, the author marked it ready again, then retargeted
-      // to dev. `autoDraftedByBot: true` with `pr.draft: false` is reachable and
+      // to main. `autoDraftedByBot: true` with `pr.draft: false` is reachable and
       // had no scenario, so an audit round added `if (autoDraftedByBot &&
       // !pr.draft) return;` — the state comment stays active forever and the
       // next wrong-target event resumes from a record that no longer matches.
       const result = await run({
-        pr: { base: { ref: "dev" }, draft: false, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: false, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: true, titlePrefixedByBot: true })],
       });
 
@@ -1394,7 +1377,7 @@ describe("GitHub Actions hardening", () => {
       // the prefix — the author removed it themselves. Slicing anyway would eat
       // the first 15 characters of their title.
       const result = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: true, titlePrefixedByBot: true })],
       });
 
@@ -1412,18 +1395,16 @@ describe("GitHub Actions hardening", () => {
       // both left every other assertion intact, and both leave a contributor
       // staring at a mangled PR with no notification and no next step.
       const result = await run({
-        pr: { base: { ref: "main" }, title: "Add a thing", draft: false, user: { login: "someone-else" } },
+        pr: { base: { ref: "dev" }, title: "Add a thing", draft: false, user: { login: "someone-else" } },
       });
 
       const commentBody = lastEnforcerCommentBody(result);
       // Addressed to the PR author, so GitHub actually notifies them.
       expect(commentBody).toContain("@someone-else");
-      // Names every branch involved, so the instruction is actionable without
-      // context: where the PR is now, where it should go, and the one other
-      // base that is legitimate but not the default.
+      // Names both branches involved: where the PR is now, and where it
+      // should go. There is no second legitimate base to rank against any more.
       expect(commentBody).toContain("`main`");
       expect(commentBody).toContain("`dev`");
-      expect(commentBody).toContain("`dev2-go`");
       // Points at the documentation rather than assuming the reader knows.
       expect(commentBody).toContain("https://opencodex.me/contributing/");
       // And carries the state the next run needs.
@@ -1438,7 +1419,7 @@ describe("GitHub Actions hardening", () => {
       // that sequence means the bot does not find its own state — so it posts a
       // duplicate and forgets what it changed. Round ten dropped it to 1 and
       // nothing failed.
-      const result = await run({ pr: { base: { ref: "dev" } } });
+      const result = await run({ pr: { base: { ref: "main" } } });
       const [listed] = callsTo(result, "issues.listComments") as [{ per_page: number }];
       expect(listed.per_page).toBe(100);
     });
@@ -1449,12 +1430,12 @@ describe("GitHub Actions hardening", () => {
       // side without teaching the read side is how a PR ends up with state
       // nobody honours — the prefix stays on forever. Round ten bumped it to 2
       // and every test passed, because nothing asserted the value.
-      const wrong = await run({ pr: { base: { ref: "main" }, draft: false } });
+      const wrong = await run({ pr: { base: { ref: "dev" }, draft: false } });
       const [posted] = callsTo(wrong, "issues.createComment") as [{ body: string }];
       expect(posted.body).toContain('"version":1');
 
       const cleared = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: true, titlePrefixedByBot: true })],
       });
       const [done] = callsTo(cleared, "issues.updateComment") as [{ body: string }];
@@ -1478,7 +1459,7 @@ describe("GitHub Actions hardening", () => {
         // changes are undone, and the marker is rewritten at the version this
         // workflow writes.
         const restored = await run({
-          pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+          pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
           comments: [botComment(active)],
         });
         expect(methodsOf(restored)).toEqual(readsAllowedBase([
@@ -1497,7 +1478,7 @@ describe("GitHub Actions hardening", () => {
         // unknown version through untouched. Pinning that is what makes a
         // future migration a visible decision rather than a silent rewrite.
         const wrong = await run({
-          pr: { base: { ref: "main" }, draft: false, title: "Add a thing" },
+          pr: { base: { ref: "dev" }, draft: false, title: "Add a thing" },
           comments: [botComment(active)],
         });
         expect(methodsOf(wrong)).toEqual(readsWrongBase([
@@ -1528,7 +1509,7 @@ describe("GitHub Actions hardening", () => {
       // contributor-reachable. It is reachable across a migration, which is
       // exactly when the prefix must still come off.
       const loose = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: "true", autoDraftedByBot: 1, titlePrefixedByBot: "yes" })],
       });
       expect(methodsOf(loose)).toEqual(readsAllowedBase([
@@ -1543,7 +1524,7 @@ describe("GitHub Actions hardening", () => {
       // And the falsy side is symmetric: `null` and `0` skip their own
       // restoration without stopping the run or the clearing write.
       const falsy = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [botComment({ version: 1, active: true, autoDraftedByBot: null, titlePrefixedByBot: 0 })],
       });
       expect(methodsOf(falsy)).toEqual(readsAllowedBase(["issues.updateComment"]));
@@ -1555,7 +1536,7 @@ describe("GitHub Actions hardening", () => {
       // Ownership is written before title/draft. autoDraftedByBot is claimed and
       // checkpointed before convertToDraft so a successful convert followed by a
       // failed comment still restores later.
-      const result = await run({ pr: { base: { ref: "main" }, draft: false } });
+      const result = await run({ pr: { base: { ref: "dev" }, draft: false } });
       const methods = methodsOf(result);
       const pending = methods.indexOf("issues.createComment");
       const title = methods.indexOf("pulls.update");
@@ -1577,7 +1558,7 @@ describe("GitHub Actions hardening", () => {
       // PR whose author titles it "[WRONG BRANCH] ". A review round added one
       // and nothing failed.
       const result = await run({
-        pr: { base: { ref: "main" }, title: "[WRONG BRANCH] ", draft: false },
+        pr: { base: { ref: "dev" }, title: "[WRONG BRANCH] ", draft: false },
       });
 
       // Already prefixed, so no title write — but pending/draft/final still run.
@@ -1598,7 +1579,7 @@ describe("GitHub Actions hardening", () => {
       // `if (!pr.title) return;` is the kind of defensive line that looks
       // reasonable in review. It exempts whatever can produce a falsy title.
       const result = await run({
-        pr: { base: { ref: "main" }, title: "", draft: true },
+        pr: { base: { ref: "dev" }, title: "", draft: true },
       });
 
       expect(callsTo(result, "pulls.update")).toEqual([
@@ -1618,7 +1599,7 @@ describe("GitHub Actions hardening", () => {
       // prefix — which only ever matches after the bug already happened —
       // cannot be introduced as if it were the fix.
       const result = await run({
-        pr: { base: { ref: "main" }, title: "[WRONG BRANCH] Add a thing", draft: true },
+        pr: { base: { ref: "dev" }, title: "[WRONG BRANCH] Add a thing", draft: true },
       });
 
       // No second prefix — and the run still does everything else it owes:
@@ -1638,11 +1619,11 @@ describe("GitHub Actions hardening", () => {
       // The prefix is contributor-writable text, so any guard keyed on a
       // doubled prefix is a guard the contributor can satisfy on purpose.
       // Verified reachable: with such a guard in place, a PR titled
-      // "[WRONG BRANCH] [WRONG BRANCH] mine" against main produced only
+      // "[WRONG BRANCH] [WRONG BRANCH] mine" against dev produced only
       // ["pulls.get", "issues.listComments"] — no comment, no draft, complete
       // exemption.
       const result = await run({
-        pr: { base: { ref: "main" }, title: "[WRONG BRANCH] [WRONG BRANCH] mine", draft: false },
+        pr: { base: { ref: "dev" }, title: "[WRONG BRANCH] [WRONG BRANCH] mine", draft: false },
       });
 
       expect(methodsOf(result)).toEqual(readsWrongBase([
@@ -1675,7 +1656,7 @@ describe("GitHub Actions hardening", () => {
         body: [MARKER, `<!-- wrong-branch-enforcer-state:${JSON.stringify({ version: 1, active: false, autoDraftedByBot: false, titlePrefixedByBot: false })} -->`].join("\n"),
       };
       const result = await run({
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [first, second],
       });
 
@@ -1699,7 +1680,7 @@ describe("GitHub Actions hardening", () => {
       // GraphQL call and `pulls.update`, never this one.
       for (const status of [404, 403, 500]) {
         await expect(
-          run({ pr: { base: { ref: "main" } }, failOn: ["pulls.get"], failStatus: status }),
+          run({ pr: { base: { ref: "dev" } }, failOn: ["pulls.get"], failStatus: status }),
         ).rejects.toThrow();
       }
     });
@@ -1735,7 +1716,7 @@ describe("GitHub Actions hardening", () => {
       // Same argument one level down: `core` is a module, and a probe for any
       // method it exports is a probe the fake has to answer the same way.
       // Transcribed from `@actions/core`'s exports.
-      const result = await run({ pr: { base: { ref: "dev" } } });
+      const result = await run({ pr: { base: { ref: "main" } } });
       expect(result.coreSurface).toEqual([
         "addPath",
         "debug",
@@ -1771,7 +1752,7 @@ describe("GitHub Actions hardening", () => {
       // The mechanism the three round-eight mutations shared: a truthiness or
       // `typeof` check that answers one way on the runner and the other way
       // here. Assert the answers match production for every injected name.
-      const result = await run({ pr: { base: { ref: "dev" } } });
+      const result = await run({ pr: { base: { ref: "main" } } });
       const probe = await runProbe(`
         const seen = {};
         for (const [name, value] of Object.entries({
@@ -1843,7 +1824,7 @@ describe("GitHub Actions hardening", () => {
 
       for (const status of [403, 404, 422, 500]) {
         const result = await runEnforcePrTarget(script, {
-          pr: { base: { ref: "main" }, draft: false },
+          pr: { base: { ref: "dev" }, draft: false },
           failOn: ["graphql"],
           failStatus: status,
         });
@@ -1866,7 +1847,7 @@ describe("GitHub Actions hardening", () => {
       for (const status of [403, 404, 422]) {
         await expect(
           runEnforcePrTarget(script, {
-            pr: { base: { ref: "main" }, draft: false },
+            pr: { base: { ref: "dev" }, draft: false },
             failOn: ["pulls.update"],
             failStatus: status,
           }),
@@ -1877,7 +1858,7 @@ describe("GitHub Actions hardening", () => {
     test("a failed draft conversion does not claim autoDraftedByBot", async () => {
       const { script } = await readEnforcePrTarget();
       const result = await runEnforcePrTarget(script, {
-        pr: { base: { ref: "main" }, draft: false },
+        pr: { base: { ref: "dev" }, draft: false },
         failOn: ["graphql"],
       });
       const commentBody = lastEnforcerCommentBody(result);
@@ -1889,7 +1870,7 @@ describe("GitHub Actions hardening", () => {
     test("a failed ready-for-review conversion keeps ownership active for retry", async () => {
       const { script } = await readEnforcePrTarget();
       const result = await runEnforcePrTarget(script, {
-        pr: { base: { ref: "dev" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
+        pr: { base: { ref: "main" }, draft: true, title: "[WRONG BRANCH] Add a thing" },
         comments: [
           {
             id: 7,
@@ -1970,60 +1951,77 @@ describe("GitHub Actions hardening", () => {
     expect(afterDraftWriteIndex).toBeGreaterThan(draftCallIndex);
   });
 
-  test("release workflow retains one exact archive and isolates every mutation from dry-run", async () => {
+  test("release workflow retains one exact archive before any mutating step runs", async () => {
     const workflow = await readText(".github/workflows/release.yml");
 
     expect(workflow).toMatch(/expected-sha:[\s\S]*?required: true/);
-    expect(workflow).toContain('echo "::error::expected-sha is required"');
-    expect(workflow).toContain('if [ -z "$EXPECTED_SHA" ]; then');
+    // The real guard is a 40-hex-char regex plus a GITHUB_SHA/checked-out-HEAD
+    // match, not a separate "is required" check: `workflow_dispatch` already
+    // enforces `required: true` before the job ever starts.
+    expect(workflow).toContain('if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then');
+    expect(workflow).toContain('echo "::error::expected-sha must be a lowercase full 40-character commit SHA"');
+    expect(workflow).toContain('if [ "$GITHUB_SHA" != "$EXPECTED_SHA" ]; then');
+    expect(workflow).toContain('checked_out_sha="$(git rev-parse HEAD)"');
     expect(workflow).toMatch(
       /permissions:\n  contents: write[^\n]*\n  actions: read[^\n]*\n  id-token: write[^\n]*/,
     );
     expect(workflow).not.toContain("secrets.NPM_TOKEN");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN:");
 
-    const setupGo = workflowStep(workflow, /^Setup Go$/);
-    expect(setupGo).toContain("actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e");
-    expect(setupGo).toContain("cache-dependency-path: go/go.sum");
+    // No Setup Go: the six native binaries are produced inside `npm pack`'s
+    // own `prepack` lifecycle (`prepare-package.ts --native` shells out to
+    // `go run scripts/build-go-release.go`), not as a separate workflow step.
+    expect(workflow).not.toMatch(/^\s*- name: Setup Go\s*$/m);
+    expect(workflow).not.toContain("actions/setup-go@");
 
     expect(count(workflow, "npm pack --json")).toBe(1);
     const build = workflowStep(workflow, /^Build and retain exact release archive$/);
-    const publish = workflowStep(workflow, /^Publish exact tarball$/);
+    const publish = workflowStep(workflow, /^Publish \(or dry-run\)$/);
     const smoke = workflowStep(workflow, /^Post-publish registry smoke$/);
     const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
 
     expect(build).toContain("npm run build:publish");
+    expect(build).toContain("bun scripts/embed-gui.ts --verify-dist");
     expect(build).toContain("npm pack --json > pack.json");
-    expect(build).not.toContain("npm pack --json --ignore-scripts");
     expect(build).toContain("npm run verify:native-package");
     expect(build).toContain("npm run verify:native-install");
-    expect(build).toContain("bun scripts/prepare-release-assets.ts");
-    expect(build).toContain("prepare");
+    expect(build).toContain("bun scripts/prepare-release-assets.ts prepare");
     expect(build).toContain("TARBALL_SHA256");
     expect(build).toContain("RELEASE_NATIVE_DIR");
+    // The archive is built, packed, and retained: nothing here mutates the
+    // registry, a Git ref, or GitHub Releases.
     for (const mutator of ["npm publish", "git tag", "git push", "gh release create", "gh release upload"]) {
       expect(build).not.toContain(mutator);
     }
 
-    for (const guarded of [publish, smoke, release]) {
+    // The two steps that can create durable, hard-to-undo state on a real
+    // dry-run (the registry smoke check and the GitHub Release itself) are
+    // step-guarded.
+    for (const guarded of [smoke, release]) {
       expect(guarded).toContain("if: ${{ inputs.dry-run != true }}");
     }
+
+    // The publish step's own internal branch used to read a $DRY_RUN shell
+    // variable this workflow never set, so it always took the real "npm
+    // publish" branch regardless of the dry-run input (default true). The
+    // step's env now binds DRY_RUN from the actual input, and never carries
+    // a hardcoded "true"/"false" that would defeat that binding.
+    expect(publish).toContain("DRY_RUN: ${{ inputs.dry-run }}");
+    expect(publish).toMatch(/if \[ "\$DRY_RUN" = "true" \]; then/);
+    expect(publish).not.toMatch(/DRY_RUN:\s*["']?(?:true|false)["']?\s*$/m);
     for (const step of workflow.split(/\n {6,}- name: /).slice(1)) {
-      if (/npm publish|git tag "\$release_tag"|git push origin|gh release (?:create|upload)/.test(step)) {
+      if (/git tag "\$release_tag"|git push origin|gh release create/.test(step)) {
         expect(step).toContain("if: ${{ inputs.dry-run != true }}");
       }
     }
-    expect(publish).toMatch(
-      /prepare-release-assets\.ts verify[\s\S]*?npm publish "\$TARBALL" --ignore-scripts/,
-    );
 
     const buildAt = workflow.indexOf("Build and retain exact release archive");
-    const helperAt = workflow.indexOf("bun scripts/prepare-release-assets.ts", buildAt);
-    const publishAt = workflow.indexOf("Publish exact tarball");
-    const releaseAt = workflow.search(/Create(?:\/reconcile)? GitHub release/);
+    const classifyAt = workflow.indexOf("Classify exact release retry state");
+    const publishAt = workflow.indexOf("Publish (or dry-run)");
+    const releaseAt = workflow.indexOf("Create/reconcile GitHub release");
     expect(buildAt).toBeGreaterThan(-1);
-    expect(helperAt).toBeGreaterThan(buildAt);
-    expect(publishAt).toBeGreaterThan(helperAt);
+    expect(classifyAt).toBeGreaterThan(buildAt);
+    expect(publishAt).toBeGreaterThan(classifyAt);
     expect(releaseAt).toBeGreaterThan(publishAt);
   });
 
@@ -2039,20 +2037,24 @@ describe("GitHub Actions hardening", () => {
     expect(classify).toContain("NPM_RELEASE_STATE");
     expect(classify).toContain("NPM_EXPECTED_INTEGRITY");
     expect(classify).toContain("GITHUB_RELEASE_CANDIDATE");
+    // The real state is a fresh/exact npm marker and a present/absent GitHub
+    // candidate marker, never this literal: asserting its absence keeps a
+    // stray reintroduction of the old aspirational shape from sneaking back.
     expect(classify).not.toContain("GITHUB_RELEASE_STATE=exact");
     expect(classify).toContain("GITHUB_SHA");
 
-    const notesAt = release.indexOf('notes_file=');
-    const reconcileAt = release.indexOf("bun scripts/reconcile-release-assets.ts");
+    // Notes are assembled, and the tag only exists if it did not already,
+    // before `gh release create`, so a notes-API failure never leaves a
+    // dangling tag with nothing published behind it.
+    const notesAt = release.indexOf("notes_file=");
+    const tagAt = release.indexOf('git tag "$release_tag"');
+    const createAt = release.indexOf('gh release create "$release_tag"');
     expect(notesAt).toBeGreaterThan(-1);
-    expect(reconcileAt).toBeGreaterThan(notesAt);
-    expect(release).not.toContain("gh release create");
+    expect(tagAt).toBeGreaterThan(notesAt);
+    expect(createAt).toBeGreaterThan(tagAt);
+    expect(release).toContain("gh release create");
     expect(release).not.toContain("gh release upload");
-    expect(release).not.toContain("git push origin");
-    expect(release).toContain('--archive-sha256 "$TARBALL_SHA256"');
-    expect(release).toContain('--native-dir "$upload_native_dir"');
-    expect(release).toContain('--npm-tag "$NPM_DIST_TAG"');
-    expect(release).toContain('--npm-integrity "$NPM_EXPECTED_INTEGRITY"');
+    expect(release).toContain('git push origin "refs/tags/${release_tag}"');
 
     expect(smoke).toContain("NPM_DIST_TAG: ${{ inputs.tag }}");
     expect(smoke).toContain('dist.integrity');
@@ -2063,43 +2065,79 @@ describe("GitHub Actions hardening", () => {
 
   test("GitHub release assets are exactly the six binaries and checksum manifest", async () => {
     const workflow = await readText(".github/workflows/release.yml");
+    const build = workflowStep(workflow, /^Build and retain exact release archive$/);
     const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
-    const reconciler = await readText("scripts/reconcile-release-assets.ts");
-    expect(reconciler).toContain("const names = [...nativeArtifactNames(version), `ocx_${version}_checksums.txt`]");
-    expect(reconciler).toContain("return Promise.all(names.map(async name =>");
-    expect(release).toContain("reconcile-release-assets.ts");
-    expect(reconciler).toContain('"--verify-tag"');
-    expect(reconciler).toContain('"--draft=false"');
-    expect(reconciler).not.toContain('"--clobber"');
-    expect(reconciler).toContain('"--method", "DELETE"');
-    expect(reconciler).toContain("downloadAsset");
+    const packagePrep = await readText("scripts/prepare-package.ts");
+
+    // `nativeArtifactNames` (see the go-ci.yml comment on the Windows-only
+    // cross-compile job) is the single source of truth for the six names;
+    // `validateNativeDirectory` requires an exact match against it plus the
+    // checksum manifest, so the packed archive can never carry a subset.
+    expect(packagePrep).toContain("export function nativeArtifactNames(version: string): string[]");
+    expect(packagePrep).toContain("darwin_amd64");
+    expect(packagePrep).toContain("darwin_arm64");
+    expect(packagePrep).toContain("linux_amd64");
+    expect(packagePrep).toContain("linux_arm64");
+    expect(packagePrep).toContain("windows_amd64.exe");
+    expect(packagePrep).toContain("windows_arm64.exe");
+    expect(packagePrep).toContain("native artifact inventory mismatch");
+
+    // The release step publishes the archive `prepare-release-assets.ts`
+    // already verified matches that exact six-binary inventory; it does not
+    // re-derive or re-select the asset list itself.
+    expect(build).toContain("bun scripts/prepare-release-assets.ts prepare");
+    expect(release).toContain('"${setup_assets[0]}#Setup.exe"');
+    expect(release).toContain('"${releases_assets[0]}#RELEASES"');
+    expect(release).toContain('"${nupkg_assets[@]}"');
   });
 
-  test("dev2-go changes activate both package and Go release ownership gates", async () => {
+  test("main-only push activates both package and Go release ownership gates", async () => {
     const ci = await readText(".github/workflows/ci.yml");
     const goCi = await readText(".github/workflows/go-ci.yml");
 
-    // dev2-go is covered on push by go-ci.yml, not by cross-platform ci.yml.
-    // Upstream deliberately keeps ci.yml's push trigger to the release-promotion
-    // branches (main, preview, dev) and pins that list in
-    // "PR checks reach every branch the target gate accepts". dev2-go still gets
-    // cross-platform coverage through ci.yml's pull_request trigger, which does
-    // list it, so an accepted PR is still a checked one.
-    expect(ci).toMatch(/pull_request:[\s\S]*?branches: \[main, dev, dev2-go\]/);
-    expect(ci).toMatch(/push:[\s\S]*?branches: \[main, preview, dev\]/);
-    expect(ci).toContain("npm run verify:native-install");
-    expect(goCi).toMatch(/push:[\s\S]*?branches: \[dev2-go, main, preview\]/);
-    expect(count(goCi, "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6")).toBe(3);
-    expect(count(goCi, "bun-version: 1.3.14")).toBe(3);
+    // main is the only integration and release-promotion branch, so both
+    // workflows now key off the same single-branch list on every trigger.
+    expect(ci).toMatch(/pull_request:[\s\S]*?branches: \[main\]/);
+    expect(ci).toMatch(/push:[\s\S]*?branches: \[main\]/);
+    expect(ci).toContain("npm run verify:native-package");
+    expect(goCi).toMatch(/push:[\s\S]*?branches: \[main\]/);
+
+    // Two jobs remain (build-and-test, cross-compile): the e2e job is gone,
+    // and each survivor still sets up its own pinned Bun.
+    expect(count(goCi, "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6")).toBe(2);
+    expect(count(goCi, "bun-version: 1.3.14")).toBe(2);
+    expect(goCi).not.toMatch(/^\s*e2e:\s*$/m);
+    expect(goCi).not.toContain("test/e2e");
     for (const [job, nextJob] of [
       ["build-and-test", "cross-compile"],
-      ["cross-compile", "e2e"],
-      ["e2e", undefined],
+      ["cross-compile", undefined],
     ] as const) {
       const tail = goCi.split(`\n  ${job}:\n`)[1]!;
       const block = nextJob ? tail.split(`\n  ${nextJob}:\n`)[0]! : tail;
       expect(block).toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
       expect(block).toContain("bun-version: 1.3.14");
+    }
+
+    // build-and-test is Windows-only now, and runs no vet/test/race step:
+    // nothing in Actions gates a build here either.
+    const buildAndTest = goCi.split("\n  build-and-test:\n")[1]!.split("\n  cross-compile:\n")[0]!;
+    expect(buildAndTest).toMatch(/matrix:\s*\n\s*os: \[windows-latest\]/);
+    expect(buildAndTest).not.toContain("ubuntu-latest");
+    expect(buildAndTest).not.toContain("macos-latest");
+    expect(buildAndTest).not.toMatch(/^\s*- name: Vet\s*$/m);
+    expect(buildAndTest).not.toMatch(/^\s*- name: Test\s*$/m);
+    expect(buildAndTest).not.toMatch(/^\s*- name: Race detector\s*$/m);
+    expect(buildAndTest).not.toMatch(/run:\s*go test\b/);
+    expect(buildAndTest).not.toMatch(/run:\s*go vet\b/);
+    expect(buildAndTest).not.toContain("-race");
+
+    // cross-compile keeps only the windows/amd64 build step; the other four
+    // GOOS/GOARCH smoke builds (linux/amd64, darwin/arm64, darwin/amd64,
+    // linux/arm64) are gone.
+    const crossCompile = goCi.split("\n  cross-compile:\n")[1]!;
+    expect(crossCompile).toContain("- name: windows/amd64");
+    for (const removed of ["- name: linux/amd64", "- name: darwin/arm64", "- name: darwin/amd64", "- name: linux/arm64"]) {
+      expect(crossCompile).not.toContain(removed);
     }
 
     for (const path of [
@@ -2118,6 +2156,11 @@ describe("GitHub Actions hardening", () => {
     ]) {
       expect(goCi).toContain(path);
     }
+    // Delivery scope is Windows only, but the verification step still checks
+    // for all six platform binaries: `build-go-release.go` (unchanged, see
+    // its own comment in go-ci.yml and HANDOFF.md) still produces all six,
+    // because `scripts/prepare-package.ts` still hard-requires exactly that
+    // inventory for every `npm pack`, on every platform.
     expect(goCi).toContain("Verify six native release names without publishing");
     expect(goCi).toContain('version="0.0.0-preview.0"');
     expect(goCi).toContain("--dry-run");
@@ -2378,35 +2421,14 @@ describe("GitHub Actions hardening", () => {
     expect(helperSrc).not.toContain(".ocx-translation-state");
   });
 
-  test("React Doctor workflow is SHA-pinned, engine-pinned, gating, and read-only", async () => {
-    const workflow = await readText(".github/workflows/react-doctor.yml");
-
-    expect(workflow).toContain("actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8");
-    expect(workflow).toContain("millionco/react-doctor@938008119a288f2fb47c66a69cd9279a21f31784");
-    expect(workflow).not.toMatch(
-      /^\s*-\s+uses:\s+\S+@(?![0-9a-f]{40}(?=[ \t]*(?:#.*)?$))\S+/m,
-    );
-
-    // Engine pin: the action wrapper would fetch react-doctor@latest without it.
-    expect(workflow).toContain('version: "0.9.2"');
-
-    // Action pin must accept CLI JSON schemaVersion 3 (baseline reports from 0.9.x).
-    // v2.1.0's ensure-json-report only knew schemas 1–2 and failed every PR scan.
-    // Gating + least privilege: read-only token, all write-scoped outputs off.
-    // pull-requests: read is required so the action can list PR files for
-    // --changed-files-from; without it, fork PRs fail with ENOENT on that file.
-    expect(workflow).toContain("contents: read");
-    expect(workflow).toContain("pull-requests: read");
-    expect(workflow).not.toContain(": write");
-    expect(workflow).toMatch(/^\s+blocking:\s+error\s*$/m);
-    expect(workflow).toMatch(/^\s+comment:\s+false\s*$/m);
-    expect(workflow).toMatch(/^\s+review-comments:\s+false\s*$/m);
-    expect(workflow).toMatch(/^\s+commit-status:\s+false\s*$/m);
-    expect(workflow).toContain("runs-on: windows-latest");
-    expect(workflow).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
-    expect(workflow).toContain("if: ${{ always() }}");
-    expect(workflow).toContain("if-no-files-found: warn");
-    expect(workflow).toContain("timeout-minutes: 10");
+  test("react-doctor.yml stays deleted; react-doctor itself remains an on-demand local tool", async () => {
+    // It was a gating PR-scan workflow, and this project runs no checks in
+    // Actions. The react-doctor npm devDependency and its `doctor:gui*`
+    // package scripts are unaffected: `bun run lint:gui`-style on-demand
+    // tooling still runs locally, it just never gates a workflow.
+    await expect(Bun.file(new URL(".github/workflows/react-doctor.yml", root)).exists()).resolves.toBe(false);
+    const guiPkg = await readText("gui/package.json");
+    expect(guiPkg).toContain("react-doctor@0.9.2");
   });
 
   test("React Doctor package scripts pin the exact engine version with no @latest anywhere", async () => {
@@ -2545,12 +2567,9 @@ describe("workflow package scripts", () => {
       "enforce-pr-target.yml",
       "go-ci.yml",
       "gui-preview.yml",
-      "issue-quality-tests.yml",
       "issue-triage.yml",
       "pr-labeler.yml",
-      "react-doctor.yml",
       "release.yml",
-      "service-lifecycle.yml",
       "stale-needs-info.yml",
       "super-express-release.yml",
     ];
@@ -2608,8 +2627,6 @@ describe("workflow history depth", () => {
       "ci.yml",
       "go-ci.yml",
       "gui-preview.yml",
-      "react-doctor.yml",
-      "service-lifecycle.yml",
       "desktop-installer.yml",
       "cheap-lfs-cloud-compression.yml",
     ];

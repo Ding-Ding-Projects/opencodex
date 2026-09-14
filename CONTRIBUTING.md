@@ -10,14 +10,12 @@ Thanks for helping with opencodex.
 
 ## Branches
 
-- `dev` — the only integration target for pull requests.
-- `main` — releases only; moves by maintainer-controlled promotion from `dev`.
-- `preview` — prerelease train.
+- `main`: the only integration target for pull requests, and the release
+  branch. There is no separate integration branch.
 
-The `dev2-go` Go native-port line has been retired. Its history is archived at
-[lidge-jun/opencodex-go-archive](https://github.com/lidge-jun/opencodex-go-archive),
-and everything now goes to `dev`. See [`MAINTAINERS.md`](./MAINTAINERS.md) for
-the reasoning.
+The native Go runtime port under `go/` is active again, tracked by issue #17,
+and developed directly on `main`. See [`MAINTAINERS.md`](./MAINTAINERS.md) for
+the branch history.
 
 Rebase pull requests are welcome: bringing a stale branch onto the current head
 is normal contribution. Note the source commits in the description.
@@ -33,9 +31,9 @@ commands such as `bun install`, `bun run test`, and `bun run prepush` use your l
 
 ## Pre-push hook
 
-After cloning, run once to install a local pre-push hook that runs the typecheck,
-unit-test, privacy-scan, and (when `gui/` changed) React Doctor portions of the
-CI gate:
+After cloning, run once to install a local pre-push hook that runs typecheck,
+unit tests, a privacy scan, and (when `gui/` changed) the local React Doctor
+check:
 
 ```sh
 bun run setup:hooks
@@ -43,9 +41,12 @@ bun run setup:hooks
 
 This installs a `pre-push` hook (into the hooks dir git reports, so worktrees and
 `core.hooksPath` work) that runs `bun run prepush` — `typecheck`, `test`,
-`privacy:scan`, and `doctor:gui:if-changed` — before every `git push`. The same
-checks run on windows-latest in CI (CI additionally builds the GUI and
-smoke-tests the CLI). Skip in an emergency with `git push --no-verify`.
+`privacy:scan`, and `doctor:gui:if-changed`, before every `git push`. These
+are local checks only: nothing in GitHub Actions runs them. `ci.yml` builds
+on Windows only, checks release-helper syntax, builds the GUI, and
+smoke-tests the CLI, and gates nothing on a test, typecheck, lint, or
+privacy-scan verdict. Skip the local hook in an emergency with
+`git push --no-verify`.
 
 ## Lint
 

@@ -42,8 +42,8 @@ jobs:
               path.join(process.cwd(), ".github", "scripts", "pr-quality.cjs"),
             );
 
-            const ALLOWED_BASES = ["dev", "dev2-go"];
-            const DEFAULT_BASE = "dev";
+            const ALLOWED_BASES = ["main"];
+            const DEFAULT_BASE = "main";
             const TITLE_PREFIX = "[WRONG BRANCH] ";
             const COMMENT_MARKER = "<!-- pr-quality-enforcer -->";
             const LEGACY_COMMENT_MARKER = "<!-- wrong-branch-enforcer -->";
@@ -209,19 +209,9 @@ jobs:
                 sections.push(
                   "⚠️ **Wrong target branch**",
                   "",
-                  `This pull request currently targets ${inlineCode(pr.base.ref)}, but pull requests must target one of ${ALLOWED_BASES.map(inlineCode).join(" or ")}.`,
+                  `This pull request currently targets ${inlineCode(pr.base.ref)}, but pull requests must target ${ALLOWED_BASES.map(inlineCode).join(" or ")}.`,
                   "",
-                  `@${pr.user.login} Please retarget this PR to ${inlineCode(DEFAULT_BASE)}. Most contributions go to ${inlineCode(DEFAULT_BASE)} first; use ${inlineCode("dev2-go")} only for scoped Go native-port work. \`main\` receives only release promotions. See our [Contributing guide](https://opencodex.me/contributing/) for details. Thanks! 🙏`
-                );
-              }
-
-              if (failures.some(failure => failure.code === "wrong_ancestry")) {
-                sections.push(
-                  "⚠️ **Wrong branch ancestry**",
-                  "",
-                  `This pull request targets ${inlineCode(pr.base.ref)}, but its head appears to sit on the current ${inlineCode("main")} tip while being far behind ${inlineCode(pr.base.ref)}.`,
-                  "",
-                  `@${pr.user.login} Rebase onto the current ${inlineCode(pr.base.ref)} branch instead of opening from ${inlineCode("main")}. That keeps already-released commits out of the integration branch.`
+                  `@${pr.user.login} Please retarget this PR to ${inlineCode(DEFAULT_BASE)}. It is the only integration branch, and every contribution goes there directly. See our [Contributing guide](https://opencodex.me/contributing/) for details. Thanks! 🙏`
                 );
               }
 
@@ -245,9 +235,6 @@ jobs:
                   if (failure.code === "wrong_base") {
                     return `wrong base (${pr.base.ref})`;
                   }
-                  if (failure.code === "wrong_ancestry") {
-                    return "wrong ancestry";
-                  }
                   if (failure.code === "bad_description") {
                     return `bad description (${failure.reason})`;
                   }
@@ -258,66 +245,10 @@ jobs:
 
             const storedState = parseState(botComment?.body);
 
-            let authorPermission = null;
-            let permissionLookupFailed = false;
-            try {
-              const { data: permissionData } =
-                await github.rest.repos.getCollaboratorPermissionLevel({
-                  owner,
-                  repo,
-                  username: pr.user.login
-                });
-              authorPermission = permissionData.permission;
-            } catch (error) {
-              permissionLookupFailed = true;
-              core.warning(
-                `Could not look up collaborator permission: ${error.message}`
-              );
-            }
-
-            let behindMain = 0;
-            let behindBase = 0;
-            let aheadMain = 0;
-            let ancestryLookupFailed = false;
-            const baseAllowed = ALLOWED_BASES.includes(pr.base.ref);
-
-            if (baseAllowed) {
-              const headSha = pr.head.sha;
-              try {
-                const { data: mainCompare } =
-                  await github.rest.repos.compareCommitsWithBasehead({
-                    owner,
-                    repo,
-                    basehead: `main...${headSha}`
-                  });
-                behindMain = mainCompare.behind_by;
-                aheadMain = mainCompare.ahead_by;
-
-                const { data: baseCompare } =
-                  await github.rest.repos.compareCommitsWithBasehead({
-                    owner,
-                    repo,
-                    basehead: `${pr.base.ref}...${headSha}`
-                  });
-                behindBase = baseCompare.behind_by;
-              } catch (error) {
-                ancestryLookupFailed = true;
-                core.warning(
-                  `Could not compare commits for ancestry check: ${error.message}`
-                );
-              }
-            }
-
             const failures = collectPrQualityFailures({
               baseRef: pr.base.ref,
               allowedBases: ALLOWED_BASES,
-              body: pr.body,
-              behindMain,
-              behindBase,
-              aheadMain,
-              authorPermission,
-              permissionLookupFailed,
-              ancestryLookupFailed
+              body: pr.body
             });
 
             if (failures.length > 0) {

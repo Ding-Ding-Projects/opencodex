@@ -13,7 +13,7 @@ on:
       - "gui/**"
       - ".github/workflows/gui-preview.yml"
   push:
-    branches: [main, dev, preview]
+    branches: [main]
     paths:
       - "gui/**"
       - ".github/workflows/gui-preview.yml"
@@ -49,16 +49,9 @@ jobs:
         working-directory: gui
         run: bun install --frozen-lockfile
 
-      - name: Typecheck
-        working-directory: gui
-        run: bun x tsc -b
-
-      # No lint step, by project policy: lint does not gate this build. ESLint
-      # stays installed and is run deliberately with `bun run lint` in gui/.
-
-      - name: Test
-        working-directory: gui
-        run: bun test tests
+      # No typecheck, test, or lint step, by project policy: nothing in
+      # Actions gates this build. Run `bun x tsc -b`, `bun test tests`, and
+      # `bun run lint` in gui/ locally before pushing.
 
       - name: Build
         working-directory: gui

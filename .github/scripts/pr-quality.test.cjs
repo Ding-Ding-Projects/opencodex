@@ -3,49 +3,9 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  ANCESTRY_BEHIND_THRESHOLD,
-  isWrongAncestry,
-  authorHasPushPermission,
   assessPrDescription,
   collectPrQualityFailures,
 } = require("./pr-quality.cjs");
-
-describe("isWrongAncestry", () => {
-  it("flags #644-shaped compares (0 behind main, far behind base, few ahead of main)", () => {
-    assert.equal(
-      isWrongAncestry({ behindMain: 0, behindBase: 44, aheadMain: 1 }),
-      true,
-    );
-  });
-
-  it("uses threshold 20 by default", () => {
-    assert.equal(ANCESTRY_BEHIND_THRESHOLD, 20);
-    assert.equal(isWrongAncestry({ behindMain: 0, behindBase: 20, aheadMain: 1 }), true);
-    assert.equal(isWrongAncestry({ behindMain: 0, behindBase: 19, aheadMain: 1 }), false);
-  });
-
-  it("passes when head is behind main (not sitting on main tip)", () => {
-    assert.equal(isWrongAncestry({ behindMain: 1, behindBase: 44, aheadMain: 1 }), false);
-  });
-
-  it("passes stale dev-based branches that are many commits ahead of main", () => {
-    assert.equal(
-      isWrongAncestry({ behindMain: 0, behindBase: 44, aheadMain: 50 }),
-      false,
-    );
-  });
-});
-
-describe("authorHasPushPermission", () => {
-  it("accepts write/maintain/admin only", () => {
-    assert.equal(authorHasPushPermission("admin"), true);
-    assert.equal(authorHasPushPermission("maintain"), true);
-    assert.equal(authorHasPushPermission("write"), true);
-    assert.equal(authorHasPushPermission("triage"), false);
-    assert.equal(authorHasPushPermission("read"), false);
-    assert.equal(authorHasPushPermission(null), false);
-  });
-});
 
 describe("assessPrDescription", () => {
   it("rejects empty and comment-only bodies", () => {
@@ -115,131 +75,72 @@ describe("assessPrDescription", () => {
 });
 
 describe("collectPrQualityFailures", () => {
-  const allowed = ["dev", "dev2-go"];
+  // main is now the only allowed base: there is no separate integration
+  // branch to skip ancestry checks for, and no ancestry check at all.
+  // A rewrite onto an unrelated tip is caught by ordinary review, not by
+  // this gate. These scenarios exercise the allow-list and the description
+  // check as the two remaining, independent failure sources.
+  const allowed = ["main"];
+  const richBody = [
+    "## Summary",
+    "This change updates the Windows tray launcher so it resolves CODEX_HOME through the shared helper instead of a hardcoded path.",
+    "",
+    "## Test plan",
+    "- Launch the tray app after setting CODEX_HOME",
+    "- Confirm the listener and launcher use the same workspace root",
+  ].join("\n");
 
-  it("reports wrong_base without requiring ancestry inputs", () => {
-    const failures = collectPrQualityFailures({
-      baseRef: "main",
-      allowedBases: allowed,
-      body: "## Summary\n" + "x".repeat(50) + "\n\n## Test plan\n" + "y".repeat(50),
-      behindMain: 0,
-      behindBase: 0,
-      authorPermission: "read",
-    });
-    assert.ok(failures.some((f) => f.code === "wrong_base"));
-    assert.ok(!failures.some((f) => f.code === "wrong_ancestry"));
-  });
-
-  it("reports wrong_base and bad_description together for main + empty body", () => {
-    const failures = collectPrQualityFailures({
-      baseRef: "main",
-      allowedBases: allowed,
-      body: "",
-      behindMain: 0,
-      behindBase: 0,
-      authorPermission: "read",
-    });
-    assert.ok(failures.some((f) => f.code === "wrong_base"));
-    assert.ok(failures.some((f) => f.code === "bad_description"));
-    assert.ok(!failures.some((f) => f.code === "wrong_ancestry"));
-  });
-
-  it("reports wrong_ancestry for contributor on #644-shaped compare", () => {
+  it("reports wrong_base for a PR that does not target the allowed base", () => {
     const failures = collectPrQualityFailures({
       baseRef: "dev",
       allowedBases: allowed,
-      body: [
-        "## Summary",
-        "This change updates the Windows tray launcher so it resolves CODEX_HOME through the shared helper instead of a hardcoded path.",
-        "",
-        "## Test plan",
-        "- Launch the tray app after setting CODEX_HOME",
-        "- Confirm the listener and launcher use the same workspace root",
-      ].join("\n"),
-      behindMain: 0,
-      behindBase: 44,
-      aheadMain: 1,
-      authorPermission: "read",
+      body: richBody,
     });
     assert.deepEqual(
       failures.map((f) => f.code),
-      ["wrong_ancestry"],
+      ["wrong_base"],
     );
   });
 
-  it("skips ancestry for push permission but still flags bad description", () => {
+  it("reports wrong_base and bad_description together for an empty body on the wrong base", () => {
     const failures = collectPrQualityFailures({
       baseRef: "dev",
       allowedBases: allowed,
       body: "",
-      behindMain: 0,
-      behindBase: 44,
-      aheadMain: 1,
-      authorPermission: "write",
     });
-    assert.ok(!failures.some((f) => f.code === "wrong_ancestry"));
+    assert.ok(failures.some((f) => f.code === "wrong_base"));
     assert.ok(failures.some((f) => f.code === "bad_description"));
   });
 
-  it("applies ancestry when permission lookup failed (fail closed)", () => {
+  it("reports nothing for the allowed base with a rich description", () => {
     const failures = collectPrQualityFailures({
-      baseRef: "dev",
+      baseRef: "main",
       allowedBases: allowed,
-      body: [
-        "## Summary",
-        "This change updates the Windows tray launcher so it resolves CODEX_HOME through the shared helper instead of a hardcoded path.",
-        "",
-        "## Test plan",
-        "- Launch the tray app after setting CODEX_HOME",
-        "- Confirm the listener and launcher use the same workspace root",
-      ].join("\n"),
-      behindMain: 0,
-      behindBase: 44,
-      aheadMain: 1,
-      authorPermission: null,
-      permissionLookupFailed: true,
+      body: richBody,
     });
-    assert.ok(failures.some((f) => f.code === "wrong_ancestry"));
+    assert.deepEqual(failures, []);
   });
 
-  it("does not flag stale dev-based branches that are far ahead of main", () => {
+  it("reports only bad_description when the base is already correct", () => {
     const failures = collectPrQualityFailures({
-      baseRef: "dev",
+      baseRef: "main",
       allowedBases: allowed,
-      body: [
-        "## Summary",
-        "This change updates the Windows tray launcher so it resolves CODEX_HOME through the shared helper instead of a hardcoded path.",
-        "",
-        "## Test plan",
-        "- Launch the tray app after setting CODEX_HOME",
-        "- Confirm the listener and launcher use the same workspace root",
-      ].join("\n"),
-      behindMain: 0,
-      behindBase: 44,
-      aheadMain: 50,
-      authorPermission: "read",
+      body: "fix stuff",
     });
-    assert.ok(!failures.some((f) => f.code === "wrong_ancestry"));
+    assert.deepEqual(
+      failures.map((f) => f.code),
+      ["bad_description"],
+    );
   });
 
-  it("skips ancestry when compare lookup failed (cannot evaluate)", () => {
+  it("evaluates allowedBases generically rather than a hardcoded list", () => {
+    // Nothing in collectPrQualityFailures may hardcode "main": passing a
+    // different allow-list must change which base is accepted.
     const failures = collectPrQualityFailures({
-      baseRef: "dev",
-      allowedBases: allowed,
-      body: [
-        "## Summary",
-        "This change updates the Windows tray launcher so it resolves CODEX_HOME through the shared helper instead of a hardcoded path.",
-        "",
-        "## Test plan",
-        "- Launch the tray app after setting CODEX_HOME",
-        "- Confirm the listener and launcher use the same workspace root",
-      ].join("\n"),
-      behindMain: 0,
-      behindBase: 0,
-      aheadMain: 0,
-      authorPermission: "read",
-      ancestryLookupFailed: true,
+      baseRef: "trunk",
+      allowedBases: ["trunk"],
+      body: richBody,
     });
-    assert.ok(!failures.some((f) => f.code === "wrong_ancestry"));
+    assert.deepEqual(failures, []);
   });
 });

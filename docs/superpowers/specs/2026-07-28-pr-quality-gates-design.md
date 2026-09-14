@@ -1,3 +1,5 @@
+> Superseded on 2026-09-14: main is the only integration branch and workflows run no tests.
+
 # PR quality gates (ancestry + description) — Design
 
 **Date:** 2026-07-28  

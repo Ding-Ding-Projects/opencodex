@@ -8,25 +8,25 @@ review and merge policy.
 | GitHub account | Project role | Responsibilities |
 | --- | --- | --- |
 | [@lidge-jun](https://github.com/lidge-jun) | Project owner | Project direction, releases, repository administration, and final governance decisions |
-| [@Ingwannu](https://github.com/Ingwannu) | Maintainer | Issue and pull-request triage, `dev` integration, security review, and repository maintenance |
-| [@Wibias](https://github.com/Wibias) | Maintainer | Issue and pull-request triage, `dev` integration, and provider/CI maintenance |
+| [@Ingwannu](https://github.com/Ingwannu) | Maintainer | Issue and pull-request triage, `main` integration, security review, and repository maintenance |
+| [@Wibias](https://github.com/Wibias) | Maintainer | Issue and pull-request triage, `main` integration, and provider/CI maintenance |
 
 The table describes project responsibilities. Actual repository permissions remain controlled
 through GitHub repository settings.
 
-`dev` is the only integration line. The former `dev2-go` carry duty is retired;
-see [The retired `dev2-go` line](#the-retired-dev2-go-line).
+`main` is the only integration line and the release branch. Native Go work
+under `go/` is active again, tracked by issue #17, and developed directly on
+`main`; see [The retired `dev2-go` line](#the-retired-dev2-go-line) for how it
+got there.
 
 ## Review and merge policy
 
-- Pull requests target `dev`. It is the only integration line, and promotion to
-  `main` happens only from `dev`. The target-branch check accepts `dev` alone.
-- The **`enforce-target`** CI check rejects pull requests whose head
-  ancestry sits on the **`main`** tip while far behind **`dev`**, and rejects
-  empty, thin, or malformed descriptions; authors with repository push
-  permission skip the ancestry heuristic only. As with the approval requirement
-  above, this is enforced by convention until branch protection is configured
-  (see the note under the change log).
+- Pull requests target `main`. It is the only integration line, and there is
+  no separate promotion step: the target-branch check accepts `main` alone.
+- The **`enforce-target`** CI check rejects pull requests that do not target
+  `main`, and rejects empty, thin, or malformed descriptions. As with the
+  approval requirement above, this is enforced by convention until branch
+  protection is configured (see the note under the change log).
 - A pull request requires approval from at least one maintainer and successful required CI checks
   before merge.
 - Authors do not approve their own pull requests.
@@ -45,10 +45,7 @@ see [The retired `dev2-go` line](#the-retired-dev2-go-line).
   practical.
 - Direct pushes are reserved for maintainer-owned integration work, urgent repairs, or incident
   recovery. The same CI and documentation requirements still apply.
-- `dev2-go` is a temporary maintainer-owned parallel track with no standing pull request into
-  `dev`. Direct pushes there require owner direction, and a head is not considered stable until
-  Go CI succeeds for that exact commit. It is not a release-promotion source.
-- Promotion from `dev` to `main` and npm releases is maintainer-controlled.
+- Promotion to npm releases from `main` is maintainer-controlled.
 
 ## The retired `dev2-go` line
 
@@ -69,9 +66,18 @@ defects. Bun-native TypeScript on `dev` is the single runtime line again.
   issues (#661, #663, #666, #670, #674, #678, #680, #685, #703) were closed as
   not planned, and the `needs-go-port` label no longer exists on the
   repository.
-- Future native work is expected to be an incremental module landing on `dev`
-  (Rust via N-API is the current candidate), not a second integration branch.
-  Reopening a parallel runtime line is an owner decision.
+- Future native work is expected to be an incremental module landing on the
+  integration branch, not a second integration branch. Reopening a parallel
+  runtime line is an owner decision.
+
+Native work did resume: the Go runtime port is active again under `go/`,
+tracked by issue #17. The owner decision this time is to land it directly on
+`main` rather than reopen a parallel integration branch, consistent with the
+bullet above. A `dev2-go` branch may still be present in the repository as a
+leftover from before that decision; it carries no standing duty, is not a
+release-promotion source, and is scheduled for deletion as part of the
+main-only consolidation. Its historical tip remains reachable at the
+`archive/dev2-go` tag regardless of whether the branch itself still exists.
 
 ## Maintainer changes
 
@@ -95,10 +101,11 @@ Adding or removing a maintainer requires:
   records the gap rather than papering over it — a later maintainer change
   should go through a reviewed pull request.
 
-  Scope covers issue and pull-request triage, `dev` integration, and
-  provider/CI maintenance. (This entry originally also described carrying
-  merged `dev` work onto `dev2-go`; that duty ended when the line was retired
-  on 2026-07-30.) Security-boundary ownership in `.github/CODEOWNERS` is
+  Scope covers issue and pull-request triage, integration-branch review
+  (`dev` at the time, `main` today), and provider/CI maintenance. (This entry
+  originally also described carrying merged `dev` work onto `dev2-go`; that
+  duty ended when the line was retired on 2026-07-30.) Security-boundary
+  ownership in `.github/CODEOWNERS` is
   deliberately unchanged: authentication, credential handling, GitHub Actions,
   and release automation keep the two owners already listed for those paths, so
   this addition does not widen the review surface for them.

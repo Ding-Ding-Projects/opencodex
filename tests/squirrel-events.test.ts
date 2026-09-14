@@ -250,7 +250,9 @@ describe("the packaging metadata Squirrel needs", () => {
       {
         path: "../.github/workflows/release.yml",
         job: "publish",
-        step: "Create GitHub release",
+        // The step reconciles notes and assets in one pass; it was renamed
+        // from "Create GitHub release" and this lookup was never updated.
+        step: "Create/reconcile GitHub release",
       },
       {
         path: "../.github/workflows/super-express-release.yml",

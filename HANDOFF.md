@@ -1,5 +1,124 @@
 # Handoff
 
+## Follow-up: narrative leftovers and the DRY_RUN fix (2026-09-14, same branch)
+
+Two follow-ups landed on top of the section below, same branch, after the coordinator's second
+pass caught what the first pass missed.
+
+**Narrative leftovers, fixed:** AGENTS.md's "Review guidelines" bullet ("flag any pull request
+that does not target `dev`") and its `## Commands` section ("CI runs these on Windows only",
+falsely implying `ci.yml` still runs typecheck/test) are corrected; the `devlog/` history
+paragraph is reworded so `dev`/`preview` read unambiguously as retired, not current.
+MAINTAINERS.md's maintainer-responsibility table said "`dev` integration" for two maintainers;
+now "`main` integration". CONTRIBUTING.md's pre-push-hook paragraph called the local hook's checks
+"portions of the CI gate" and claimed "the same checks run on windows-latest in CI"; both are now
+correctly described as local-only, since `ci.yml` runs none of them.
+`structure/06_docs-and-release.md` (not owned by this lane's original scope, fixed anyway because
+"grep the whole tree and fix or report each hit" leaves no room to skip a repository SOT doc)
+had its entire workflow map, branch-and-devlog-policy section, and a "Cross-platform CI" section
+rewritten: it previously claimed `ci.yml` ran on Linux/Windows/macOS with a typecheck/test/
+privacy-scan/lint gate (stale even before this lane; `ci.yml` was already Windows-only at
+baseline), still listed the three deleted workflows, and still described the two-branch
+`dev`/`dev2-go`/`preview` model with the retired ancestry check and stacked-child-PR exception.
+
+**Found and reported, not fixed here (outside every owned path in this lane, spawned as a
+follow-up task):** `docs-site/src/content/docs/contributing.md` and its four translations
+(ja/ko/ru/zh-cn), plus `gui/src/docs/generated-articles.ts` (an apparently hand-maintained copy
+of the same article for the in-app docs viewer), still tell real contributors to target `dev`,
+describe `main` as receiving only promotions, list `preview` as a live prerelease branch, and
+claim Windows CI runs typecheck/tests/privacy-scan. This is public-facing and actively misleading;
+neither `docs-site/` nor `gui/` is in any lane's owned paths for this task, so a dedicated
+follow-up session was spawned rather than reached into unowned, translation-sensitive territory
+under time pressure. `devlog/_fin/`, `devlog/_plan/`, `CHANGELOG.md`, `ROADMAP.md`'s point-in-time
+PR-status table, and `go/internal/claude/*.md` also still name `dev2-go` and `refs/heads/preview`,
+all correctly, as historical/point-in-time record rather than current policy; none of those were
+touched, matching the same rule this lane already applied to `devlog/_fin` and the two
+`docs/superpowers` files.
+
+**DRY_RUN, fixed:** `release.yml`'s "Publish (or dry-run)" step read a `$DRY_RUN` shell variable
+the workflow never set, so it always took the real `npm publish --access public` branch regardless
+of the `dry-run` input (default `true`) — see the note below, now stale, describing this as
+flagged-but-unfixed. The fix is one line: `DRY_RUN: ${{ inputs.dry-run }}` added to that step's
+`env:` block, the same pattern already used one line above it for `NPM_DIST_TAG`. Three new
+assertions in the "release workflow retains one exact archive" test pin it: the env binding
+exists, the shell check it feeds exists, and the step never carries a hardcoded `DRY_RUN: "true"`
+or `"false"` that would defeat the binding. Proven red against the unfixed step (caught: `Expected
+to contain: "DRY_RUN: ${{ inputs.dry-run }}"`, received the step without it) and green with the
+fix restored. The spawned follow-up task for this defect is withdrawn, since the fix landed here.
+
+## Main-only integration and gate-free workflows (2026-09-14, branch task/main-only-gate-free-workflows)
+
+`main` is now the sole integration and release branch. `dev`, `dev2-go`, and `preview` are gone
+from every workflow, from `enforce-pr-target.yml`'s allow-list, and from `scripts/release.ts`;
+`AGENTS.md`, `CONTRIBUTING.md`, and `MAINTAINERS.md` now describe that policy truthfully instead of
+the two-branch (`dev` + `dev2-go`) model, while preserving the `dev2-go` retirement history and
+adding the fact that native Go work under `go/` (issue #17) resumed directly on `main` rather than
+on a new parallel branch. `service-lifecycle.yml`, `react-doctor.yml`, and `issue-quality-tests.yml`
+are deleted outright (they were test-only workflows); `ci.yml`, `go-ci.yml`, and `gui-preview.yml`
+no longer run Typecheck, Test, GUI tests, Privacy scan, Vet, Race detector, or an `e2e` job, and
+`ci.yml`'s job is renamed `test` → `build` to match. **The accepted trade, stated plainly:** nothing
+in GitHub Actions verifies a build before it ships; a release can publish from a commit whose tests
+would have failed. Run `bun run typecheck` and `bun run test` locally before pushing: their real
+result is reported there now, never in a workflow.
+
+The behind-`dev` ancestry check (`isWrongAncestry`, `ANCESTRY_BEHIND_THRESHOLD`,
+`ANCESTRY_AHEAD_MAIN_MAX`) and the collaborator-permission lookup that only existed to skip it are
+removed from `.github/scripts/pr-quality.cjs` and from `enforce-pr-target.yml`'s script: with one
+allowed base there is no second base left to compare ancestry against.
+
+**Blocked, and stopped rather than forced:** item D (restrict `scripts/build-go-release.go` and
+`release.yml` to windows/amd64-only native assets) is not done. `scripts/prepare-package.ts`
+(`nativeArtifactNames`, `validateNativeDirectory`, outside this lane's owned paths) hard-requires
+all six platform binaries for every `npm pack`, on every OS: trimming the builder without changing
+that file in lockstep would break `npm pack`'s `prepack` hook and, with it, every release, including
+the Windows Squirrel installer step that runs later in the same job. `go-ci.yml`'s cross-compile job
+is trimmed to build only `windows/amd64` (the other four GOOS/GOARCH smoke builds are gone, a CI-cost
+reduction), but its "Verify six native release names" step is deliberately left asserting all six
+names, because that is what `build-go-release.go`'s unchanged dry-run output actually produces.
+Narrowing that assertion would have made it pin something false.
+
+**Independently discovered, out of scope, flagged separately (not fixed here):**
+`.github/workflows/release.yml`'s "Publish (or dry-run)" step branches on a shell variable
+`$DRY_RUN` that the workflow never sets anywhere, so it always takes the real `npm publish
+--access public` branch regardless of the `dry-run` input (which defaults to `true`). A follow-up
+task was spawned for this; it is release/security-sensitive and out of this lane's branch-policy
+scope. The rewritten characterization test for this step asserts the parts that are correctly
+guarded (`Post-publish registry smoke` and `Create/reconcile GitHub release` both correctly use
+`if: ${{ inputs.dry-run != true }}`) and says explicitly, in a comment, that the publish step's own
+internal branch is not asserted correct because it currently is not.
+
+**Pre-existing red, unrelated to branch policy, found and fixed along the way** (confirmed by
+inspecting `release.yml` directly and checking whether each string this lane never touched was ever
+actually present): five tests in `tests/ci-workflows.test.ts`'s "GitHub Actions hardening" block
+described a release workflow architecture that was never implemented: a `Setup Go` step, a
+`Publish exact tarball` step, and calls into `scripts/reconcile-release-assets.ts`, none of which
+exist in the real `release.yml`. It instead builds natives via `npm pack`'s own `prepack`
+lifecycle and does notes/tagging/asset-globbing inline in one `Create/reconcile GitHub release`
+step. Two tests in `tests/release-helper.test.ts` described `scripts/release.ts` calling
+`bun scripts/embed-gui.ts`, staging `go/internal/server/static*` in the release commit, and waiting
+on a `go-ci.yml` run that the real script never does; and one test in `tests/squirrel-events.test.ts`
+looked up a step named "Create GitHub release" where the real step (verified unchanged by this lane)
+is named "Create/reconcile GitHub release". Every one of these is rewritten to characterize the real,
+current behavior; none of the fixes touch the `*-full.nupkg` asset-selection logic, which a separate
+lane owns. The `workflowStep()` helper `tests/ci-workflows.test.ts` needed for several of these did
+not exist at all (`ReferenceError: workflowStep is not defined`); it is added now.
+
+**Test counts.** Baseline at `a4a29eba` (before this lane's edits), the exact command from this
+lane's brief (`bun test tests/ci-workflows.test.ts tests/release-helper.test.ts`): 82 tests, 75
+pass, 7 fail (5 pre-existing in `ci-workflows.test.ts`, 2 pre-existing in `release-helper.test.ts`,
+all itemized above). After every edit in this lane, the same two files plus the two the coordinator
+added to this lane's contract surface (`tests/squirrel-events.test.ts`,
+`tests/release-workflow-contract.test.ts`, the latter green throughout, untouched, plus one new
+guard test described below): 99 tests, 99 pass, 0 fail. `.github/scripts/pr-quality.test.cjs`
+(`node --test`): 12 pass, 0 fail. `bun x tsc --noEmit`: exit 0. Every `.github/workflows/*.yml`
+file (14 remaining, 3 deleted) parses as YAML. One guard test was added to
+`tests/ci-workflows.test.ts` asserting that no `.github/workflows/*.yml` file contains a `run:`
+step invoking `bun test`, `go test`, `tsc`, `eslint`, `go vet`, `-race`, `react-doctor`, or
+`privacy:scan`, and that no branch trigger names `dev`, `dev2-go`, or `preview`. It was proven red
+twice, independently, by temporarily reintroducing a `bun test` step into `ci.yml` (caught as
+`ci.yml:build:TEMP_RED_PROOF runs bun test`) and separately a `dev` push-branch entry (caught as
+`ci.yml:on.push names retired branch "dev"`), then reverted to green both times.
+
 ## Repository repair and a bounded defect hunt — 2026-09-12, `main`
 
 `main` did not load. Two lanes merged on 2026-08-21 each added their own `configMutationDepth`
