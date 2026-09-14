@@ -31,6 +31,7 @@ import {
 } from "../codex/runtime";
 import { CODEX_REAUTH_ACTION, collectOAuthHealthEntriesForCli, MASKED_ACCOUNT_FALLBACK, type OAuthHealthEntry } from "../oauth/health";
 import { getAuthRefreshIntentLockPath, getAuthStorePath } from "../oauth/store";
+import { listDegradedAclPaths, type DegradedAclEntry } from "../lib/windows-secret-acl";
 export { resolveCodexHomeDir } from "../codex/home";
 
 export type OAuthDoctorCheck = { level: "OK" | "WARN"; message: string };
@@ -166,6 +167,29 @@ export async function collectOAuthDoctorChecks(
   });
 
   return checks;
+}
+
+export type AclHardeningDoctorCheck = { level: "OK" | "WARN"; message: string };
+
+/**
+ * ACL hardening visibility (OPS-01 / SEC-01). windows-secret-acl.ts soft-fails a required
+ * hardenSecretPath/hardenSecretDir call on a genuine icacls timeout, and soft-fails a
+ * required:false call that still could not harden after a real (non-timeout) icacls denial, so a
+ * secret directory can go on running with weaker per-user NTFS ACLs. Both cases now warn (through
+ * console.warn and the persisted app log), but neither reaches a doctor/health surface on its
+ * own -- that is what this check adds. Observe-only: reads the module's own read-only reader
+ * (listDegradedAclPaths), never re-hardens or re-probes anything itself. Reflects only what THIS
+ * doctor process has seen (for example during its own config load above); the running service
+ * process is reported separately, see the "Memory / runtime" section's aclHardeningDegradedCount.
+ */
+export function collectAclHardeningDoctorChecks(entries: DegradedAclEntry[] = listDegradedAclPaths()): AclHardeningDoctorCheck[] {
+  if (entries.length === 0) {
+    return [{ level: "OK", message: "No secret path hardened by this process has a degraded NTFS ACL." }];
+  }
+  return entries.map(entry => ({
+    level: "WARN",
+    message: `Secret path is running with a degraded NTFS ACL harden (${entry.timedOut ? "icacls timed out" : "icacls failed"} at ${new Date(entry.at).toISOString()}): ${entry.path}. ${entry.diagnostics} Action: check that icacls.exe is present and responds (run \`icacls <path>\` by hand), then restart ocx so hardening runs again.`,
+  }));
 }
 
 const WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
@@ -663,6 +687,9 @@ export type ServiceMemoryData = {
   streamMode: string;
   eagerRelay: { useEagerRelay: boolean; reason: string } | null;
   watchdog: { warnThresholdBytes: number; lastWarnAt: number | null; observedBytes?: number; observedMetric?: MemoryMetric } | null;
+  /** OPS-01: count only (no paths) of secret paths the SERVICE process currently has a degraded
+   *  NTFS ACL harden for. Optional so an older running service without this field still parses. */
+  aclHardeningDegradedCount?: number;
 };
 
 export type ServiceMemoryReport =
@@ -738,6 +765,7 @@ export async function fetchServiceMemory(
               : undefined,
           }
           : null,
+        aclHardeningDegradedCount: typeof body.aclHardeningDegradedCount === "number" ? body.aclHardeningDegradedCount : undefined,
       },
     };
   } catch (err) {
@@ -765,6 +793,13 @@ export function formatServiceMemoryLines(report: ServiceMemoryReport): string[] 
   lines.push(`         streamMode=${d.streamMode}${d.eagerRelay ? ` (eager relay: ${d.eagerRelay.useEagerRelay ? "on" : "off"}, ${d.eagerRelay.reason})` : ""}`);
   if (d.watchdog) {
     lines.push(`         watchdog threshold=${mb(d.watchdog.warnThresholdBytes)}${d.watchdog.lastWarnAt ? `, last warn ${new Date(d.watchdog.lastWarnAt).toISOString()}` : ", no warnings"}`);
+  }
+  // OPS-01: the service process's own degraded-ACL count (count only, see system-routes.ts).
+  // Separate from the "ACL hardening" section above, which reports this doctor process's view.
+  if (d.aclHardeningDegradedCount !== undefined) {
+    lines.push(d.aclHardeningDegradedCount > 0
+      ? `  !!     ${d.aclHardeningDegradedCount} secret path(s) on the service process have a degraded NTFS ACL harden; see 'ACL hardening' above for detail, or the service's own log`
+      : "         service reports 0 secret paths with a degraded NTFS ACL harden");
   }
   // Interpretation rule: reuse the watchdog threshold and the same max-of
   // observed memory counters, so doctor and watchdog never disagree about
@@ -1023,6 +1058,12 @@ export async function runDoctor(args: string[] = []): Promise<void> {
   // OAuth reliability: observe-only (no mutations / auto-repair).
   console.log("\nOAuth reliability");
   for (const check of await collectOAuthDoctorChecks()) {
+    console.log(`  [${check.level}] ${check.message}`);
+  }
+
+  // ACL hardening reliability (OPS-01): observe-only, never re-hardens or re-probes.
+  console.log("\nACL hardening");
+  for (const check of collectAclHardeningDoctorChecks()) {
     console.log(`  [${check.level}] ${check.message}`);
   }
 
