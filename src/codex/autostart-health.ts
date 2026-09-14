@@ -16,6 +16,8 @@ export interface StartupHealthInputs {
   serviceEnabled: boolean;
   serviceRunning: boolean;
   serviceStale: boolean;
+  /** True when serviceStale reflects an unresolved status query rather than a confirmed broken install. */
+  serviceStatusUncertain?: boolean;
   serviceConflict: boolean;
   serviceSupported: boolean;
   shimInstalled: boolean;
@@ -37,6 +39,7 @@ export interface StartupHealth {
   serviceEnabled: boolean;
   serviceRunning: boolean;
   serviceStale: boolean;
+  serviceStatusUncertain: boolean;
   serviceConflict: boolean;
   shimInstalled: boolean;
   shimHealthy: boolean;
@@ -93,6 +96,7 @@ export function deriveStartupHealth(inputs: StartupHealthInputs): StartupHealth 
   return {
     ...inputs,
     diagnosticStale: inputs.diagnosticStale ?? false,
+    serviceStatusUncertain: inputs.serviceStatusUncertain ?? false,
     routingInjected,
     localRoutingDependency,
     status,
@@ -125,6 +129,7 @@ export function collectStartupHealth(
     serviceEnabled: service.enabled,
     serviceRunning: service.running,
     serviceStale: service.stale,
+    serviceStatusUncertain: service.staleUncertain ?? false,
     serviceConflict: service.conflict,
     serviceSupported: service.supported,
     shimInstalled: shim.installed,
@@ -143,6 +148,11 @@ export function startupHealthSummary(health: StartupHealth): string {
   if (health.routingKind === "custom-local") return `AT RISK after restart (custom local gateway lifecycle is not managed by opencodex; run '${command}')`;
   if (health.shimCoverage === "cli-only") return `AT RISK for Codex Desktop after restart (launcher shim covers CLI scripts only; run '${command}')`;
   if (health.serviceConflict) return `AT RISK after restart (background service managers conflict; run '${command}')`;
+  // A service whose install is confirmed broken (mismatched backend, missing/baked
+  // assets) is a different claim from one whose status query simply could not answer
+  // (a transient Task Scheduler or WinSW probe failure) -- fail closed either way, but
+  // say honestly which one this is rather than implying disrepair that was never proven.
+  if (health.serviceStale && health.serviceStatusUncertain) return `AT RISK after restart (background service status could not be determined; run '${command}')`;
   if (health.serviceStale) return `AT RISK after restart (background service files are stale; run '${command}')`;
   if (health.serviceInstalled && !health.serviceViable) return `AT RISK after restart (installed service is disabled, stopped, or unhealthy; run '${command}')`;
   return `AT RISK after restart (no viable background service; run '${command}')`;
