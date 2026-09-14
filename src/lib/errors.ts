@@ -339,28 +339,39 @@ export function inferHttpStatusFromAdapterMessage(message: string): number {
 
 /** Map an adapter terminal error message to HTTP status + classified Codex error payload. */
 export function adapterFailureFromMessage(message: string): { httpStatus: number; error: OcxErrorPayload } {
-  const httpStatus = inferHttpStatusFromAdapterMessage(message);
+  const inferredStatus = inferHttpStatusFromAdapterMessage(message);
   let finalMessage = message;
   const retryAfterSeconds = parseRetryAfterFromMessage(message);
   if (retryAfterSeconds && !/please try again in /i.test(message)) {
     finalMessage = `${message} Please try again in ${retryAfterSeconds}s.`;
   }
-  const errorType = httpStatus === 499
+  // `inferredStatus` only seeds the `type` hint classifyError uses to break ties (e.g. the
+  // local-ACL-hardening vs. authentication overlap at status 503/401); it must not become the
+  // returned httpStatus, because classifyError can independently override the error's type/code
+  // from the message text (e.g. quota wording) regardless of the status it was handed.
+  const errorType = inferredStatus === 499
     ? "client_closed_request"
-    : httpStatus === 429
+    : inferredStatus === 429
       ? "rate_limit_error"
-      : httpStatus === 401
+      : inferredStatus === 401
         ? "authentication_error"
-        : httpStatus === 403
+        : inferredStatus === 403
           ? "permission_error"
-          : httpStatus === 503 || httpStatus === 504
+          : inferredStatus === 503 || inferredStatus === 504
             ? "server_error"
-            : httpStatus === 400
+            : inferredStatus === 400
               ? "invalid_request_error"
               : "upstream_error";
+  const error = classifyError(inferredStatus, errorType, finalMessage);
+  // Derive the returned httpStatus FROM the classified error via this module's own
+  // httpStatusFromTerminalError, instead of returning `inferredStatus` verbatim. This is the
+  // same mapping httpStatusFromTerminalError enforces everywhere else, so adapterFailureFromMessage
+  // can never again hand back a status its own sibling function would immediately disagree with
+  // (COR-02: quota-exhaustion text used to pair httpStatus: 502 with error.type: "insufficient_quota",
+  // even though this file's own rule maps insufficient_quota to 429).
   return {
-    httpStatus,
-    error: classifyError(httpStatus, errorType, finalMessage),
+    httpStatus: httpStatusFromTerminalError(error),
+    error,
   };
 }
 
