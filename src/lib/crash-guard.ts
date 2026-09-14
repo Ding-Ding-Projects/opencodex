@@ -203,6 +203,24 @@ function record(kind: string, err: unknown, promise?: unknown): void {
   }
 }
 
+/**
+ * Format and persist one crash entry through the same redacted formatter and
+ * crash.log path the process-level guards use, without claiming the daemon
+ * "stayed up" — this is for a synchronous fault that happens before the
+ * daemon is serving anything, such as journal recovery ahead of binding a
+ * port. The caller still owns printing its own user-facing failure message
+ * and choosing the process exit code; this only guarantees the full,
+ * redacted detail lands in crash.log instead of a raw stack on stderr.
+ */
+export function logStartupFailure(kind: string, err: unknown): void {
+  const line = formatCrashEntry(kind, err);
+  try {
+    appendFileSync(crashLogPath(), line);
+  } catch {
+    /* logging must never throw */
+  }
+}
+
 interface FetchTrace { url: string; at: number; origin: string; settled: boolean; rejected?: string }
 const FETCH_RING_MAX = 12;
 const fetchRing: FetchTrace[] = [];
