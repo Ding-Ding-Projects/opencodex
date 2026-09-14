@@ -74,7 +74,7 @@ const INITIAL_OWNED_PATHS = [
 const ownershipCache = new Map<string, {
   owner: ConfigOwner;
   manifest: ConfigUninstallManifest;
-} | null>();
+}>();
 
 function ownershipCacheKey(configDir: string): string {
   const key = resolve(configDir);
@@ -234,9 +234,14 @@ export function recordOwnedConfigPath(configDir: string, candidatePath: string):
     mkdirSync(configDir, { recursive: true, mode: 0o700 });
   }
   let ownership = ownershipCache.get(cacheKey);
-  if (ownership === undefined) {
-    ownership = loadOwnership(configDir) ?? createOwnership(configDir);
-    ownershipCache.set(cacheKey, ownership);
+  if (!ownership) {
+    // A refusal (loadOwnership and createOwnership both return null, typically
+    // because the directory already held an unowned file) must never be cached:
+    // the on-disk reason for the refusal can disappear later in the same
+    // process, and a directory in an identical on-disk state must always be
+    // judged the same way. Only a successful claim is worth remembering.
+    ownership = loadOwnership(configDir) ?? createOwnership(configDir) ?? undefined;
+    if (ownership) ownershipCache.set(cacheKey, ownership);
   }
   if (!ownership) return false;
   if (ownership.manifest.paths.includes(rel)) return true;
