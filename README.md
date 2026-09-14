@@ -228,9 +228,10 @@ have been removed, so a missing, stale, or version-mismatched dashboard build is
 unavailable instead of silently serving the old interface.
 
 Use **Connect to another OpenCodex** to enter a remote IPv4 address, IPv6 address, or hostname and
-the remote proxy's active port. The destination opens in a new tab and prompts for that proxy's
-separate ADMIN token. Nothing is appended to the URL or saved by the connection dialog. Direct HTTP
-is appropriate only on a trusted LAN; prefer an SSH tunnel across any untrusted link.
+the remote proxy's active port. The destination opens in a new tab; there is no ADMIN token to
+prompt for, since management routes are intentionally open (see [Remote access](#remote-access)
+below). Nothing is appended to the URL or saved by the connection dialog. Direct HTTP is
+appropriate only on a trusted LAN; prefer an SSH tunnel across any untrusted link.
 
 You can also add providers through `ocx init` (interactive CLI) or by editing `~/.opencodex/config.json` directly.
 
@@ -606,13 +607,17 @@ Clients (scripts, remote machines) must include the token in every request:
 x-opencodex-api-key: your-secret-token
 ```
 
-The dashboard and `/api/*` use a distinct ADMIN credential. A hardened ADMIN token is created on
-the proxy host (or supplied through `OPENCODEX_ADMIN_AUTH_TOKEN`), and a remote dashboard prompts
-for it. Data-plane keys are never accepted as ADMIN credentials. In **Connect to another
-OpenCodex**, enter the remote IP/hostname and its active listener port from `ocx host status` (or
-`ocx status`); the dialog never puts a token in the URL or saves it. Direct HTTP is unencrypted, so
-use it only on a trusted LAN and prefer SSH
-port forwarding elsewhere. Tokens are compared in constant time.
+The dashboard and `/api/*` (the management API) have no credential gate of their own: there is no
+ADMIN token, and no remote dashboard prompts for one. `OPENCODEX_ADMIN_AUTH_TOKEN` was removed as an
+inbound gate; if you still set it, its only remaining effect is keeping that value out of anything
+the proxy forwards upstream. A non-loopback bind therefore exposes management operations, including
+provider secrets and account exports, to anything that clears the Origin/Host check, so protect it
+at the network layer instead: keep the bind on `127.0.0.1` and reach it over SSH port forwarding
+(see below), or put an external authenticated boundary in front of a LAN or `0.0.0.0` deployment. In
+**Connect to another OpenCodex**, enter the remote IP/hostname and its active listener port from
+`ocx host status` (or `ocx status`); the dialog never asks for a token, puts one in the URL, or
+saves one. Direct HTTP is unencrypted, so use it only on a trusted LAN and prefer SSH port
+forwarding elsewhere. The data-plane token above is compared in constant time.
 
 opencodex automatically remaps Codex resume history so old OpenAI chats and opencodex-created project
 threads stay visible in Codex App while the proxy is active. opencodex records the original provider/source metadata in
