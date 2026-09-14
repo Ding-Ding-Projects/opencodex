@@ -61,6 +61,7 @@ async function edit(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   if (modelId !== undefined) patch.modelId = modelId;
   if (displayName !== undefined) patch.displayName = displayName === "-" ? "" : displayName;
   if (contextRaw !== undefined) {
+    if (!contextRaw.trim()) throw new CliUsageError("--context-window must be an integer >= 0", USAGE);
     const value = Number(contextRaw.replace(/[_,]/g, ""));
     if (!Number.isInteger(value) || value < 0) throw new CliUsageError("--context-window must be an integer >= 0", USAGE);
     patch.contextWindow = value === 0 ? null : value;
