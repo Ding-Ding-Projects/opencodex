@@ -313,6 +313,19 @@ function errorPayloadFromText(text: string): Record<string, unknown> {
   };
 }
 
+// Same guarded shape as payloadType() above: a "successful" upstream body that
+// is labelled or sniffed as JSON is not guaranteed to actually parse. Return
+// undefined on failure instead of letting JSON.parse throw a raw SyntaxError
+// out of sendResponseToWebSocket, so callers can route it through the normal
+// protocol_error 502 path instead of an uncaught rejection.
+function parseJsonRecord(text: string): Record<string, unknown> | undefined {
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function sendResponseToWebSocket(
   ws: ServerWebSocket<WsData>,
   response: Response,
@@ -357,7 +370,16 @@ export async function sendResponseToWebSocket(
   if (contentType.includes("application/json")) {
     const text = await response.text();
     if (!isCurrent()) return;
-    const json = JSON.parse(text) as Record<string, unknown>;
+    const json = parseJsonRecord(text);
+    if (json === undefined) {
+      options.onTerminal?.("incomplete");
+      sendJsonFrame(ws, buildWsErrorFrame(502, {
+        type: "protocol_error",
+        code: "websocket_protocol_error",
+        message: "Invalid JSON body in upstream application/json response",
+      }, response.headers));
+      return;
+    }
     sendResponsesJsonAsEvents(ws, json, options.onTerminal, options.onSsePayload);
     return;
   }
@@ -380,9 +402,14 @@ export async function sendResponseToWebSocket(
   if (!isCurrent()) return;
   const trimmed = text.trim();
   if (trimmed.startsWith("{")) {
-    const json = JSON.parse(trimmed) as Record<string, unknown>;
-    sendResponsesJsonAsEvents(ws, json, options.onTerminal, options.onSsePayload);
-    return;
+    const json = parseJsonRecord(trimmed);
+    if (json !== undefined) {
+      sendResponsesJsonAsEvents(ws, json, options.onTerminal, options.onSsePayload);
+      return;
+    }
+    // Falls through to the shared protocol_error 502 branch below: a body that
+    // merely *starts* with "{" but does not parse is the same "successful but
+    // unusable body" case as any other unrecognized shape here.
   }
 
   options.onTerminal?.("incomplete");
