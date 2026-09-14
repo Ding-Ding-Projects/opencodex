@@ -84,6 +84,48 @@ describe("usage log", () => {
     expect(usageLogRevisionKey(newSnapshot.revision)).not.toBe(usageLogRevisionKey(oldSnapshot.revision));
   });
 
+  test("a same-identity rewrite that grows the file forces a full re-parse instead of trusting stale history", async () => {
+    // Establish a warm incremental-cache snapshot: three rows, one full read.
+    writeFileSync(
+      usageLogPath(),
+      `${[persistedLine("old-0"), persistedLine("old-1"), persistedLine("old-2")].join("\n")}\n`,
+    );
+    const first = await readUsageSnapshotForManagement();
+    expect(first.entries.map(entry => entry.requestId)).toEqual(["old-0", "old-1", "old-2"]);
+    expect(usageReadCacheStatsForTests()).toEqual({ fullReads: 1, tailReads: 0, parsedLines: 3 });
+
+    // Rewrite the SAME path in place with different, larger content -- writeFileSync
+    // truncates rather than unlinking, so this keeps the same dev/ino/birthtimeMs (proven
+    // on this platform in the probe used to design this test) while the file still grows.
+    // This is exactly what a hand-edited or restored log revision looks like from the
+    // cache's point of view: same identity, size grew, but the bytes it already parsed are
+    // no longer there. Trusting the cached prefix here would merge stale rows with a tail
+    // that does not follow them.
+    writeFileSync(
+      usageLogPath(),
+      `${[
+        persistedLine("replaced-0"),
+        persistedLine("replaced-1"),
+        persistedLine("replaced-2"),
+        persistedLine("replaced-3"),
+        persistedLine("replaced-4"),
+      ].join("\n")}\n`,
+    );
+    const second = await readUsageSnapshotForManagement();
+    // Correct result: the rewritten file's own five rows, never the three cached ones plus
+    // a wrongly-appended tail, and never a mix of old and new requestIds.
+    expect(second.entries.map(entry => entry.requestId)).toEqual([
+      "replaced-0",
+      "replaced-1",
+      "replaced-2",
+      "replaced-3",
+      "replaced-4",
+    ]);
+    // The fingerprint mismatch must force a second FULL read (fullReads: 2), not an
+    // incremental merge (which would have left tailReads at 1 and parsedLines far lower).
+    expect(usageReadCacheStatsForTests()).toEqual({ fullReads: 2, tailReads: 0, parsedLines: 8 });
+  });
+
   test("persists conversationId for Logs session correlation", () => {
     appendUsageEntry({
       requestId: "ocx-conversation",
