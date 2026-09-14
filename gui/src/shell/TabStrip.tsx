@@ -843,6 +843,38 @@ export default function TabStrip({ tabs }: { tabs: TabsApi }) {
     }
     if (!visible.length) return;
     const index = visible.findIndex(tab => tab.id === tabs.activeTab);
+    /**
+     * Ctrl+Arrow/Home/End reorders the strip instead of moving focus across
+     * it: the keyboard route to what only a mouse drag could do before. The
+     * `onDrop` handler below was the sole caller of `tabs.moveTab`, so a
+     * keyboard-only or switch-access user had no way to change tab order at
+     * all. Checked and returned on ahead of the plain arrows below, because
+     * `key` alone does not see the held modifier and an unguarded
+     * fall-through would let both blocks act on the same press.
+     */
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey
+      && (e.key === "ArrowRight" || e.key === "ArrowLeft" || e.key === "Home" || e.key === "End")) {
+      e.preventDefault();
+      if (index >= 0) {
+        const toIndex = e.key === "ArrowRight" ? index + 1
+          : e.key === "ArrowLeft" ? index - 1
+          : e.key === "Home" ? 0
+          : visible.length - 1;
+        // No wrap: a boundary press, with nothing further to swap past, is
+        // left alone, exactly like a drag that has nowhere further to drop.
+        if (toIndex >= 0 && toIndex < visible.length && toIndex !== index) {
+          const movedId = visible[index].id;
+          tabs.moveTab(movedId, visible[toIndex].id);
+          // A reorder can reparent the button into or out of a group's own
+          // `<div>` (see `moveTab`'s doc comment), the same kind of move the
+          // group picker below makes, so focus is restored after commit
+          // through that same `focusTabOnCommit` route rather than assumed
+          // to survive the reparent.
+          focusTabOnCommit.current = movedId;
+        }
+      }
+      return;
+    }
     const move = (next: number) => {
       e.preventDefault();
       const target = visible[(next + visible.length) % visible.length];
