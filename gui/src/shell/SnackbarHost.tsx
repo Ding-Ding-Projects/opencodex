@@ -33,13 +33,20 @@ const TONE: Record<NoticeTone, { mod: string; nameKey: TKey; Icon: typeof IconIn
 
 /**
  * Bottom-left snackbar stack. `aria-live="polite"` so screen readers announce
- * arrivals without stealing focus — these messages are never a decision point.
+ * arrivals without stealing focus, these messages are never a decision point.
+ *
+ * The `m3-snack-host` container stays mounted even when `live` is empty. A
+ * live region only announces content that changes after it is already in the
+ * document; a region that arrives in the same render as its first message is
+ * indistinguishable from static markup to most screen readers, so the very
+ * first notice, and every notice after the stack empties again, would go
+ * unannounced. The container is `position: fixed` with no set size and
+ * `pointer-events: none`, so sitting empty costs nothing visually and blocks
+ * no clicks.
  */
 export default function SnackbarHost() {
   const { live, dismiss } = useNotifications();
   const t = useT();
-
-  if (!live.length) return null;
 
   return (
     <div className="m3-snack-host" aria-live="polite">
