@@ -44,6 +44,49 @@ const hardenedPaths = new Set<string>();
 /** Paths whose harden TIMED OUT this process: do not re-stall every loadConfig on them. */
 const timedOutPaths = new Set<string>();
 
+/** One path this process currently knows is running with a degraded (soft-failed) ACL harden. */
+export interface DegradedAclEntry {
+  /** Destination-path identity: HardenOptions.timeoutMemoKey when the caller set one, else the target path. */
+  path: string;
+  /** True for a genuine icacls timeout; false for a completed required:false attempt that still failed. */
+  timedOut: boolean;
+  /** The sanitized diagnostic string returned alongside this HardenResult (see sanitizeDiagnostics). No raw path or username. */
+  diagnostics: string;
+  /** nowFn() timestamp (ms) this path was first observed degraded. */
+  at: number;
+}
+
+/**
+ * Paths currently running with a degraded ACL harden, keyed the same way as `timedOutPaths`
+ * (issue #612's destination-path memo key). A path is added the moment hardenEntry /
+ * hardenEntryAsync soft-fails -- a genuine icacls timeout, or a completed required:false attempt
+ * that still could not harden -- and removed the moment a later call on the same key succeeds.
+ * Read only through the exported listDegradedAclPaths() below; nothing outside this module
+ * writes here. This is what makes a soft-fail visible to a diagnostics consumer (doctor, a
+ * health endpoint) that does not already know which exact path to re-probe.
+ */
+const degradedAcls = new Map<string, DegradedAclEntry>();
+
+function recordDegraded(memoKey: string, diagnostics: string, timedOut: boolean): void {
+  degradedAcls.set(memoKey, { path: memoKey, timedOut, diagnostics, at: nowFn() });
+}
+
+function clearDegraded(memoKey: string): void {
+  degradedAcls.delete(memoKey);
+}
+
+/**
+ * Read-only snapshot of every secret path this process currently knows is running with a
+ * degraded NTFS ACL harden. Covers both a genuine icacls timeout and a completed required:false
+ * attempt that could not fully harden; does not itself re-probe or mutate anything. Intended for
+ * `ocx doctor` and the management health surface, so a soft-fail that used to be visible only as
+ * a bare console.warn (SEC-01: or not at all, for the required:false case) can be discovered
+ * without already knowing which path to look at.
+ */
+export function listDegradedAclPaths(): DegradedAclEntry[] {
+  return [...degradedAcls.values()].map(entry => ({ ...entry }));
+}
+
 export interface HardenResult {
   ok: boolean;
   diagnostics?: string;
@@ -222,6 +265,7 @@ export function resetHardenedStateForTests(): void {
   hardenedDirectories.clear();
   hardenedPaths.clear();
   timedOutPaths.clear();
+  degradedAcls.clear();
 }
 
 function effectivePlatform(): string {
@@ -393,6 +437,21 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 /**
+ * Best-effort mirror of a soft-fail warning into the persisted app log (and, through it, the
+ * in-memory ring the GUI Debug tab reads). A static import of debug-log-buffer here would cycle:
+ * debug-log-buffer -> app-log-file -> ../config -> ./windows-secret-acl (config.ts imports
+ * hardenSecretDir/hardenSecretPath/hardenSecretPathAsync). The dynamic import defers resolution
+ * past module load, the same cycle-avoidance idiom config.ts already uses for state-history.
+ * Fire-and-forget and self-swallowing on purpose: a logging failure must never affect the ACL
+ * result the caller already has, and console.warn has already run by the time this is called.
+ */
+function persistSoftFailWarning(line: string): void {
+  void import("./debug-log-buffer")
+    .then(m => m.appendDebugLogLine(line))
+    .catch(() => { /* persisted logging is best-effort; console.warn already ran */ });
+}
+
+/**
  * Diagnostic-only post-timeout probe (never promotes to ok:true — a clean /findsid
  * does not prove inheritance was disabled or the user grant ran; only a fully
  * completed harden sequence may enter the hardened cache). Bounded by the remaining
@@ -458,6 +517,7 @@ function hardenEntry(
   const existing = tryVerifyExistingAcl(targetPath, deadline);
   if (existing.compliant) {
     cache.add(targetPath);
+    clearDegraded(memoKey);
     return { ok: true, diagnostics: existing.reason };
   }
   let lastErr: unknown;
@@ -466,6 +526,7 @@ function hardenEntry(
     try {
       runIcacls(targetPath, directory, deadline);
       cache.add(targetPath);
+      clearDegraded(memoKey);
       return { ok: true };
     } catch (err) {
       lastErr = err;
@@ -480,10 +541,20 @@ function hardenEntry(
     const annotated = `${diagnostics}; ${state}`;
     // Timeout-only soft-fail: a hung icacls must not block OAuth/token writes.
     // chmod is still applied by the caller.
-    console.warn(`[opencodex] ${annotated} — continuing without NTFS ACL harden`);
+    const line = `[opencodex] ${annotated} — continuing without NTFS ACL harden`;
+    console.warn(line);
+    persistSoftFailWarning(line);
+    recordDegraded(memoKey, annotated, true);
     return { ok: false, diagnostics: annotated };
   }
   if (opts.required) throw new Error(diagnostics);
+  // SEC-01: a genuine (non-timeout) icacls denial in required:false mode still soft-fails --
+  // that trade-off is unchanged -- but it must no longer do so silently. Same persisted-log
+  // route as the timeout branch above.
+  const denialLine = `[opencodex] ${diagnostics} — continuing without NTFS ACL harden`;
+  console.warn(denialLine);
+  persistSoftFailWarning(denialLine);
+  recordDegraded(memoKey, diagnostics, false);
   return { ok: false, diagnostics };
 }
 
@@ -512,6 +583,7 @@ async function hardenEntryAsync(
           const existing = verifyExistingAclOutput(result.stdout, await currentWindowsUserAsync(remaining) ?? "");
           if (existing.compliant) {
             cache.add(targetPath);
+            clearDegraded(memoKey);
             return { ok: true, diagnostics: existing.reason };
           }
         }
@@ -524,6 +596,7 @@ async function hardenEntryAsync(
     try {
       await runIcaclsAsync(targetPath, directory, deadline);
       cache.add(targetPath);
+      clearDegraded(memoKey);
       return { ok: true };
     } catch (err) {
       lastErr = err;
@@ -536,10 +609,20 @@ async function hardenEntryAsync(
     timedOutPaths.add(memoKey);
     const state = await describeAclStateAfterTimeoutAsync(targetPath, deadline);
     const annotated = `${diagnostics}; ${state}`;
-    console.warn(`[opencodex] ${annotated} — continuing without NTFS ACL harden`);
+    const line = `[opencodex] ${annotated} — continuing without NTFS ACL harden`;
+    console.warn(line);
+    persistSoftFailWarning(line);
+    recordDegraded(memoKey, annotated, true);
     return { ok: false, diagnostics: annotated };
   }
   if (opts.required) throw new Error(diagnostics);
+  // SEC-01: a genuine (non-timeout) icacls denial in required:false mode still soft-fails --
+  // that trade-off is unchanged -- but it must no longer do so silently. Same persisted-log
+  // route as the timeout branch above.
+  const denialLine = `[opencodex] ${diagnostics} — continuing without NTFS ACL harden`;
+  console.warn(denialLine);
+  persistSoftFailWarning(denialLine);
+  recordDegraded(memoKey, diagnostics, false);
   return { ok: false, diagnostics };
 }
 

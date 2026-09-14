@@ -16,11 +16,17 @@
  *
  * `activeTurnCount` / `isDraining` are scalar lifecycle counters for the
  * dashboard drain-and-restart confirm UX — never request bodies or IDs.
+ *
+ * `aclHardeningDegradedCount` (OPS-01) is the count only, never the path list or diagnostics:
+ * this endpoint stays scalar-only. `ocx doctor` reads it through fetchServiceMemory so a secret
+ * directory running indefinitely with weaker NTFS ACLs on the live service is visible from the
+ * CLI even though the degraded state lives in the service process, not the doctor process.
  */
 import { decideEagerRelay } from "../../lib/bun-stream-caps";
 import { getActiveTurnCount, isDraining } from "../lifecycle";
 import { getActiveMemoryWatchdog, observedMemoryCounter } from "../memory-watchdog";
 import { responseStateMetrics } from "../../responses/state";
+import { listDegradedAclPaths } from "../../lib/windows-secret-acl";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
 import { acceptSystemRestart } from "./system-restart";
@@ -85,6 +91,7 @@ export async function handleSystemRoutes(ctx: ManagementContext): Promise<Respon
       watchdog,
       activeTurnCount: getActiveTurnCount(),
       isDraining: isDraining(),
+      aclHardeningDegradedCount: listDegradedAclPaths().length,
     });
   }
 
