@@ -54,6 +54,15 @@ func TestUsageSummaryCacheInvalidationAndSurfaceKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	api := newUsageTestAPI(t, log)
+	// The API's own clock defaults to the real time.Now (see NewAPI), while
+	// every entry in this test is anchored to the fixed "now" above. That
+	// mismatch is harmless the day this test is written, but /api/usage
+	// filters range=30d against whatever a.now() returns, so once real wall-
+	// clock time drifts more than 30 days past this fixed date every entry
+	// here falls outside the window and Requests silently comes back 0. Pin
+	// the API's clock to the same fixed instant the entries use so the test
+	// asserts the same thing regardless of which real calendar day runs it.
+	api.now = func() time.Time { return now }
 
 	_, first := usageRequest(t, api, "/api/usage?range=30d&surface=codex")
 	_, hit := usageRequest(t, api, "/api/usage?range=30d&surface=codex")
