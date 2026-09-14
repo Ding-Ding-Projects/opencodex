@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,6 +23,39 @@ type doctorRoundTrip func(*http.Request) (*http.Response, error)
 
 func (fn doctorRoundTrip) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+// fakeVersionProbeCommandContext stands in for doctorDeps.CommandContext so
+// appendCodexRuntimeCheck's "codex --version" probe never touches a real
+// binary. The test used to hand LookPath a hardcoded "/bin/echo" and rely on
+// the real exec.CommandContext default to run it: harmless on Linux/macOS,
+// where /bin/echo genuinely exists and happily echoes back "--version" with
+// exit 0, but there is no such path on Windows, so the probe failed and the
+// "Codex runtime" check reported warn instead of pass. Every other doctorDeps
+// side effect here (LookPath, HTTPClient, ReadRuntime, CollectWarnings) was
+// already faked; this closes the one real dependency that was not, by
+// re-executing this test binary as the "codex" process the same way
+// TestRealWorldFakeCodexProcess (cmd/ocx/realworld_integration_test.go)
+// re-execs itself as a fake codex.
+func fakeVersionProbeCommandContext(t *testing.T) func(context.Context, string, ...string) *exec.Cmd {
+	t.Helper()
+	return func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDoctorRuntimeHelperProcess$")
+		command.Env = append(os.Environ(), "GO_WANT_DOCTOR_HELPER_PROCESS=1")
+		return command
+	}
+}
+
+// TestDoctorRuntimeHelperProcess is not a real test. It only does anything
+// when re-exec'd by fakeVersionProbeCommandContext above, in which case it
+// prints a fixed fake version string and exits 0, standing in for a real
+// "codex --version" on whichever platform the suite is running on.
+func TestDoctorRuntimeHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_DOCTOR_HELPER_PROCESS") != "1" {
+		return
+	}
+	fmt.Print("codex-cli 1.2.3-fake")
+	os.Exit(0)
 }
 
 func TestCollectDoctorReportClassifiesChecks(t *testing.T) {
@@ -44,8 +79,9 @@ func TestCollectDoctorReportClassifiesChecks(t *testing.T) {
 		Environment: []string{"OPENCODEX_HOME=" + ocxHome, "HTTPS_PROXY=https://secret@example.test"},
 		Mounts:      "/dev/root / ext4 rw 0 0\n", WorkingDirectory: home,
 		Now: func() time.Time { return now }, HTTPClient: client,
-		LookPath:    func(string) (string, error) { return "/bin/echo", nil },
-		ReadRuntime: func() (int, int) { return 0, 0 },
+		LookPath:       func(string) (string, error) { return "/bin/echo", nil },
+		CommandContext: fakeVersionProbeCommandContext(t),
+		ReadRuntime:    func() (int, int) { return 0, 0 },
 		CollectWarnings: func(codex.ProjectDiagnosticsOptions) []codex.ProjectConfigWarning {
 			return []codex.ProjectConfigWarning{{Path: filepath.Join(home, ".codex", "config.toml"), Code: codex.IssueRootProvider, Message: "bypasses OpenCodex"}}
 		},
