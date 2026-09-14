@@ -54,7 +54,18 @@ func TestDiscoveryWalksUpAndAddsTrustedProjects(t *testing.T) {
 	globalConfig := filepath.Join(home, "codex", "config.toml")
 	writeConfig(t, globalConfig, "[projects.\""+trusted+"\"]\ntrust_level = \"trusted\"\n")
 
-	paths := DiscoverProjectCodexConfigPaths(ProjectDiagnosticsOptions{Cwd: deep, CodexConfigPath: globalConfig})
+	// MaxWalkParents is bounded to exactly deep -> sub -> project (3 steps):
+	// the default of 12 (matching the oracle's own unbounded-feeling default,
+	// src/codex/project-config-warnings.ts) has no notion of a home-directory
+	// boundary, and t.TempDir() on Windows resolves under the real user
+	// profile (%LOCALAPPDATA%\Temp), close enough to it that twelve real
+	// ancestor directories can reach an actual ~/.codex/config.toml on
+	// whatever machine happens to run this test -- which is exactly what
+	// made this test non-deterministic here. Bounding the walk to what this
+	// test's own directory layout actually needs keeps it deterministic
+	// regardless of the host's temp-directory depth or what is in its real
+	// home directory.
+	paths := DiscoverProjectCodexConfigPaths(ProjectDiagnosticsOptions{Cwd: deep, CodexConfigPath: globalConfig, MaxWalkParents: 3})
 	if len(paths) != 2 {
 		t.Fatalf("paths = %v, want the parent project and the trusted one", paths)
 	}
