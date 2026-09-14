@@ -9,6 +9,7 @@
 
 import { useMemo, useState } from "react";
 import { Dialog, TextInput, Button, Chip } from "../../shell/m3-ui";
+import { isComposingEnter } from "../../shell/composing-enter";
 import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../../shell/settings-search";
 import { IconSearch, IconPlus } from "../../icons";
@@ -110,7 +111,7 @@ export default function AuthenticatorGroupPicker({
           placeholder={t("auth.group.movePickerCreateNew")}
           aria-label={t("auth.group.movePickerCreateNew")}
           style={{ flex: "1 1 auto", width: "auto" }}
-          onKeyDown={e => { if (e.key === "Enter") void handleCreate(); }}
+          onKeyDown={e => { if (isComposingEnter(e)) return; if (e.key === "Enter") void handleCreate(); }}
         />
         <Button variant="outlined" onClick={() => void handleCreate()} disabled={!newGroupName.trim() || creating}>
           <IconPlus width={16} height={16} aria-hidden="true" />

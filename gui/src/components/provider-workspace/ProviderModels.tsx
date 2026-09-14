@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
 import { Chip } from "../../shell/m3-ui";
+import { isComposingEnter } from "../../shell/composing-enter";
 import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../../shell/settings-search";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
@@ -204,7 +205,7 @@ export default function ProviderModels({
           className="m3-input"
           value={customModelId}
           onChange={event => setCustomModelId(event.target.value)}
-          onKeyDown={event => { if (event.key === "Enter") void addCustomModel(); }}
+          onKeyDown={event => { if (isComposingEnter(event)) return; if (event.key === "Enter") void addCustomModel(); }}
           placeholder={t("models.customFieldModelIdPlaceholder")}
           aria-label={t("models.customAdd")}
           disabled={customSaving}

@@ -45,6 +45,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import {
   Banner, Button, Chip, Dialog, Empty, Field, TextInput,
 } from "../../shell/m3-ui";
+import { isComposingEnter } from "../../shell/composing-enter";
 import { RegexBuilderButton } from "../../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS, settingsMatcher } from "../../shell/settings-search";
@@ -142,7 +143,7 @@ function Reverify({ lockRecordId, actionLabel, onVerified, onCancel }: {
           <TextInput
             id={fieldId} type="password" value={password} autoComplete="current-password"
             onChange={e => { setPassword(e.target.value); setStatus("idle"); }}
-            onKeyDown={e => { if (e.key === "Enter") void submit(); }}
+            onKeyDown={e => { if (isComposingEnter(e)) return; if (e.key === "Enter") void submit(); }}
           />
         </Field>
       ) : (
@@ -150,7 +151,7 @@ function Reverify({ lockRecordId, actionLabel, onVerified, onCancel }: {
           <TextInput
             id={fieldId} inputMode="numeric" pattern="[0-9]*" maxLength={6} value={code}
             onChange={e => { setCode(e.target.value.replace(/\D/g, "")); setStatus("idle"); }}
-            onKeyDown={e => { if (e.key === "Enter") void submit(); }}
+            onKeyDown={e => { if (isComposingEnter(e)) return; if (e.key === "Enter") void submit(); }}
             style={{ width: 120, fontFamily: "var(--mono)" }}
           />
         </Field>

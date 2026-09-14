@@ -9,6 +9,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Banner, Button, Dialog, Field, Segmented, SelectField, TextInput } from "../../shell/m3-ui";
+import { isComposingEnter } from "../../shell/composing-enter";
 import QrCode from "../QrCode";
 import AuthenticatorCameraScanner from "./AuthenticatorCameraScanner";
 import { useCopyFeedback } from "../use-copy-feedback";
@@ -355,7 +356,7 @@ export default function AuthenticatorAddDialog({ apiBase, groupId, onClose, onAd
               maxLength={pending.digits}
               className="mono"
               autoFocus
-              onKeyDown={e => { if (e.key === "Enter") void handleConfirm(); }}
+              onKeyDown={e => { if (isComposingEnter(e)) return; if (e.key === "Enter") void handleConfirm(); }}
             />
           </Field>
 
