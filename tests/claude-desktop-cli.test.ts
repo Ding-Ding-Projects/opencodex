@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleClaudeDesktopCommand } from "../src/cli/claude-desktop";
 import { loadConfig, saveConfig } from "../src/config";
+import type { DataPlaneApiKey } from "../src/types";
 import type { OcxConfig } from "../src/types";
 import { removeTempDir } from "./helpers/temp-dir";
 
@@ -78,6 +79,41 @@ test("no-arg and legacy mode flags apply Desktop config", async () => {
     expect(await handleClaudeDesktopCommand([])).toBe(0);
     expect(await handleClaudeDesktopCommand(["--static"])).toBe(0);
     expect(readFileSync(join(process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR!, "_meta.json"), "utf8")).toContain("opencodex");
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    log.mockRestore();
+    error.mockRestore();
+  }
+});
+
+// SEC-01 (Copilot admission security review): a key created with purpose
+// "github-copilot-desktop" is an integration-scoped credential (issue #10) and must
+// never be written into the Claude Desktop third-party gateway config as the shared
+// inferenceGatewayApiKey (src/cli/claude-desktop.ts applyProfile, ~line 47).
+test("apply never writes a purpose-scoped API key into the Claude Desktop 3P config", async () => {
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const COPILOT_SECRET = "ocx_data_copilot_only_secret_must_stay_scoped";
+    const config = loadConfig();
+    config.apiKeys = [{
+      id: "copilot-key",
+      name: "GitHub Copilot Desktop",
+      key: COPILOT_SECRET,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      purpose: "github-copilot-desktop",
+    } satisfies DataPlaneApiKey];
+    saveConfig(config);
+
+    expect(await handleClaudeDesktopCommand(["apply"])).toBe(0);
+
+    const libraryDir = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR!;
+    const meta = JSON.parse(readFileSync(join(libraryDir, "_meta.json"), "utf8")) as { entries: Array<{ id: string; name: string }> };
+    const entry = meta.entries.find(e => e.name === "opencodex");
+    expect(entry).toBeDefined();
+    const written = readFileSync(join(libraryDir, `${entry!.id}.json`), "utf8");
+    expect(written).not.toContain(COPILOT_SECRET);
+    expect((JSON.parse(written) as { inferenceGatewayApiKey: string }).inferenceGatewayApiKey).toBe("ocx");
     expect(error).not.toHaveBeenCalled();
   } finally {
     log.mockRestore();

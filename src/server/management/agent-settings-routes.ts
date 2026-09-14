@@ -55,6 +55,7 @@ import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerS
 import type { PersistedUsageAttempt } from "../../usage/log";
 import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
 import { applySystemEnvToggle } from "../system-env";
+import { selectGenericApiKey } from "../../lib/data-plane-api-key";
 import { parseSubagentRoles, routedOnV2Warnings, unionRoleModelsIntoRoster } from "../../codex/agent-roles";
 import { agentTaskRecoveryState } from "../responses/agent-task-recovery";
 import { CODEX_REASONING_LEVELS } from "../../reasoning-effort";
@@ -95,7 +96,7 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
         config.port ?? 10100,
         [...visibleNativeSlugs(config)],
         routed,
-        config.apiKeys?.[0]?.key,
+        selectGenericApiKey(config)?.key,
         "static",
         config.claudeCode.desktopProfile,
       );
@@ -686,7 +687,7 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
         Number(url.port) || config.port,
         [...visibleNativeSlugs(config)],
         routed,
-        config.apiKeys?.[0]?.key,
+        selectGenericApiKey(config)?.key,
         "static",
         state.profile,
       );

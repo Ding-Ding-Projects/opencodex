@@ -24,6 +24,7 @@ import { visibleNativeSlugs } from "../codex/catalog";
 import { shouldInjectApiAuthHeader } from "../codex/inject";
 import { commandInvocation } from "../lib/win-exec";
 import { loadServiceTokenFromFile, serviceApiTokenFilePath } from "../lib/service-secrets";
+import { selectGenericApiKey } from "../lib/data-plane-api-key";
 import { providerCodexAccountMode } from "../providers/registry";
 import { findLiveProxy, probeHostname, type LiveProxy } from "../server/proxy-liveness";
 import type { OcxConfig } from "../types";
@@ -602,7 +603,7 @@ export function opencodeApiKey(config: OcxConfig, env: OpencodeLaunchEnv = proce
   if (envToken) return envToken;
   const serviceToken = loadServiceTokenFromFile(serviceTokenLookupEnv(env));
   if (serviceToken) return serviceToken;
-  return config.apiKeys?.[0]?.key || "ocx";
+  return selectGenericApiKey(config)?.key || "ocx";
 }
 
 async function ensureProxyForOpencode(config: OcxConfig): Promise<LiveProxy | null> {
