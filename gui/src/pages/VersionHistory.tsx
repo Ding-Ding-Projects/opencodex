@@ -28,6 +28,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Banner, Button, Card, Chip, Dialog, Empty, Field, TextInput } from "../shell/m3-ui";
+import { isComposingEnter } from "../shell/composing-enter";
 import { RegexBuilderButton } from "../shell/RegexBuilderButton";
 import { SearchFlagsRow } from "../shell/SearchFlagsRow";
 import { DEFAULT_SEARCH_FLAGS } from "../shell/settings-search";
@@ -785,7 +786,7 @@ export default function VersionHistory({ apiBase = import.meta.env.VITE_API_BASE
             value={labelDraft}
             onChange={e => setLabelDraft(e.target.value)}
             aria-label={t("history.label")}
-            onKeyDown={e => { if (e.key === "Enter") applyLabel(); }}
+            onKeyDown={e => { if (isComposingEnter(e)) return; if (e.key === "Enter") applyLabel(); }}
           />
         </Dialog>
       )}

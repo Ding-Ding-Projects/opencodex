@@ -17,6 +17,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { Banner, Button, Field, TextInput } from "./m3-ui";
+import { isComposingEnter } from "./composing-enter";
 import { IconLock } from "../icons";
 import { useT } from "../i18n/shared";
 import {
@@ -131,7 +132,7 @@ export function UnlockPrompt({ lock, onUnlocked, onRelocked, onForgotten, compac
             value={password}
             autoComplete="current-password"
             onChange={e => { setPassword(e.target.value); setStatus("idle"); }}
-            onKeyDown={e => { if (e.key === "Enter") void submit(); }}
+            onKeyDown={e => { if (isComposingEnter(e)) return; if (e.key === "Enter") void submit(); }}
             style={{ width: "100%" }}
           />
         </Field>
@@ -144,7 +145,7 @@ export function UnlockPrompt({ lock, onUnlocked, onRelocked, onForgotten, compac
             maxLength={6}
             value={code}
             onChange={e => { setCode(e.target.value.replace(/\D/g, "")); setStatus("idle"); }}
-            onKeyDown={e => { if (e.key === "Enter") void submit(); }}
+            onKeyDown={e => { if (isComposingEnter(e)) return; if (e.key === "Enter") void submit(); }}
             style={{ width: 140, fontFamily: "var(--mono)" }}
           />
         </Field>
