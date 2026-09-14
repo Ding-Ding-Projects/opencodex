@@ -2052,6 +2052,14 @@ export interface ServiceDiagnostic {
   viable: boolean;
   startable: boolean;
   stale: boolean;
+  /**
+   * True when `stale` is caused by an inability to determine status (a Task
+   * Scheduler query/runtime probe, or a native WinSW status query, that could
+   * not answer) rather than a confirmed broken or mismatched install. Optional
+   * because the non-Windows backends have no "unknown" tri-state; callers
+   * should treat a missing value as false.
+   */
+  staleUncertain?: boolean;
   conflict: boolean;
   backend: ServiceBackend | "launchd" | "systemd" | null;
   summary: string;
@@ -2109,8 +2117,14 @@ export function deriveWindowsServiceDiagnostic(inputs: WindowsServiceDiagnosticI
     : nativeInstalled
       ? inputs.recordedBackend !== "native"
       : inputs.recordedBackend !== null;
-  const stale = schedulerUnknown
-    || schedulerRuntimeUnknown
+  // Mirrors schedulerUnknown/schedulerRuntimeUnknown: an unparseable or failed WinSW
+  // status query (statusWinswRaw() returning "unknown") is not proof of a healthy
+  // install, only proof the query itself could not answer. Every "could not be
+  // determined" reason is collected here so callers can say so honestly instead of
+  // implying a confirmed broken install (see tests/hunt-ops-02.test.ts).
+  const nativeStatusUnknown = inputs.nativeStatus === "unknown";
+  const statusUncertain = schedulerUnknown || schedulerRuntimeUnknown || nativeStatusUnknown;
+  const stale = statusUncertain
     || inputs.staleBakedPaths
     || (schedulerInstalled && !schedulerAssetsHealthy)
     || backendStateMismatch
@@ -2154,6 +2168,7 @@ export function deriveWindowsServiceDiagnostic(inputs: WindowsServiceDiagnosticI
     viable,
     startable,
     stale,
+    staleUncertain: statusUncertain,
     conflict,
     backend,
     summary,
