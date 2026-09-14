@@ -459,6 +459,34 @@ let managementUsageReadInflight: {
   promise: Promise<{ entries: PersistedUsageEntry[]; revision: UsageLogRevision }>;
 } | null = null;
 
+/**
+ * How many trailing bytes of the already-parsed prefix are kept as a fingerprint so a
+ * later read can confirm nothing earlier in the file changed without re-reading the
+ * whole prefix. Comfortably larger than one serialized usage row.
+ */
+const USAGE_PREFIX_FINGERPRINT_BYTES = 4096;
+
+/**
+ * The cross-revision snapshot cache. Unlike `managementUsageReadInflight` (which only
+ * dedupes concurrent callers observing the IDENTICAL revision), this survives across
+ * revisions: it remembers the entries already parsed as of `parsedOffset`, plus a bounded
+ * trailing fingerprint of the bytes ending there. A later call whose file still has the
+ * same identity, a larger size, and a matching fingerprint is a pure append, so only the
+ * new bytes need to be read and parsed. Anything else (a different file, a shrink, or a
+ * fingerprint mismatch, i.e. a rotated or hand-edited file) discards this and falls back
+ * to a full read.
+ */
+type UsageSnapshotCache = {
+  path: string;
+  dev: number;
+  ino: number;
+  birthtimeMs: number;
+  parsedOffset: number;
+  boundaryWindow: Buffer;
+  entries: PersistedUsageEntry[];
+};
+let usageSnapshotCache: UsageSnapshotCache | null = null;
+
 /** Test-only observability for proving that unchanged prefixes are not reparsed. */
 export function usageReadCacheStatsForTests(): Readonly<typeof usageReadCacheStats> {
   return { ...usageReadCacheStats };
@@ -467,6 +495,7 @@ export function usageReadCacheStatsForTests(): Readonly<typeof usageReadCacheSta
 export function resetUsageReadCacheForTests(): void {
   usageReadCacheStats = { fullReads: 0, tailReads: 0, parsedLines: 0 };
   managementUsageReadInflight = null;
+  usageSnapshotCache = null;
 }
 
 function readExactly(fd: number, length: number, position: number): Buffer | null {
@@ -534,42 +563,127 @@ async function parseUsageTextCooperatively(text: string): Promise<PersistedUsage
   return entries;
 }
 
-async function readUsageEntriesFullCooperatively(
+/**
+ * Extends the cached boundary fingerprint after a successful incremental read using only
+ * what is already in memory (the old fingerprint plus the newly read tail), so maintaining
+ * it never costs another read of the historical prefix.
+ */
+function nextBoundaryWindow(oldWindow: Buffer, tailBytes: Buffer, windowSize: number): Buffer {
+  if (tailBytes.length >= windowSize) return Buffer.from(tailBytes.subarray(tailBytes.length - windowSize));
+  const needed = windowSize - tailBytes.length;
+  const fromOld = oldWindow.subarray(Math.max(0, oldWindow.length - needed));
+  return Buffer.concat([fromOld, tailBytes]);
+}
+
+/**
+ * The cheap path: the cached snapshot's file identity still matches, the file only grew,
+ * and the bounded fingerprint ending at the cached offset still matches what is on disk
+ * right now. Only the bytes appended since `parsedOffset` are read and parsed -- the
+ * already-parsed prefix is trusted rather than re-read. Returns null (never throws)
+ * whenever any of that does not hold, so the caller falls back to a full read; a rotated
+ * or hand-edited file (same identity, grown, but a changed prefix) is exactly the case the
+ * fingerprint comparison exists to catch.
+ */
+async function tryReadUsageEntriesIncrementally(
+  path: string,
+  revision: UsageLogRevision,
+  fd: number,
+): Promise<PersistedUsageEntry[] | null> {
+  const cache = usageSnapshotCache;
+  if (
+    !cache
+    || cache.path !== path
+    || cache.dev !== revision.dev
+    || cache.ino !== revision.ino
+    || cache.birthtimeMs !== revision.birthtimeMs
+    || revision.size <= cache.parsedOffset
+  ) return null;
+
+  const windowLen = Math.min(cache.parsedOffset, USAGE_PREFIX_FINGERPRINT_BYTES);
+  const currentWindow = windowLen > 0 ? readExactly(fd, windowLen, cache.parsedOffset - windowLen) : Buffer.alloc(0);
+  if (currentWindow === null || !currentWindow.equals(cache.boundaryWindow)) return null;
+
+  const tailLen = revision.size - cache.parsedOffset;
+  const tailBytes = readExactly(fd, tailLen, cache.parsedOffset);
+  if (tailBytes === null) return null;
+
+  const tailEntries = await parseUsageTextCooperatively(tailBytes.toString("utf-8"));
+  usageReadCacheStats.tailReads += 1;
+  const entries = cache.entries.concat(tailEntries);
+  const windowSize = Math.min(revision.size, USAGE_PREFIX_FINGERPRINT_BYTES);
+  usageSnapshotCache = {
+    path,
+    dev: revision.dev,
+    ino: revision.ino,
+    birthtimeMs: revision.birthtimeMs,
+    parsedOffset: revision.size,
+    boundaryWindow: nextBoundaryWindow(cache.boundaryWindow, tailBytes, windowSize),
+    entries,
+  };
+  return entries;
+}
+
+/**
+ * Reads and parses the usage log for the management API. Concurrent callers who observe
+ * the identical file revision share one read via `managementUsageReadInflight`. Across
+ * revisions, a pure append onto the same file (`tryReadUsageEntriesIncrementally`) reads
+ * and parses only the newly appended bytes, reusing the entries already parsed for
+ * everything before them -- the entries array returned here is the same array retained in
+ * `usageSnapshotCache`, so the next append builds on it too instead of re-reading history.
+ * Anything that is not a clean append (a different file, a shrink, or a changed prefix)
+ * falls back to a full read from byte 0, which also reseeds the cache.
+ */
+async function readUsageEntriesCooperatively(
   path: string,
 ): Promise<{ entries: PersistedUsageEntry[]; revision: UsageLogRevision }> {
   let fd: number | undefined;
   try {
     fd = openSync(path, "r");
     const stat = fstatSync(fd);
-    const size = Number(stat.size);
-    const bytes = readExactly(fd, size, 0);
+    const revision = usageLogRevision(path, stat);
+
+    const incremental = await tryReadUsageEntriesIncrementally(path, revision, fd);
+    if (incremental !== null) return { entries: incremental, revision };
+
+    const bytes = readExactly(fd, revision.size, 0);
     if (bytes === null) throw new Error("usage log changed while it was being read");
     const entries = await parseUsageTextCooperatively(bytes.toString("utf-8"));
     usageReadCacheStats.fullReads += 1;
-    return { entries, revision: usageLogRevision(path, stat) };
+    const windowSize = Math.min(revision.size, USAGE_PREFIX_FINGERPRINT_BYTES);
+    usageSnapshotCache = {
+      path,
+      dev: revision.dev,
+      ino: revision.ino,
+      birthtimeMs: revision.birthtimeMs,
+      parsedOffset: revision.size,
+      boundaryWindow: Buffer.from(bytes.subarray(Math.max(0, revision.size - windowSize))),
+      entries,
+    };
+    return { entries, revision };
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
 }
 
-/**
- * Management API reader: full parses yield between bounded batches and concurrent
- * callers share work only when they observed the same exact file revision. Parsed rows
- * are returned to the request and never retained in module state.
- */
 export async function readUsageSnapshotForManagement(): Promise<{
   entries: PersistedUsageEntry[];
   revision: UsageLogRevision | null;
 }> {
   const path = usageLogPath();
-  if (!existsSync(path)) return { entries: [], revision: null };
+  if (!existsSync(path)) {
+    // The file is gone (e.g. Clear logs). The next append recreates it with a fresh
+    // dev/ino, which would miss the cache below on its own -- but there is no reason to
+    // keep a snapshot of a file that no longer exists resident until that happens.
+    usageSnapshotCache = null;
+    return { entries: [], revision: null };
+  }
   const observed = currentUsageLogRevision();
   const key = usageLogRevisionKey(observed);
   if (managementUsageReadInflight?.key === key) {
     const shared = await managementUsageReadInflight.promise;
     return { entries: shared.entries.slice(), revision: shared.revision };
   }
-  const promise = readUsageEntriesFullCooperatively(path);
+  const promise = readUsageEntriesCooperatively(path);
   managementUsageReadInflight = { key, promise };
   try {
     return await promise;
