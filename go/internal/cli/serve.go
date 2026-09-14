@@ -332,6 +332,23 @@ func serveListener(httpServer *http.Server, lifecycle *server.Lifecycle, listene
 	if !recycle {
 		return drainErr
 	}
+	// http.Server.Shutdown only closes the listeners it has TRACKED, which
+	// Serve registers on its own goroutine right after being scheduled. If a
+	// restart request is already sitting in `restarts` the instant this
+	// function starts (as a synthetic one always is in a test, and in
+	// principle could be in a real racing management request too), the
+	// `select` above can resolve before that goroutine ever runs, so Shutdown
+	// finds nothing tracked and returns immediately without closing anything.
+	// The listener still gets closed -- Serve's own deferred Close runs once
+	// it notices the server already shut down -- but only once that goroutine
+	// is actually scheduled, which can be after this function would otherwise
+	// have already told the caller "the port is free". Waiting here, bounded
+	// by the same drain deadline so a genuine stall cannot hang the recycle,
+	// is what makes that claim true instead of merely usually true.
+	select {
+	case <-errCh:
+	case <-ctx.Done():
+	}
 	// The port is free now, so the replacement can bind it. The exit code
 	// travels back as an ERROR rather than a package variable: an error is
 	// something Run already has to handle, so it cannot be silently dropped
