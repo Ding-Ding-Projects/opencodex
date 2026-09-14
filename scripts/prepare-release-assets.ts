@@ -5,6 +5,7 @@ import {
   constants,
   createReadStream,
   createWriteStream,
+  existsSync,
   fstatSync,
   linkSync,
   lstatSync,
@@ -17,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import type { Stats } from "node:fs";
-import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, win32 } from "node:path";
 import { Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
@@ -255,10 +256,39 @@ async function readBounded(stream: ReadableStream<Uint8Array>, cap: number, labe
   return output;
 }
 
+/**
+ * Resolve the `tar` binary to spawn. A bare `"tar"` is resolved through whatever PATH the
+ * hosting process happens to have, and on Windows that order is not trustworthy: Git for
+ * Windows puts its own GNU tar (`usr\bin\tar.exe`, no drive-letter awareness) ahead of
+ * System32's bsdtar for every Git Bash shell, including the release workflow's own
+ * `shell: bash` step on windows-latest. GNU tar misreads an ordinary absolute path like
+ * `C:\Users\...\file.tgz` as `host:file` remote-archive syntax and fails before it ever
+ * looks at the file's bytes. `--force-local` is not a safe fix here: it silences GNU tar's
+ * misparse, but System32's bsdtar rejects the flag outright ("Option --force-local is not
+ * supported"), so whichever tar answers first on PATH, one of the two implementations
+ * breaks.
+ *
+ * Pinning the absolute System32 path sidesteps PATH order entirely: a path with a
+ * directory separator is launched directly, never resolved against PATH (the same
+ * "absolute path bypasses PATH" rule win-exec.ts's `resolveWindowsCommand` relies on for
+ * the unrelated `.cmd` shim problem). Fall back to the bare name only when that exact file
+ * is missing, which is not expected on any supported Windows release runner, and say so
+ * here rather than silently guessing at another location.
+ */
+export function resolveTarCommand(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (platform !== "win32") return "tar";
+  const systemRoot = env.SystemRoot ?? env.WINDIR ?? "C:\\Windows";
+  const candidate = win32.join(systemRoot, "System32", "tar.exe");
+  return existsSync(candidate) ? candidate : "tar";
+}
+
 async function runTar(args: string[], stdoutCap: number, label: string, deadline: number): Promise<Uint8Array> {
   const remaining = Math.min(timeoutForTest("OPENCODEX_TEST_TAR_TIMEOUT_MS", TAR_CHILD_TIMEOUT_MS), deadline - Date.now());
   if (remaining <= 0) fail(`aggregate tar deadline exceeded before ${label}`);
-  const child = Bun.spawn(["tar", ...args], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([resolveTarCommand(), ...args], { stdout: "pipe", stderr: "pipe" });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new Error(`${label} exceeded ${remaining} ms deadline`)), remaining);
