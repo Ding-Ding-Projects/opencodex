@@ -1,5 +1,28 @@
 # Handoff
 
+## 2026-09-14 · Repository closeout pass (early, preservation-first stop)
+
+**Scope.** Integrate-and-clean pass with a full multi-lens defect hunt, a main-only integration policy with build-only GitHub Actions, a private-wording scrub of tracked files, and delivery work on issues #10 and #17. The owner requested an early closeout at 15:08 EDT before every lane finished; this entry records what landed, what is preserved unfinished, and what is open.
+
+**Landed on `main` (all verified on the merged tip unless marked).**
+- Main-only policy and gate-free workflows: AGENTS.md, CONTRIBUTING.md, MAINTAINERS.md, structure/06_docs-and-release.md; `ci.yml`, `go-ci.yml` (windows-latest, windows/amd64 only), `gui-preview.yml` trigger on `main` alone with no test, typecheck, lint, vet, race or e2e steps; `enforce-pr-target.yml` allows only `main`; `release.yml` preview channel removed and `DRY_RUN` bound; `service-lifecycle.yml`, `react-doctor.yml`, `issue-quality-tests.yml` deleted. Accepted trade: a release can ship from a commit whose tests would fail; checks run locally and their results go in release notes.
+- Defect hunt repairs (14 lenses, finders then independent refuters then repair lanes, each with a red-then-green regression under `tests/hunt-*` or `gui/tests/hunt-*`): fsync helper (Windows handle mode, 1611 ms to 222 ms per atomic write, no PowerShell spawn), config ownership cache and ordering, classified error status, response item id repair, updater listener detach, unknown WinSW status, keyboard tab reordering, blank `--context-window` rejection, incremental `usage.jsonl` parsing, JSON store renames through the retrying helper, WebSocket bridge JSON guard, full nupkg selection in `build-installer.bat`, DST-safe usage day grid, model catalog revision memo, ACL hardening soft-fail visibility (degraded list, persisted log, doctor check, health count), ADMIN-token documentation correction, unique config backup names, System32 tar for release assets, IME composition guard on eight inputs, GUI bundle code splitting (one 2,965 kB chunk to 52 chunks, largest 861 kB), crash guards before startup journal recovery, atomic scheduling-secrets writes, malformed Content-Length rejected with 400.
+- Pricing catalog re-verified (45 rows, 7 corrected) and the `swiftie` fixture usernames scrubbed.
+
+**Preserved unfinished on their own pushed branches (not merged).** `task/fix-sec-01` (Copilot scoped API key selection; last 6-file batch untriaged), `task/fix-l10n-01` (revision labels; `app-logo.ts` half not done, no tests run), `task/fix-rel-02` (count-lines concurrency; rewritten attribution test fails on a root-path mismatch), `task/go-baseline-red` (17 green Go fixes across 9 packages; `internal/server` owes two; needs `go build`, `go vet`, `go test ./...` on a merged tip before merging).
+
+**Open defects recorded by this pass.**
+- The state-history code path (`src/lib/state-history.ts:247`) rewrote the repository's own `.git/config` identity to `opencodex state history` during test runs in linked worktrees. Trigger not isolated. Two commits on `main` (`49223d88`, `292cde78`) carry that identity and cannot be corrected without rewriting history. Mitigation used: explicit `GIT_AUTHOR_*`/`GIT_COMMITTER_*` environment on every commit.
+- `git stash` is shared across linked worktrees; three concurrent lanes popped each other's entries. Do not stash in a linked worktree.
+- Pre-existing red or flaky tests seen while lanes ran and not repaired: `tests/uninstall.test.ts:52` stale assertion, `tests/codex-shim.test.ts` (`refreshCodexShimRuntime` not imported), `tests/codex-catalog-sync-hardening.test.ts` (subprocess status 1 or timeout), `tests/cli-start-journal-order.test.ts` (child readiness timeout), `tests/prepare-release-assets.test.ts` fixture spawns bare `tar` (fails when Git for Windows precedes System32 on PATH), `tests/count-lines-attribution.test.ts` import-time stall (partially addressed on `task/fix-rel-02`), PowerShell identity lookup returning empty in `src/codex/user-identity.ts` under the sandbox, `tests/server-auth.test.ts` WebSocket 1 s timeout under load.
+- `handleEnsure()` calls `findProxyOwnerBeforeJournalRecovery()` unguarded (same shape OPS-03 fixed in `handleStart`).
+- Go port: `go/internal/config/recovery.go:13-24` has the same backup-name collision DATA-02 fixed in TypeScript.
+- Six docs-site and generated GUI doc files still describe the old branch policy (outside every lane's owned paths).
+
+**Not done.** CHANGELOG.md entry for this pass, issue #10 closure (security review lane finished; closure capture and checklist reconciliation not performed), issue #17 Go parity slices (not started; the baseline-red lane is the only Go work), PR #16 closure comment, wiki refresh, README feature sections for #10/#17.
+
+**Cleanup state.** After the OneDrive archive was verified, the 19 pre-existing non-main branches and every task-owned lane branch and worktree whose tip was proven an ancestor of the pushed `main` were deleted; the finder branches (`hunt/*`), the six wrong-identity or wrong-trailer lane branches, `task/copilot-security-review` and the four checkpoint branches were retained because their tips are not ancestors. Exact lists with proof are on issue #43.
+
 ## Follow-up: narrative leftovers and the DRY_RUN fix (2026-09-14, same branch)
 
 Two follow-ups landed on top of the section below, same branch, after the coordinator's second
