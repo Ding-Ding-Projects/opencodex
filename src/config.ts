@@ -1621,6 +1621,15 @@ function configMutationDatabasePath(): string {
 function openConfigMutationDatabase(): Database {
   const finalPath = configMutationDatabasePath();
   if (!existsSync(finalPath)) {
+    // Claim (or lazily create) ownership of the config directory before this
+    // function plants its own config-mutation.sqlite inside it. createOwnership()
+    // refuses a non-empty, unowned directory, so doing this after the database
+    // file already existed made a brand-new config directory look permanently
+    // "already occupied by a foreign file" to every later recordOwnedConfigPath()
+    // call, including the one atomicWriteFile makes for config.json a moment
+    // later (see COR-01). This also means the lock database itself is now
+    // tracked for removal on uninstall, same as every other state file.
+    recordOwnedConfigPath(dirname(finalPath), finalPath);
     const tempPath = `${finalPath}.${randomUUID()}.tmp`;
     const temp = new Database(tempPath, { create: true });
     try {
