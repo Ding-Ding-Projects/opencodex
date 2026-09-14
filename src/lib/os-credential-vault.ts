@@ -37,9 +37,9 @@
  */
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getConfigDir } from "../config";
+import { atomicWriteFile, backupInvalidConfig, getConfigDir, hardenConfigDir, hardenExistingSecret } from "../config";
 import { resolveTrustedWindowsPowerShellExe } from "./windows-elevation";
 
 /**
@@ -84,13 +84,33 @@ function readSecretsFile(): SecretsFile {
     return raw && typeof raw === "object" ? raw as SecretsFile : {};
   } catch {
     // A corrupt file fails closed to "no secrets stored" rather than throwing —
-    // callers treat that exactly like "never configured", which is safe.
+    // callers treat that exactly like "never configured", which is safe. The
+    // corrupt bytes are copied to a one-shot timestamped backup first (the
+    // same `backupInvalidConfig` call authenticator-store.ts's `loadFile()`
+    // makes of its own secrets file) so a torn write is forensically
+    // recoverable instead of silently vanishing the moment the next
+    // store/delete call below overwrites it with a freshly built file.
+    backupInvalidConfig(path);
     return {};
   }
 }
 
 function writeSecretsFile(file: SecretsFile): void {
-  writeFileSync(secretsFilePath(), JSON.stringify(file, null, 2), "utf8");
+  const dir = getConfigDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  else { try { chmodSync(dir, 0o700); } catch { /* best-effort on existing dir */ } }
+  hardenConfigDir();
+  const path = secretsFilePath();
+  // Temp file + fsync + atomic rename (see `atomicWriteFile` in `../config`) —
+  // the same helper authenticator-store.ts and oauth/store.ts already use to
+  // persist their own JSON secret files. A write interrupted mid-flight (crash,
+  // kill, power loss) now leaves the real schedule-secrets.json untouched and
+  // only its own throwaway `.tmp` sibling damaged, instead of truncating the
+  // live file the Home Assistant scheduling tokens live in. `required: true`
+  // hardening on win32 also ACLs the file to this account the same way every
+  // other secret store in this codebase already does.
+  atomicWriteFile(path, JSON.stringify(file, null, 2));
+  hardenExistingSecret(path);
 }
 
 export function assertValidTokenRef(tokenRef: string): void {
