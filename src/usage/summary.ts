@@ -577,8 +577,20 @@ function buildDayGrid(range: UsageRange, since: number | null, now: number, entr
     }
     m.totalTokens += usageDisplayTotalTokens(attribution.usage, attribution.totalTokens) ?? 0;
   };
+  // Walk back by local calendar day, not by fixed DAY_MS steps. A civil day is
+  // not always 24h in a timezone that observes DST (the US fall-back day is
+  // 25h, spring-forward is 23h), so subtracting i * DAY_MS from `now` can land
+  // two different `i` values on the same local date (collapsing a day out of
+  // the grid) or skip a date entirely. Deriving each stop from the calendar
+  // fields of `now` instead keeps the walk in local days: passing a negative
+  // or out-of-range day-of-month to the Date constructor rolls over the
+  // month/year correctly, so `days` distinct `i` values always yield `days`
+  // distinct consecutive local dates. The hour is pinned to noon so the
+  // derived local time can never fall in a DST gap or repeated hour.
+  const nowLocal = new Date(now);
   for (let i = days - 1; i >= 0; i--) {
-    const key = localDateKey(now - i * DAY_MS);
+    const stepDate = new Date(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate() - i, 12, 0, 0, 0);
+    const key = localDateKey(stepDate.getTime());
     grid.set(key, { date: key, requests: 0, measuredRequests: 0, reportedRequests: 0, totalTokens: 0, models: [] });
   }
   for (const entry of entries) {
