@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 const configUsage = `Usage:
@@ -574,6 +575,17 @@ func runConfigParity(ctx context.Context, args []string, streams IO) error {
 			return err
 		}
 		if err := os.Chmod(target, 0o600); err != nil {
+			return fmt.Errorf("protect exported config: %w", err)
+		}
+		// Chmod's 0600 is a POSIX-only promise: on Windows it can only toggle
+		// the DOS read-only attribute, so a writable exported-credentials file
+		// stays readable by Everyone on the underlying NTFS ACL no matter what
+		// mode bits were requested. HardenSecretPath is a no-op off Windows and,
+		// on Windows, strips the broad Everyone/Users/Authenticated-Users ACEs
+		// via icacls the same way the service token file is already hardened
+		// (service.go, service_ownership.go), so the unredacted backup this
+		// command deliberately writes is not left world-readable.
+		if err := platform.HardenSecretPath(target, false); err != nil {
 			return fmt.Errorf("protect exported config: %w", err)
 		}
 		_, err = fmt.Fprintf(streams.Out, "Exported config to %s.\n", target)
