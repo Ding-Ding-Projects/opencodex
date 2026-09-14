@@ -33,8 +33,10 @@ directory (`src/`, `gui/`, `docs-site/`, `scripts/`, `.github/`).
 Planning notes, triage matrices, and investigation artifacts live in `devlog/`,
 tracked like any other documentation. There is no submodule and no private
 mirror. It was a private submodule until the pointer churn outgrew its value:
-1723 commits touched the gitlink, and `dev`, `preview`, and `main` each carried a
-different pointer, so every branch move and promotion dragged a diff.
+back when `dev` and `preview` still existed as branches alongside `main`
+(both are retired now; `main` is the only branch), 1723 commits touched the
+gitlink, and each of those three branches carried a different pointer, so
+every branch move and promotion dragged a diff.
 
 - `devlog/_plan/` — units still open, one directory per unit, decade-numbered
   docs.
@@ -98,12 +100,14 @@ bun install
 bun run typecheck      # bun x tsc --noEmit (strict)
 bun run test           # full tests/ suite
 bun run lint:gui       # GUI eslint — on demand only; not a gate, CI never runs it
-bun run privacy:scan   # credential/privacy scan used by CI
+bun run privacy:scan   # credential/privacy scan, on demand only; not a gate, CI never runs it
 bun run build:gui      # Vite GUI build
 ```
 
 Run `bun run typecheck` and `bun run test` before proposing or approving any
-non-trivial change. CI runs these on Windows only.
+non-trivial change. Nothing in GitHub Actions runs them: `ci.yml` builds and
+packages on Windows only, and gates nothing on a test, typecheck, lint, or
+privacy-scan verdict. That checking happens locally, before the push.
 
 ## Branch policy
 
@@ -135,8 +139,8 @@ reviewers (Codex, CodeRabbit).
   language. Be detailed and specific: name the file and line, describe the
   concrete failure mode, and suggest a fix. Avoid vague or purely stylistic
   commentary.
-- **Branch targeting:** flag any pull request that does not target `dev`
-  (releases and maintainer promotions are the only exceptions).
+- **Branch targeting:** flag any pull request that does not target `main`.
+  It is the only integration branch.
 - **Security boundary (highest priority):** changes touching authentication,
   credential/token handling, OAuth flows, GitHub Actions workflows, release
   automation (`scripts/release.ts`, `.github/workflows/release.yml`), or

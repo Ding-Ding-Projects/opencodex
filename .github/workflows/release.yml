@@ -357,6 +357,7 @@ jobs:
       - name: Publish (or dry-run)
         env:
           NPM_DIST_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             echo "::notice::DRY RUN — payload and installer verified; packing without publishing"

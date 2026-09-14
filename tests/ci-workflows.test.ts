@@ -1976,6 +1976,7 @@ describe("GitHub Actions hardening", () => {
 
     expect(count(workflow, "npm pack --json")).toBe(1);
     const build = workflowStep(workflow, /^Build and retain exact release archive$/);
+    const publish = workflowStep(workflow, /^Publish \(or dry-run\)$/);
     const smoke = workflowStep(workflow, /^Post-publish registry smoke$/);
     const release = workflowStep(workflow, /^Create\/reconcile GitHub release$/);
 
@@ -1995,12 +1996,19 @@ describe("GitHub Actions hardening", () => {
 
     // The two steps that can create durable, hard-to-undo state on a real
     // dry-run (the registry smoke check and the GitHub Release itself) are
-    // correctly step-guarded. The `npm publish` step's own internal dry-run
-    // branch is tracked separately (see HANDOFF.md): it is not asserted
-    // correct here because it currently is not.
+    // step-guarded.
     for (const guarded of [smoke, release]) {
       expect(guarded).toContain("if: ${{ inputs.dry-run != true }}");
     }
+
+    // The publish step's own internal branch used to read a $DRY_RUN shell
+    // variable this workflow never set, so it always took the real "npm
+    // publish" branch regardless of the dry-run input (default true). The
+    // step's env now binds DRY_RUN from the actual input, and never carries
+    // a hardcoded "true"/"false" that would defeat that binding.
+    expect(publish).toContain("DRY_RUN: ${{ inputs.dry-run }}");
+    expect(publish).toMatch(/if \[ "\$DRY_RUN" = "true" \]; then/);
+    expect(publish).not.toMatch(/DRY_RUN:\s*["']?(?:true|false)["']?\s*$/m);
     for (const step of workflow.split(/\n {6,}- name: /).slice(1)) {
       if (/git tag "\$release_tag"|git push origin|gh release create/.test(step)) {
         expect(step).toContain("if: ${{ inputs.dry-run != true }}");

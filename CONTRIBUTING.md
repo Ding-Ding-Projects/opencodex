@@ -31,9 +31,9 @@ commands such as `bun install`, `bun run test`, and `bun run prepush` use your l
 
 ## Pre-push hook
 
-After cloning, run once to install a local pre-push hook that runs the typecheck,
-unit-test, privacy-scan, and (when `gui/` changed) React Doctor portions of the
-CI gate:
+After cloning, run once to install a local pre-push hook that runs typecheck,
+unit tests, a privacy scan, and (when `gui/` changed) the local React Doctor
+check:
 
 ```sh
 bun run setup:hooks
@@ -41,9 +41,12 @@ bun run setup:hooks
 
 This installs a `pre-push` hook (into the hooks dir git reports, so worktrees and
 `core.hooksPath` work) that runs `bun run prepush` — `typecheck`, `test`,
-`privacy:scan`, and `doctor:gui:if-changed` — before every `git push`. The same
-checks run on windows-latest in CI (CI additionally builds the GUI and
-smoke-tests the CLI). Skip in an emergency with `git push --no-verify`.
+`privacy:scan`, and `doctor:gui:if-changed`, before every `git push`. These
+are local checks only: nothing in GitHub Actions runs them. `ci.yml` builds
+on Windows only, checks release-helper syntax, builds the GUI, and
+smoke-tests the CLI, and gates nothing on a test, typecheck, lint, or
+privacy-scan verdict. Skip the local hook in an emergency with
+`git push --no-verify`.
 
 ## Lint
 
