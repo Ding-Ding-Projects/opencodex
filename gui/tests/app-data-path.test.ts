@@ -29,8 +29,8 @@ describe("the desktop bridge present", () => {
   }
 
   test("resolveAppDataPath returns the bridge's real resolved path", async () => {
-    install({ path: async () => "C:\\Users\\swiftie\\AppData\\Roaming\\opencodex", open: async () => ({ ok: true, path: "" }) });
-    expect(await resolveAppDataPath()).toBe("C:\\Users\\swiftie\\AppData\\Roaming\\opencodex");
+    install({ path: async () => "C:\\Users\\user\\AppData\\Roaming\\opencodex", open: async () => ({ ok: true, path: "" }) });
+    expect(await resolveAppDataPath()).toBe("C:\\Users\\user\\AppData\\Roaming\\opencodex");
   });
 
   test("openAppDataFolder reports the bridge's own success", async () => {
