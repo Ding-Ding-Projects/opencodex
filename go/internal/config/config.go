@@ -627,7 +627,7 @@ func Save(path string, cfg *Config) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temporary config: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := atomicReplaceWithRetry(tmpPath, path); err != nil {
 		return fmt.Errorf("replace config: %w", err)
 	}
 	committed = true
