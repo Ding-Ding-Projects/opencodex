@@ -46,7 +46,7 @@ bun run dev:gui
 | **Logs** | 自动刷新近期请求，显示 token、请求强度以及（可用时）实际发送强度、实际模型、provider、状态、request id、耗时和错误详情。适配器发送 reasoning 参数时，详情中还会显示准确的 wire field。可按不透明会话/对话 ID（客户端提供时）筛选，并对当前已加载的 Logs 环形缓冲合计 token 与估算标价成本。 |
 | **Usage / Debug** | 查看 token usage 覆盖率与趋势，或启用可选的 provider transport 和 usage 提取诊断。 |
 | **Storage** | 只读查看 CODEX_HOME 磁盘占用（会话、归档、数据库、附件）。可选归档清理：预览最旧 N%，默认隔离到 `CODEX_HOME/.trash`，或勾选后永久删除。**自动清理策略**为可选且**默认关闭**（`storageCleanupPolicy.enabled`）；可在 Storage 页配置阈值/目标/计划/模式，或点「立即运行」。可在 Storage 页从隔离区恢复（JSONL + 线程）。活动会话保持只读。Codex 锁定最新/活动的 `state_*.sqlite` 时拒绝清理与恢复。 |
-| **远程连接** | 手动输入 IPv4、IPv6 或主机名及实际运行端口，打开另一台 OpenCodex；ADMIN 认证由目标仪表盘完成。 |
+| **远程连接** | 手动输入 IPv4、IPv6 或主机名及实际运行端口，打开另一台 OpenCodex；管理 API 刻意不设认证，不会要求输入 ADMIN token。 |
 | **导出** | 以支持的格式/归档导出仪表盘数据。没有受保护的密码 transport，因此密码加密 7z 暂不可用。 |
 | **Stop** | 优雅地停止代理和已安装的后台服务，恢复原生 Codex 并退出（`POST /api/stop`）。 |
 
@@ -57,9 +57,9 @@ bun run dev:gui
 `ocx host status`（或 `ocx status`）显示的 identity-verified 实际运行端口，而不是只看配置值。
 
 **连接** 会在新标签页打开经过验证的准确 HTTP origin 的 `#/dashboard`。它不会探测对方是否在线，
-不会把 token 加入 URL，也不会保存 token。目标仪表盘会提示输入该代理的 ADMIN token；它与
-data-plane API key 相互独立。HTTP 未加密，所以只应在可信 LAN 中直接连接；其他网络请优先使用
-SSH tunnel。
+不会把 token 加入 URL，也不会保存 token。目标仪表盘同样不会提示输入 token：`/api/*` 管理路由
+刻意不设认证，因此根本没有 ADMIN token 这回事，也与 data-plane API key 无关。HTTP 未加密，所以
+只应在可信 LAN 中直接连接；其他网络请优先使用 SSH tunnel。
 
 ### 导出归档
 

@@ -96,7 +96,7 @@ proxy and can reach the same management routes as any other client. See
 | **Logs** | Auto-refresh recent requests with tokens, requested effort and (when available) effective outbound effort, resolved model, provider, status, request id, duration, and error details. The detail view includes the exact reasoning wire field when the adapter emits one. Filter by opaque conversation/session id (when the client sends one) to total tokens and estimated list-price cost for the currently loaded Logs ring. |
 | **Usage / Debug** | Inspect token-usage coverage and trends, or enable opt-in provider transport and usage-extraction diagnostics. |
 | **Storage** | Read-only CODEX_HOME disk breakdown (sessions, archives, DBs, attachments). Optional archived cleanup: preview the oldest N%, then quarantine to `CODEX_HOME/.trash` (default) or permanently delete behind an explicit checkbox. **Auto-cleanup policy** is opt-in and **default OFF** (`storageCleanupPolicy.enabled`); configure threshold/target/schedule/mode on the Storage page, or trigger **Run now**. Quarantined entries can be restored from the Storage page (JSONL + threads). Active sessions stay read-only. Cleanup and restore are refused while Codex holds the newest/active `state_*.sqlite` locked. |
-| **Remote connection** | Manually open another OpenCodex by IPv4, IPv6, or hostname and its active port. The destination dashboard performs ADMIN authentication. |
+| **Remote connection** | Manually open another OpenCodex by IPv4, IPv6, or hostname and its active port. Management routes are intentionally open; the destination dashboard never asks for an ADMIN token. |
 | **Export** | Export dashboard datasets as supported formats/archives. Password-protected 7z is unavailable until a protected password transport exists. |
 | **Stop** | Gracefully stop the proxy and installed background service, restore native Codex, and exit (`POST /api/stop`). |
 | **Quick restore** | Two app-bar actions that hand Codex or Claude its own configuration back and then stop the proxy. The restore runs first and is not conditional on the stop, so it still completes when a normal stop is stuck. See below. |
@@ -170,9 +170,11 @@ default; replace it with the remote's identity-verified active listener port fro
 `ocx host status` (or `ocx status`) when that host started on a fallback port.
 
 **Connect** opens the exact validated HTTP origin at `#/dashboard` in a new tab. The dialog does not
-probe the host, add a token to the URL, or save one. The destination dashboard prompts for that
-proxy's ADMIN token, which is distinct from its data-plane API keys. HTTP is unencrypted, so connect
-directly only across a trusted LAN and prefer an SSH tunnel for other networks.
+probe the host, add a token to the URL, or save one. The destination dashboard never prompts for a
+token either: management routes are intentionally open, exactly as in [Remote access and admission
+keys](#remote-access-and-admission-keys) above, and that is unrelated to the proxy's data-plane API
+keys. HTTP is unencrypted, so connect directly only across a trusted LAN and prefer an SSH tunnel for
+other networks.
 
 ### Export archives
 
