@@ -1,38 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { setClientResourceData, useKeyedClientResource } from "./client-resource";
 import Dashboard from "./pages/Dashboard";
-import Terminal from "./pages/Terminal";
-import MobileRemote from "./pages/Mobile";
-import Providers from "./pages/Providers";
-import Models from "./pages/Models";
-import Combos from "./pages/Combos";
-import Subagents from "./pages/Subagents";
-import Logs from "./pages/Logs";
-import Usage from "./pages/Usage";
-import Storage from "./pages/Storage";
-import CodexAuth from "./pages/CodexAuth";
-import ApiKeys from "./pages/ApiKeys";
-import Claude from "./pages/Claude";
-import Grok from "./pages/Grok";
-import Startup from "./pages/Startup";
-import Appearance from "./pages/Appearance";
-import LanguageVoice from "./pages/LanguageVoice";
-import ScheduledSettings from "./pages/ScheduledSettings";
 import ScheduleNotificationBridge from "./scheduling/ScheduleNotificationBridge";
-import RegexBuilder from "./pages/RegexBuilder";
-import Changelog from "./pages/Changelog";
-import Docs from "./pages/Docs";
-import VersionHistory from "./pages/VersionHistory";
-import NotificationsPage from "./pages/Notifications";
-import Network from "./pages/Network";
-import Authenticator from "./pages/Authenticator";
-import SettingsPage from "./pages/Settings";
-import LocksPage from "./pages/Locks";
-import PdfTools from "./pages/PdfTools";
-import Converter from "./pages/Converter";
-import Ollama from "./pages/Ollama";
-import OllamaChat from "./pages/OllamaChat";
-import Downloads from "./pages/Downloads";
 import DownloadsBridge from "./shell/DownloadsBridge";
 import DesktopUpdaterBanner from "./shell/DesktopUpdaterBanner";
 import OnboardingWizard from "./shell/OnboardingWizard";
@@ -63,10 +32,51 @@ import ElementAppearanceHost from "./shell/ElementAppearanceHost";
 import TabStrip from "./shell/TabStrip";
 import SnackbarHost from "./shell/SnackbarHost";
 import DimSumCard from "./shell/DimSumCard";
+import { ProgressIndicator } from "./shell/m3-ui";
 import { PAGE_META_BY_ID } from "./shell/page-meta";
 import { readJsonIfOk } from "./fetch-json";
 import { applyLockedOnLaunch } from "./shell/locks"
 import { configureSchoolModeApiBase, startSchoolModeSync, stopSchoolModeSync } from "./school-mode/client";
+
+/**
+ * Every page other than Dashboard loads on demand: opening its tab is what
+ * downloads its chunk, so the whole settings surface no longer rides along
+ * with the first paint. Dashboard keeps its static import above because it is
+ * the screen almost every launch actually opens, so making that one wait on
+ * its own network round trip would trade a slow bundle for a slow first
+ * screen instead of fixing either.
+ */
+const Terminal = lazy(() => import("./pages/Terminal"));
+const MobileRemote = lazy(() => import("./pages/Mobile"));
+const Providers = lazy(() => import("./pages/Providers"));
+const Models = lazy(() => import("./pages/Models"));
+const Combos = lazy(() => import("./pages/Combos"));
+const Subagents = lazy(() => import("./pages/Subagents"));
+const Logs = lazy(() => import("./pages/Logs"));
+const Usage = lazy(() => import("./pages/Usage"));
+const Storage = lazy(() => import("./pages/Storage"));
+const CodexAuth = lazy(() => import("./pages/CodexAuth"));
+const ApiKeys = lazy(() => import("./pages/ApiKeys"));
+const Claude = lazy(() => import("./pages/Claude"));
+const Grok = lazy(() => import("./pages/Grok"));
+const Startup = lazy(() => import("./pages/Startup"));
+const Appearance = lazy(() => import("./pages/Appearance"));
+const LanguageVoice = lazy(() => import("./pages/LanguageVoice"));
+const ScheduledSettings = lazy(() => import("./pages/ScheduledSettings"));
+const RegexBuilder = lazy(() => import("./pages/RegexBuilder"));
+const Changelog = lazy(() => import("./pages/Changelog"));
+const Docs = lazy(() => import("./pages/Docs"));
+const VersionHistory = lazy(() => import("./pages/VersionHistory"));
+const NotificationsPage = lazy(() => import("./pages/Notifications"));
+const Network = lazy(() => import("./pages/Network"));
+const Authenticator = lazy(() => import("./pages/Authenticator"));
+const SettingsPage = lazy(() => import("./pages/Settings"));
+const LocksPage = lazy(() => import("./pages/Locks"));
+const PdfTools = lazy(() => import("./pages/PdfTools"));
+const Converter = lazy(() => import("./pages/Converter"));
+const Ollama = lazy(() => import("./pages/Ollama"));
+const OllamaChat = lazy(() => import("./pages/OllamaChat"));
+const Downloads = lazy(() => import("./pages/Downloads"));
 
 installApiAuthFetch();
 
@@ -412,7 +422,15 @@ function AppShell() {
                 detailsLabel={t("errorBoundary.details")}
                 reloadLabel={t("errorBoundary.reload")}
               >
-                {renderPage(tab.page)}
+                {/* The one Suspense boundary every lazy page falls back to. It
+                    sits inside this tab's own ErrorBoundary (so a chunk load
+                    failure still lands on the per-tab error card, not a blank
+                    app) and inside this tab's own hidden wrapper (so loading
+                    one newly opened tab's chunk never re-suspends every other
+                    already-rendered tab sitting behind it). */}
+                <Suspense fallback={<ProgressIndicator label={t("common.loading")} />}>
+                  {renderPage(tab.page)}
+                </Suspense>
               </ErrorBoundary>
             </div>
           ))}
