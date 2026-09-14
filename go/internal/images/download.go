@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 // PinnedDownload fetches a URL from an already-validated peer.
@@ -150,6 +152,19 @@ func writeArtifactUnique(dir, prefix string, data []byte, ext string) (string, e
 			return "", err
 		}
 		if err := file.Close(); err != nil {
+			return "", err
+		}
+		// 0o600 above is a POSIX-only promise: Chmod on Windows only flips the
+		// DOS read-only attribute, so this writable artifact would otherwise
+		// report back as 0666 and stay readable by Everyone on that platform.
+		// Artifacts hold user content served only through an authenticated
+		// route (same rationale as the 0o700 directory above), so this is a
+		// real gap, not a cosmetic one. HardenSecretPath strips the broad
+		// Everyone/Users/Authenticated-Users ACEs via icacls on Windows and
+		// is a no-op everywhere else; it is the same fix already applied to
+		// the exported config backup and Grok's config.toml.
+		if err := platform.HardenSecretPath(path, false); err != nil {
+			_ = os.Remove(path)
 			return "", err
 		}
 		return path, nil
