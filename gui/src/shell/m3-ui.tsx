@@ -431,3 +431,31 @@ export function SelectField({ value, options, onChange, label, disabled, id, sty
     </select>
   );
 }
+
+/**
+ * Material 3's indeterminate linear progress indicator: the fallback every
+ * lazily-loaded page falls back to while its chunk is still downloading (see
+ * `App.tsx`'s single `<Suspense>` boundary).
+ *
+ * Reuses the sweep already built for the Downloads page's unknown-length
+ * transfers (`.m3-dl-progress` / `m3-dl-indeterminate` in
+ * `styles/m3-shell.css`) instead of inventing a second spinner: omitting
+ * `aria-valuenow` is exactly what switches that bar from determinate to
+ * indeterminate there, so this primitive simply never passes one.
+ */
+export function ProgressIndicator({ label }: { label: string }) {
+  return (
+    <div role="status" style={{ padding: "48px 0" }}>
+      <div
+        className="m3-dl-progress"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={label}
+        style={{ maxWidth: 240, margin: "0 auto" }}
+      >
+        <div className="m3-dl-progress__fill" />
+      </div>
+    </div>
+  );
+}
