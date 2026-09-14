@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { atomicWriteFile, expandUserPath, getConfigDir, websocketsEnabled } from "../../config";
 import { CODEX_CONFIG_PATH, CODEX_MODELS_CACHE_PATH, DEFAULT_CATALOG_PATH, readRootTomlString, resolveCodexConfigPath } from "../paths";
@@ -170,16 +170,77 @@ export function shouldExposeRoutedModel(model: CatalogModel): boolean {
   return !isMediaGenerationModelId(model.id);
 }
 
+/**
+ * Revision key for a small on-disk file, used to memoize a parse against the exact bytes it was
+ * last computed from. `null` means "file absent"; treated by `sameRevision` as a distinct,
+ * cacheable revision of its own, so a missing catalog or config.toml is remembered as missing
+ * instead of being re-probed on every call, and starts producing fresh reads again the moment the
+ * file appears.
+ */
+type FileRevision = { readonly size: number; readonly mtimeMs: number } | null;
+
+function statRevision(path: string): FileRevision {
+  try {
+    const stat = statSync(path);
+    return { size: Number(stat.size), mtimeMs: Number(stat.mtimeMs) };
+  } catch {
+    return null;
+  }
+}
+
+function sameRevision(a: FileRevision, b: FileRevision): boolean {
+  return a === null || b === null ? a === b : a.size === b.size && a.mtimeMs === b.mtimeMs;
+}
+
+let catalogPathCache: { configPath: string; revision: FileRevision; resolved: string } | null = null;
+let catalogParseCache = new Map<string, { revision: FileRevision; value: RawCatalog | null }>();
+
+/**
+ * Test-only: drop both revision-keyed catalog memos below. Module state in this file is shared
+ * across every test file that imports it within one bun test process (the same reason
+ * `resetBundledCatalogCacheForTests` exists next to `bundledCatalogCache` in ./bundled.ts, and
+ * `resetUsageReadCacheForTests` next to the usage-log read cache), so a test that depends on an
+ * unmemoized read, or that writes a catalog fixture at a path a prior test already read, calls
+ * this first.
+ */
+export function resetCatalogRevisionCachesForTests(): void {
+  catalogPathCache = null;
+  catalogParseCache = new Map();
+}
+
+/**
+ * Resolve the active catalog file path from config.toml's `model_catalog_json` key, falling back
+ * to the default catalog path. Memoized on config.toml's own revision (mtime + size, never a
+ * TTL): `catalogModelSupportsServiceTier` (src/server/request-log.ts) and
+ * `catalogModelSupportsReasoningSummaries` (below) each call this once per outbound request that
+ * touches a service tier or reasoning summaries (src/server/responses/core.ts, ~line 900), so an
+ * unmemoized version re-reads and re-parses config.toml on every single request even though the
+ * path it resolves to almost never changes between them. A revision key means an edited
+ * config.toml is picked up on the very next call rather than after some expiry window elapses --
+ * these answer live routing decisions, not a value that is fine to serve stale for a while.
+ */
 export function readCodexCatalogPath(): string {
   try {
     const configPath = activeCodexConfigPath();
-    if (existsSync(configPath)) {
+    const revision = statRevision(configPath);
+    if (
+      catalogPathCache
+      && catalogPathCache.configPath === configPath
+      && sameRevision(catalogPathCache.revision, revision)
+    ) {
+      return catalogPathCache.resolved;
+    }
+    let resolved = activeDefaultCatalogPath();
+    if (revision) {
       const toml = readFileSync(configPath, "utf-8");
       const path = readRootTomlString(toml, "model_catalog_json");
-      if (path) return resolveActiveCodexConfigPath(path);
+      if (path) resolved = resolveActiveCodexConfigPath(path);
     }
-  } catch { /* ignore */ }
-  return activeDefaultCatalogPath();
+    catalogPathCache = { configPath, revision, resolved };
+    return resolved;
+  } catch {
+    return activeDefaultCatalogPath();
+  }
 }
 
 export function parseCatalogJson(raw: string): RawCatalog | null {
@@ -189,11 +250,28 @@ export function parseCatalogJson(raw: string): RawCatalog | null {
   } catch { return null; }
 }
 
+/**
+ * Read and parse a catalog JSON file, memoized on the file's own revision (mtime + size). This is
+ * the shared read path for every catalog consumer, including the two per-request hot paths
+ * documented on `readCodexCatalogPath` above: `catalogModelSupportsServiceTier`
+ * (src/server/request-log.ts) calls this directly instead of inlining its own
+ * readFileSync/JSON.parse, and `catalogModelSupportsReasoningSummaries` below already called this
+ * but got no benefit from it until this function itself started memoizing. A changed file
+ * (different size and/or mtime) invalidates the memo on the very next call, so nothing has to
+ * remember to call an invalidation hook after a write.
+ */
 export function readCatalog(path: string): RawCatalog | null {
+  const revision = statRevision(path);
+  const cached = catalogParseCache.get(path);
+  if (cached && sameRevision(cached.revision, revision)) return cached.value;
+  let value: RawCatalog | null = null;
   try {
-    if (!existsSync(path)) return null;
-    return parseCatalogJson(readFileSync(path, "utf-8"));
-  } catch { return null; }
+    if (revision) value = parseCatalogJson(readFileSync(path, "utf-8"));
+  } catch {
+    value = null;
+  }
+  catalogParseCache.set(path, { revision, value });
+  return value;
 }
 
 export function findNativeTemplate(catalog: RawCatalog | null): RawEntry | null {

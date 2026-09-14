@@ -6,7 +6,7 @@ import {
   isClientClosedMessage,
 } from "../lib/errors";
 import { CODEX_CONFIG_PATH, readRootTomlString } from "../codex/paths";
-import { readCodexCatalogPath } from "../codex/catalog";
+import { readCatalog, readCodexCatalogPath } from "../codex/catalog/parsing";
 import type { OcxUsage } from "../types";
 import type { AdapterRequest } from "../adapters/base";
 import { redactSecretString } from "../lib/redact";
@@ -452,10 +452,11 @@ export function catalogModelSupportsServiceTier(modelId: string, serviceTier: st
   if (!serviceTier) return undefined;
   const requestTier = serviceTier.trim().toLowerCase() === "fast" ? "priority" : serviceTier.trim();
   try {
-    const catalogPath = readCodexCatalogPath();
-    if (!existsSync(catalogPath)) return undefined;
-    const catalog = JSON.parse(readFileSync(catalogPath, "utf-8")) as { models?: unknown };
-    const models = Array.isArray(catalog.models) ? catalog.models : [];
+    // readCatalog() and readCodexCatalogPath() are both memoized on the source file's own
+    // revision (mtime + size, see src/codex/catalog/parsing.ts), so a request-storm of identical
+    // (modelId, serviceTier) pairs costs one disk read and one JSON.parse, not one per request.
+    const catalog = readCatalog(readCodexCatalogPath());
+    const models = Array.isArray(catalog?.models) ? catalog.models : [];
     const entry = models.find(model => {
       if (!model || typeof model !== "object") return false;
       return (model as { slug?: unknown; id?: unknown }).slug === modelId
