@@ -10,9 +10,23 @@ type DesktopUpdateState = {
   error?: string | null;
 };
 
-const VISIBLE_STATUSES = new Set<DesktopUpdateState["status"]>([
+/** The subset of statuses the banner ever renders. Kept as its own type, rather
+ * than reusing `DesktopUpdateState["status"]` directly, so the title/body switch
+ * below can be exhaustive over exactly these seven and TypeScript refuses a
+ * build the day an eighth one is added and forgotten. */
+type VisibleStatus = "available" | "downloading" | "ready" | "failed" | "offline" | "cancelled" | "corrupt";
+
+const VISIBLE_STATUSES = new Set<VisibleStatus>([
   "available", "downloading", "ready", "failed", "offline", "cancelled", "corrupt",
 ]);
+
+function isVisibleStatus(status: DesktopUpdateState["status"]): status is VisibleStatus {
+  return (VISIBLE_STATUSES as Set<string>).has(status);
+}
+
+function assertNeverStatus(status: never): never {
+  throw new Error(`Unhandled desktop updater status: ${String(status)}`);
+}
 
 export default function DesktopUpdaterBanner() {
   const t = useT();
@@ -30,7 +44,8 @@ export default function DesktopUpdaterBanner() {
     return () => { active = false; unsubscribe(); };
   }, [bridge]);
 
-  if (!bridge || !state || !VISIBLE_STATUSES.has(state.status) || state.version === dismissedVersion) return null;
+  if (!bridge || !state || !isVisibleStatus(state.status) || state.version === dismissedVersion) return null;
+  const status = state.status;
 
   const restart = async () => {
     const result = await bridge.install();
@@ -43,33 +58,54 @@ export default function DesktopUpdaterBanner() {
   const retry = () => { void bridge.check(); };
   const cancel = () => { void bridge.cancel(); };
 
-  const title = state.status === "ready"
-    ? t("desktopUpdater.readyTitle")
-    : state.status === "downloading"
-      ? t("desktopUpdater.downloadingTitle")
-      : state.status === "available"
-        ? t("desktopUpdater.availableTitle")
-        : t("desktopUpdater.failedTitle");
-  const body = state.status === "ready"
-    ? t("desktopUpdater.readyBody", { version: state.version ?? "—" })
-    : state.status === "downloading"
-      ? t("desktopUpdater.downloadingBody", { progress: Math.round(state.progress) })
-      : state.status === "available"
-        ? t("desktopUpdater.availableBody", { version: state.version ?? "—" })
-        : t("desktopUpdater.failedBody", { error: state.error ?? t("desktopUpdater.unknownError") });
+  let title: string;
+  let body: string;
+  switch (status) {
+    case "ready":
+      title = t("desktopUpdater.readyTitle");
+      body = t("desktopUpdater.readyBody", { version: state.version ?? "—" });
+      break;
+    case "downloading":
+      title = t("desktopUpdater.downloadingTitle");
+      body = t("desktopUpdater.downloadingBody", { progress: Math.round(state.progress) });
+      break;
+    case "available":
+      title = t("desktopUpdater.availableTitle");
+      body = t("desktopUpdater.availableBody", { version: state.version ?? "—" });
+      break;
+    case "cancelled":
+      title = t("desktopUpdater.cancelledTitle");
+      body = t("desktopUpdater.cancelledBody");
+      break;
+    case "offline":
+      title = t("desktopUpdater.offlineTitle");
+      body = t("desktopUpdater.offlineBody");
+      break;
+    case "corrupt":
+      title = t("desktopUpdater.corruptTitle");
+      body = t("desktopUpdater.corruptBody");
+      break;
+    case "failed":
+      title = t("desktopUpdater.failedTitle");
+      body = t("desktopUpdater.failedBody", { error: state.error ?? t("desktopUpdater.unknownError") });
+      break;
+    default:
+      assertNeverStatus(status);
+  }
 
   return (
-    <Banner tone={state.status === "ready" ? "success" : state.status === "available" || state.status === "downloading" ? "info" : "warn"} title={title}>
+    <Banner tone={status === "ready" ? "success" : status === "available" || status === "downloading" ? "info" : "warn"} title={title}>
       <p>{body}</p>
-      {state.status === "ready" && <p className="muted">{t("desktopUpdater.unsignedWarning")}</p>}
-      {state.releaseNotesUrl && state.status === "ready" && (
+      {status === "ready" && <p className="muted">{t("desktopUpdater.unsignedWarning")}</p>}
+      {state.releaseNotesUrl && status === "ready" && (
         <p><a href={state.releaseNotesUrl} target="_blank" rel="noreferrer">{t("desktopUpdater.releaseNotes")}</a></p>
       )}
       <div className="m3-banner__buttons">
-        {state.status === "ready" && <button ref={restartRef} type="button" className="m3-btn m3-btn--filled" onClick={() => { void restart(); }}>{t("desktopUpdater.restart")}</button>}
-        {state.status === "downloading" && <Button variant="outlined" onClick={cancel}>{t("desktopUpdater.cancel")}</Button>}
-        {(state.status === "failed" || state.status === "offline" || state.status === "corrupt" || state.status === "cancelled") && <Button variant="outlined" onClick={retry}>{t("desktopUpdater.retry")}</Button>}
-        {state.status === "ready" && <Button variant="text" onClick={later}>{t("desktopUpdater.later")}</Button>}
+        {status === "ready" && <button ref={restartRef} type="button" className="m3-btn m3-btn--filled" onClick={() => { void restart(); }}>{t("desktopUpdater.restart")}</button>}
+        {status === "downloading" && <Button variant="outlined" onClick={cancel}>{t("desktopUpdater.cancel")}</Button>}
+        {status === "cancelled" && <Button variant="outlined" onClick={retry}>{t("desktopUpdater.downloadAgain")}</Button>}
+        {(status === "failed" || status === "offline" || status === "corrupt") && <Button variant="outlined" onClick={retry}>{t("desktopUpdater.retry")}</Button>}
+        {status === "ready" && <Button variant="text" onClick={later}>{t("desktopUpdater.later")}</Button>}
       </div>
     </Banner>
   );
