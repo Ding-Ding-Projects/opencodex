@@ -9,6 +9,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 var diagnosticURLPattern = regexp.MustCompile(`https?://[^\s<>()]+`)
@@ -86,12 +88,32 @@ func AppendCrashEntry(logPath, entry string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
 		return err
 	}
-	_, err = file.WriteString(entry)
-	return err
+	if _, err := file.WriteString(entry); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	// Chmod(0o600) above is a POSIX-only promise: on Windows it only flips
+	// the DOS read-only attribute, so a writable crash log always reports
+	// back as 0666 regardless of the mode requested. FormatCrashEntry
+	// redacts what it recognizes, but the whole point of this test
+	// (TestCrashEntryRedactsAndIncludesBreadcrumbs) is that a crash entry
+	// can still carry sensitive request context; leaving the log world-
+	// readable on Windows defeats that. HardenSecretPath strips the broad
+	// Everyone/Users/Authenticated-Users ACEs via icacls there and is a
+	// no-op elsewhere -- memoized per path, so appending to the same log
+	// repeatedly costs one real icacls call, not one per crash. Closed
+	// first, matching the lesson from internal/codex's account store: an
+	// icacls call is a separate process, not a same-handle op, but nothing
+	// here depends on finding out the hard way which Windows operations
+	// tolerate a still-open handle and which do not.
+	return platform.HardenSecretPath(logPath, false)
 }
 
 // RecoverCrash returns a defer-friendly panic guard. Go cannot safely continue
