@@ -48,8 +48,10 @@ describe("automatic CLI launch policy wiring", () => {
   test("start probes liveness even when the pid file is missing", async () => {
     const source = await read("src/cli/index.ts");
     const start = slice(source, "async function handleStart(", "async function handleEnsure(");
+    // The assignment target and its surrounding try/catch are incidental to this
+    // contract; what must hold is that handleStart actually makes this exact call.
     expect(start).toContain(
-      "const owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });",
+      "await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });",
     );
   });
 

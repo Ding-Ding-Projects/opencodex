@@ -23,7 +23,7 @@ import {
 import { collectStatus } from "./status";
 import { dispatchInternalCliCommand, type InternalCliCommand } from "./internal-dispatch";
 import { runTrayProxyRestart, runTrayProxyStart } from "./tray-proxy";
-import { installCrashGuards } from "../lib/crash-guard";
+import { installCrashGuards, logStartupFailure } from "../lib/crash-guard";
 import { hasHelpFlag, printSubcommandUsage, printUsage, printVersion } from "./help";
 import { findAvailablePort, isAddrInUse, PortUnavailableError, shouldPersistSelectedPort, waitForPortAvailable } from "../server/ports";
 import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
@@ -179,6 +179,12 @@ async function findProxyOwnerBeforeJournalRecovery(
 }
 
 async function handleStart(options: { block?: boolean } = {}) {
+  // Installed FIRST, before anything below that can throw: journal recovery
+  // just below runs synchronously on this same await chain, with no wrapper
+  // above it on the top-level command switch. Without the guards installed
+  // yet, an unhandled fault here used to reach the launcher as a raw,
+  // unredacted stack instead of a clean crash.log entry.
+  installCrashGuards();
   // Native (WinSW) service mode has no batch wrapper to read the service token file
   // into the environment, so the app loads it here before the server binds. The server
   // auth path reads OPENCODEX_API_AUTH_TOKEN from the environment.
@@ -189,7 +195,20 @@ async function handleStart(options: { block?: boolean } = {}) {
   // files can disappear while the configured listener remains healthy. Probe the
   // configured port before journal recovery so a second start never restores a
   // live owner's Codex state or creates a duplicate daemon.
-  const owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });
+  let owner: Awaited<ReturnType<typeof findProxyOwnerBeforeJournalRecovery>>;
+  try {
+    owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });
+  } catch (err) {
+    // A genuine failure here (for example a real ACL denial while restoring
+    // Codex config from the journal) must not print a raw, unredacted stack
+    // and exit uncleanly. Log the full detail the same way a request-time
+    // fault does, then fail closed with a readable message.
+    logStartupFailure("start-journal-recovery", err);
+    console.error(`❌ Could not recover Codex state before starting: ${err instanceof Error ? err.message : String(err)}`);
+    console.error("   Full detail (redacted) written to crash.log.");
+    process.exitCode = 1;
+    return;
+  }
   const existingLive = owner.live;
   if (existingLive) {
     console.error(`⚠️  Proxy already running (PID ${existingLive.pid ?? owner.pidSnapshot ?? "unknown"}, port ${existingLive.port}). Use 'ocx stop' first.`);
@@ -277,9 +296,10 @@ async function handleStart(options: { block?: boolean } = {}) {
   } finally {
     startLock.release();
   }
-  // A single request's streaming error must never crash the daemon serving every
-  // other Codex session — capture the full stack to crash.log and stay up.
-  installCrashGuards();
+  // installCrashGuards() already ran at the top of this function, ahead of
+  // journal recovery — it also protects a single request's streaming error
+  // (once serving begins below) from crashing the daemon for every other
+  // Codex session; that error still stays up, captured to crash.log.
   const config = loadConfig();
   // No pre-emptive snapshot here. `injectCodexConfig` journals the exact bytes it
   // is about to transform; snapshotting earlier only captured a baseline that could
