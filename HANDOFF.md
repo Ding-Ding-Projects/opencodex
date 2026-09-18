@@ -1,5 +1,63 @@
 # Handoff
 
+## Repository closeout - 2026-09-18, `main` at `80c8892fe`
+
+This closeout was limited to the primary checkout at
+`C:\Users\cntow\Documents\GitHub\opencodex` and its linked worktrees. The repository was
+fetched before inspection. The linked `main` checkout was clean and fast-forwarded from
+`9aeaddbec30c9bf6fbbfababd7581aba62c0d392` to `80c8892fe50f66201d31058fbb7b3d53c6948c58`,
+matching `origin/main`.
+
+### Preservation and conflict evidence
+
+- The primary `dev` checkout and every linked checkout were inspected with
+  `git status --porcelain=v1 -uall` and `git ls-files -u`.
+- No uncommitted files, untracked non-ignored files, or unmerged index entries were found.
+- No stash entries were present.
+- No merge conflicts or conflict markers required resolution. No existing content was discarded.
+- Because no recoverable working-tree edits existed, no preservation commit was needed. All existing
+  local tips remain available and are listed below.
+
+### Linked checkout inventory
+
+| Path | Branch | Tip | Relation to `origin/main` |
+| --- | --- | --- | --- |
+| `opencodex/.claude/worktrees/practical-pasteur-9aa51b` | `claude/panic-resilience-0822` | `1c98834c50c4cd0e9dce2e32962549508fee1210` | behind, no unique commits |
+| `opencodex/.claude/worktrees/wf_7b2544d8-3ed-3` | `worktree-wf_7b2544d8-3ed-3` | `3c4ae94fd03ba9874d9c74ba732e7678a2668122` | behind, no unique commits |
+| `opencodex-worktrees/backend-recovery-integration` | `main` | `80c8892fe50f66201d31058fbb7b3d53c6948c58` | exact remote tip |
+| `opencodex-worktrees/bun-journal-recovery` | `codex/bun-journal-recovery` | `dc172cf51be10db5dda339fa086e5202fedad59a` | behind, no unique commits |
+| `opencodex-worktrees/bun-launch-supervisor` | `codex/bun-launch-supervisor` | `9bff04e2911974795c1b78cbffeb10ac0c384e3f` | behind, no unique commits |
+| `opencodex-worktrees/port-antigravity` | `codex/port-antigravity` | `d91af3ccc861a527095584fe75d1250b752534e8` | behind, no unique commits |
+| `opencodex-worktrees/port-architecture-foundations` | `codex/port-architecture-foundations` | `2176fd55e5b9ff5e04a15d0a7a14743acd3dda66` | behind, no unique commits |
+| `opencodex-worktrees/port-go-parity` | `codex/port-go-parity` | `f8b226412537d2a354160d2da28d0ece1bb14f5a` | behind, no unique commits |
+| `opencodex-worktrees/restore-codex-command` | `codex/restore-codex-command` | `d7d49580ba6af9d62c90a25409b3b8ba2d120b52` | behind, no unique commits |
+
+The primary checkout remains at `dev`, tip `01b319fd975d85e43782a241ffc4a25d47085b42`, and
+is retained as the user's primary checkout. The linked `main` checkout is retained as the
+load-bearing integration checkout. The port and recovery checkouts are retained because their
+ownership and active use are not established by this closeout, even though their tips are already
+contained by `origin/main`.
+
+### Archive and cleanup disposition
+
+An external archive was created and verified before considering cleanup:
+`C:\Users\cntow\OneDrive\OakKayBackups\opencodex\zips\opencodex-20260918T173351Z.7z`.
+The Git-selected input inventory contained 42,069 unique paths. The archive contains 42,579 listed
+entries, has a size of 1,257,524,224 bytes, and covers 1,605,938,867 source bytes. `7z t` returned
+`Everything is Ok`. The failed earlier attempt at
+`opencodex-20260918T173313Z.7z` was not used as evidence because 7-Zip rejected duplicate relative
+paths before producing a valid archive.
+
+No linked checkout, branch, or stash was removed: the primary checkout, integration checkout, and
+ownership-uncertain task checkouts are retained. No safe deletion candidate remained after applying
+the ownership and load-bearing rules.
+
+### Remote verification
+
+`origin/main` was fetched and the local `main` checkout was fast-forwarded to the fetched tip.
+The final closeout must verify `git ls-remote origin refs/heads/main` returns
+`80c8892fe50f66201d31058fbb7b3d53c6948c58` before this record is considered complete.
+
 ## 2026-09-14 · Repository closeout pass (early, preservation-first stop)
 
 **Scope.** Integrate-and-clean pass with a full multi-lens defect hunt, a main-only integration policy with build-only GitHub Actions, a private-wording scrub of tracked files, and delivery work on issues #10 and #17. The owner requested an early closeout at 15:08 EDT before every lane finished; this entry records what landed, what is preserved unfinished, and what is open.

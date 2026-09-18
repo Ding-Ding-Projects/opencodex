@@ -1,5 +1,23 @@
 # Roadmap
 
+## Repository closeout - 2026-09-18
+
+- [x] Fetch all configured remotes before inspecting the primary checkout and linked worktrees.
+- [x] Inspect every linked checkout for uncommitted files, untracked non-ignored files, unmerged
+  index entries, conflict markers, and stash entries; none were found.
+- [x] Fast-forward the clean integration checkout to `origin/main` at `80c8892fe` without rewriting
+  history or discarding any work.
+- [x] Record every linked checkout, branch, tip, retention reason, and cleanup disposition in
+  `HANDOFF.md`.
+- [x] Create and verify the external archive at
+  `C:\Users\cntow\OneDrive\OakKayBackups\opencodex\zips\opencodex-20260918T173351Z.7z`; record
+  its 42,579 entries, 1,257,524,224 bytes, 1,605,938,867 source bytes, and successful `7z t`
+  result in `HANDOFF.md`.
+- [ ] Verify `git ls-remote origin refs/heads/main` matches `80c8892fe50f66201d31058fbb7b3d53c6948c58`.
+- [x] Review linked checkouts and branches for safe, task-owned redundancy; remove none because
+  the remaining non-primary items are ownership-uncertain or load-bearing, and retain them with
+  explicit reasons in `HANDOFF.md`.
+
 ## Repository closeout pass, early stop (2026-09-14, `main` `4e47f6d7`)
 
 - [x] Main-only integration policy; GitHub Actions build and publish only, no test, typecheck, lint, vet, race or e2e steps (`9f4b737e`).
