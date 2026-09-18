@@ -13,7 +13,8 @@
   `C:\Users\cntow\OneDrive\OakKayBackups\opencodex\zips\opencodex-20260918T173351Z.7z`; record
   its 42,579 entries, 1,257,524,224 bytes, 1,605,938,867 source bytes, and successful `7z t`
   result in `HANDOFF.md`.
-- [ ] Verify `git ls-remote origin refs/heads/main` matches `80c8892fe50f66201d31058fbb7b3d53c6948c58`.
+- [x] Verify `git ls-remote origin refs/heads/main` returned the dewed documentation tip
+  `9df072019baf5a0812145dedf9a23025eb34709c`.
 - [x] Review linked checkouts and branches for safe, task-owned redundancy; remove none because
   the remaining non-primary items are ownership-uncertain or load-bearing, and retain them with
   explicit reasons in `HANDOFF.md`.

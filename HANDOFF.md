@@ -55,8 +55,8 @@ the ownership and load-bearing rules.
 ### Remote verification
 
 `origin/main` was fetched and the local `main` checkout was fast-forwarded to the fetched tip.
-The final closeout must verify `git ls-remote origin refs/heads/main` returns
-`80c8892fe50f66201d31058fbb7b3d53c6948c58` before this record is considered complete.
+After the documentation commit, `git ls-remote origin refs/heads/main` returned
+`9df072019baf5a0812145dedf9a23025eb34709c`, proving the dewed `main` ref.
 
 ## 2026-09-14 · Repository closeout pass (early, preservation-first stop)
 
