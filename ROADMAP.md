@@ -31,23 +31,51 @@
 - [ ] Update `docs-site` contributing pages (5 locales) and `gui/src/docs/generated-articles.ts` to the main-only policy.
 - [ ] Issue #10 closure (capture of the API Access card, checklist reconciliation); issue #17 Go parity slices; PR #16 closure comment; CHANGELOG, README and wiki refresh for this pass.
 
-## Upstream catch-up, one verified tag at a time — 2026-09-12
+## Upstream catch-up, one verified tag at a time — remeasured 2026-09-19
 
-The fork sits 7,267 commits behind its source. Merging the tip produces 523 conflicting files, so
-the catch-up comes in rungs, each one verified against the tree it started from and integrated on
-its own.
+The fork sits **8,338 commits** behind its source, and the ladder below now runs to `v2.59.0`.
+Both numbers were measured on 2026-09-19 against a fresh `git fetch upstream --tags`; the previous
+entry said 7,267 and stopped at `v2.51.0`, which was true when it was written on 2026-09-12 and has
+drifted since. The catch-up comes in rungs, each one verified against the tree it started from and
+integrated on its own, because merging the tip produces 523 conflicting files.
+
+A rung is not the size of its version bump. `v2.10.1` was measured on 2026-09-19: the upstream
+delta is 1,363 commits meeting 1,399 of the fork's own, producing **284 conflicting paths**, against
+39 for `v2.8.0`. They concentrate where the fork deliberately owns its product: 71 under `tests/`,
+62 under `gui/src`, 24 under `src/server`, 23 under `src/codex`, 23 under `docs-site/src`. Resolving
+them is per-file ownership judgment of the kind the `v2.8.0` merge commit records, not a textual
+merge, so budget a rung accordingly.
 
 - [x] `v2.8.0`. 69 conflicting hunks across 39 paths. The dashboard ends at 1,695 passing and none
       failing, its build and typecheck clean, the root suites at their known failures and no more.
-- [ ] `v2.10.1`
+- [ ] `v2.10.1`. Measured at 284 conflicting paths; see above before starting.
 - [ ] `v2.12.0`
 - [ ] `v2.20.0`
 - [ ] `v2.31.0`
 - [ ] `v2.40.0`
 - [ ] `v2.51.0`
+- [ ] `v2.52.0`
+- [ ] `v2.53.0`
+- [ ] `v2.54.0`
+- [ ] `v2.55.0`
+- [ ] `v2.56.0`
+- [ ] `v2.57.0`
+- [ ] `v2.58.0`
+- [ ] `v2.59.0`
 - [ ] Close the four Linux failures in the Go job that this catch-up does not touch: the help
       surface implementing 50 of 69 lines, the two tests needing an executable the runner lacks,
       and the two that predate this work.
+
+### Ported ahead of the ladder
+
+Individual upstream fixes worth having before their rung arrives are ported on their own, each
+verified in isolation, the way the four security items in `docs/UPSTREAM-SURVEY.md` section 8 were.
+Porting one does not tick its rung.
+
+- [x] Dependency advisories, 2026-09-19, following upstream's own `fix(deps)` approach in its
+      `#4873`. `bun audit` went from 18 vulnerabilities (6 high, 11 moderate, 1 low) to none at the
+      root, and from 20 (1 critical, 11 high, 7 moderate, 1 low) to none in `docs-site`. The
+      critical one was remote code execution through Astro's AVIF image optimization.
 
 ## Current integration closeout — 2026-08-21
 

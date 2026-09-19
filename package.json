@@ -2,7 +2,7 @@
   "name": "@bitkyc08/opencodex",
   "version": "2.8.0",
   "author": "opencodex contributors",
-  "description": "Universal provider proxy for OpenAI Codex & Claude Code — use any LLM with Codex CLI/App/SDK and Claude Code",
+  "description": "Universal provider proxy for OpenAI Codex & Claude Code \u2014 use any LLM with Codex CLI/App/SDK and Claude Code",
   "type": "module",
   "main": "./bin/package-main.mjs",
   "exports": {
@@ -75,7 +75,11 @@
     "typescript": "5.9.3"
   },
   "overrides": {
-    "fast-uri": "^3.1.4"
+    "fast-uri": "^3.1.6",
+    "hono": "^4.13.8",
+    "@hono/node-server": "^1.19.15",
+    "ip-address": "^10.3.1",
+    "qs": "^6.15.4"
   },
   "keywords": [
     "codex",
