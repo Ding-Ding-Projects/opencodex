@@ -47,6 +47,19 @@ const originalGlobalFetch = globalThis.fetch;
 // concurrent runs of THIS file alone, which a rename could not fix. mkdtempSync matches the
 // isolation convention already used by tests/helpers/isolated-codex-home.ts.
 const TEST_DIR = mkdtempSync(join(tmpdir(), "ocx-server-auth-"));
+
+// Every WebSocket turn in this file waits on this budget, and it is deliberately
+// far longer than a healthy turn needs. The comment above the "OpenAI option auth
+// matrix" test below records why: Windows CI running the full suite can spend over
+// a second just opening a turn, and a budget tuned to a quiet machine then rejects
+// a turn that was only slow. The cost is not one red test. The rejected turn leaves
+// its fetch override in place, the late restore lands inside the next test, and a
+// case expecting a mocked 500 sees a real 502 instead. These budgets exist to catch
+// a genuinely hung turn, not to measure latency, so patience here is free.
+// Four of these sites were still at 1000 ms after the others were lifted, which is
+// what a repeated literal invites. One constant means the next lift reaches all of
+// them. tests/hunt-ops-06.test.ts holds the floor.
+const WS_TURN_BUDGET_MS = 5_000;
 let isolatedCodexHome: IsolatedCodexHome | null = null;
 
 function config(hostname?: string): OcxConfig {
@@ -1004,7 +1017,7 @@ describe("server local API auth", () => {
       url.protocol = "ws:";
       const ws = new WebSocket(url, { headers: { "x-opencodex-api-key": "local-secret", ...(headers ?? {}) } } as unknown as string[]);
       return new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("tier websocket timeout")), 5_000);
+        const timer = setTimeout(() => reject(new Error("tier websocket timeout")), WS_TURN_BUDGET_MS);
         ws.addEventListener("open", () => {
           ws.send(JSON.stringify({ type: "response.create", model, input: "hello" }));
         }, { once: true });
@@ -1237,7 +1250,7 @@ describe("server local API auth", () => {
       const sendFrame = async (model: string) => {
         const before = seen.length;
         const message = new Promise<string>((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error(`sequential websocket timeout: ${model}`)), 5_000);
+          const timer = setTimeout(() => reject(new Error(`sequential websocket timeout: ${model}`)), WS_TURN_BUDGET_MS);
           const onMessage = (event: MessageEvent) => {
             const value = typeof event.data === "string" ? event.data : "";
             if (!value.includes('"type":"response.completed"')) return;
@@ -1507,7 +1520,7 @@ describe("server local API auth", () => {
         },
       } as unknown as string[]);
       const wsFailure = new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket affinity timeout")), 1000);
+        const timer = setTimeout(() => reject(new Error("websocket affinity timeout")), WS_TURN_BUDGET_MS);
         ws.addEventListener("open", () => {
           ws.send(JSON.stringify({ type: "response.create", model: "gpt-test", input: "hello" }));
         }, { once: true });
@@ -1527,7 +1540,7 @@ describe("server local API auth", () => {
       await server.stop(true);
       await upstream.stop(true);
     }
-  });
+  }, { timeout: 30_000 });
 
   test("websocket passthrough refreshes pool auth for each response.create turn", async () => {
     if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
@@ -1595,7 +1608,7 @@ describe("server local API auth", () => {
         ws.addEventListener("error", () => reject(new Error("websocket failed to open")), { once: true });
       });
       const waitForTerminal = () => new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), 1000);
+        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), WS_TURN_BUDGET_MS);
         const onMessage = (event: MessageEvent) => {
           const text = typeof event.data === "string" ? event.data : "";
           if (text.includes('"type":"response.completed"')) {
@@ -1624,7 +1637,7 @@ describe("server local API auth", () => {
       await server.stop(true);
       await upstream.stop(true);
     }
-  });
+  }, { timeout: 30_000 });
 
   test("websocket routed adapter records completed usage in request logs", async () => {
     if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
@@ -1671,7 +1684,7 @@ describe("server local API auth", () => {
         ws.addEventListener("error", () => reject(new Error("websocket failed to open")), { once: true });
       });
       const waitForTerminal = () => new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), 1000);
+        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), WS_TURN_BUDGET_MS);
         const onMessage = (event: MessageEvent) => {
           const text = typeof event.data === "string" ? event.data : "";
           if (text.includes('"type":"response.completed"')) {
@@ -1714,7 +1727,7 @@ describe("server local API auth", () => {
       await server.stop(true);
       await upstream.stop(true);
     }
-  });
+  }, { timeout: 30_000 });
 
   test("Activation A: allow-listed 400 retries once on another eligible pool account", async () => {
     const harness = await startPoolRetryHarness(accountId => accountId === "acct-pool-a"
@@ -2083,7 +2096,7 @@ describe("server local API auth", () => {
           if (String(event.data).includes("response.completed")) resolve();
         });
         ws.addEventListener("error", () => reject(new Error("websocket retry failed")), { once: true });
-        setTimeout(() => reject(new Error("websocket retry timed out")), 1_000);
+        setTimeout(() => reject(new Error("websocket retry timed out")), WS_TURN_BUDGET_MS);
       });
       expect(harness.dispatches).toEqual(["acct-pool-a", "acct-pool-b"]);
       expect(registrySnapshots).toEqual([[1, 0], [0, 1]]);
@@ -2093,7 +2106,7 @@ describe("server local API auth", () => {
       ws.close();
       await stopPoolRetryHarness(harness);
     }
-  });
+  }, { timeout: 30_000 });
 
   test("passthrough connect failure records selected pool account health", async () => {
     if (existsSync(TEST_DIR)) removeTempDir(TEST_DIR);
