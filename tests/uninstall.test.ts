@@ -49,7 +49,14 @@ describe("full uninstall command", () => {
     expect(uninstallBody).toContain("stopProxy:");
     expect(uninstallBody).toContain("if (!stopOutcome.safeToRestart)");
     expect(uninstallBody).toContain('runStep("service removed"');
-    expect(proxyStop).toContain("await stopProxy(pid);");
+    // Pin the PID-reuse-hardened teardown shape, not just "stopProxy(pid". A bare
+    // substring would still match the unguarded call this hardening replaced, so the
+    // assertion has to name the identity captured before the graceful attempt and the
+    // reader carried into the forced fallback. Dropping either guard lets a stale PID
+    // record authorize killing an unrelated successor process, and must fail here.
+    expect(proxyStop).toContain("await stopProxy(pid, {");
+    expect(proxyStop).toContain("expectedIdentity: identity");
+    expect(proxyStop).toContain("readProxyProcessIdentity(pid)");
     expect(uninstallBody).toContain("uninstallServiceIfInstalled()");
     expect(uninstallBody.indexOf("stopManager:")).toBeLessThan(uninstallBody.indexOf("stopProxy:"));
     expect(uninstallBody.indexOf("if (!stopOutcome.safeToRestart)")).toBeLessThan(uninstallBody.indexOf('runStep("service removed"'));

@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 const cliPath = resolve(import.meta.dir, "../src/cli/index.ts");
 const cliSource = readFileSync(cliPath, "utf8");
 const roots: string[] = [];
-const children: Array<ReturnType<typeof Bun.spawn>> = [];
+const children: Child[] = [];
 
 type Fixture = {
   root: string;
@@ -18,6 +18,16 @@ type Fixture = {
   pidPath: string;
   runtimePath: string;
   env: Record<string, string>;
+};
+
+type Spawned = ReturnType<typeof spawnProcess>;
+
+type Child = {
+  process: Spawned;
+  /** Everything the child wrote to stderr, resolved once the stream closes. */
+  stderr: Promise<string>;
+  /** Whatever stderr has produced so far, readable while the child still runs. */
+  stderrSoFar: () => string;
 };
 
 function fixture(port = 0): Fixture {
@@ -87,67 +97,130 @@ function arrangeRecoverableJournal(fx: Fixture): { original: string; injected: s
   return { original, injected };
 }
 
-async function runCli(fx: Fixture, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const child = Bun.spawn([process.execPath, cliPath, ...argv], {
+function spawnProcess(fx: Fixture, argv: string[]) {
+  return Bun.spawn([process.execPath, cliPath, ...argv], {
     cwd: fx.root,
     env: fx.env,
     stdout: "pipe",
     stderr: "pipe",
   });
+}
+
+/**
+ * Accumulate a piped stream into a string that can be inspected at any moment.
+ * The running buffer matters as much as the final text: when a child hangs, the
+ * only evidence available is what it printed before it stalled, and the stream
+ * never closes so awaiting the whole thing would hang with it.
+ */
+function captureStream(stream: ReadableStream<Uint8Array>): { text: Promise<string>; soFar: () => string } {
+  let seen = "";
+  const text = (async () => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      seen += decoder.decode(value, { stream: true });
+    }
+    seen += decoder.decode();
+    return seen;
+  })();
+  return { text, soFar: () => seen };
+}
+
+/**
+ * Spawn the CLI under the fixture environment and start draining its stderr right
+ * away. That environment is deliberately stripped down to prove the CLI does not
+ * lean on the ambient shell, which also means a child can die during startup for a
+ * reason that has nothing to do with the behaviour under test, before it writes any
+ * of the files the polls below wait for. Reading stderr from the moment of the
+ * spawn is what lets a failure quote that reason instead of discarding it.
+ */
+function spawnCli(fx: Fixture, argv: string[]): Child {
+  const handle = spawnProcess(fx, argv);
+  const stderr = captureStream(handle.stderr);
+  const child: Child = { process: handle, stderr: stderr.text, stderrSoFar: stderr.soFar };
   children.push(child);
+  return child;
+}
+
+/** Describe an already dead child well enough to diagnose it without a rerun. */
+async function describeChildDeath(child: Child): Promise<string> {
+  const exitCode = await child.process.exited;
+  const signal = child.process.signalCode;
+  const how = signal ? `killed by ${signal}` : `exited with code ${exitCode}`;
+  const stderr = (await child.stderr).trim();
+  return stderr ? `${how}; its stderr was:\n${stderr}` : `${how} without writing anything to stderr`;
+}
+
+async function runCli(fx: Fixture, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const child = spawnCli(fx, argv);
   const completed = await Promise.race([
-    Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]),
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`CLI watchdog: ocx ${argv.join(" ")}`)), 10_000)),
+    Promise.all([child.process.exited, new Response(child.process.stdout).text(), child.stderr]),
+    new Promise<never>((_, reject) => setTimeout(
+      // The watchdog only fires for a child that is still alive and stuck, so the
+      // full stderr promise would never settle. Report the partial buffer instead.
+      () => reject(new Error(`CLI watchdog: ocx ${argv.join(" ")} did not exit within 10s; stderr so far: ${child.stderrSoFar().trim() || "(none)"}`)),
+      10_000,
+    )),
   ]);
   return { exitCode: completed[0], stdout: completed[1], stderr: completed[2] };
 }
 
-async function waitFor<T>(read: () => T | null | Promise<T | null>, label: string): Promise<T> {
+/**
+ * Poll until `read` produces a value. When a child is supplied, its exit races the
+ * poll: a dead child can never satisfy the condition, so waiting out the remaining
+ * deadline only delays the failure and throws away the explanation. A child that is
+ * alive but slow keeps the full deadline, because `exited` stays pending for it.
+ */
+async function waitFor<T>(read: () => T | null | Promise<T | null>, label: string, child?: Child): Promise<T> {
   const deadline = Date.now() + 10_000;
+  let childExited = false;
+  const childGone = child?.process.exited.then(() => { childExited = true; });
   while (Date.now() < deadline) {
     const value = await read();
     if (value !== null) return value;
-    await Bun.sleep(10);
+    // Checked after the read on purpose: a child is allowed to write what we are
+    // waiting for and then exit, and that ordering must still count as a success.
+    if (childExited) break;
+    await (childGone ? Promise.race([Bun.sleep(10), childGone]) : Bun.sleep(10));
   }
-  throw new Error(`timed out waiting for ${label}`);
+  if (child && childExited) {
+    throw new Error(`gave up waiting for ${label}: the child process died first, ${await describeChildDeath(child)}`);
+  }
+  throw new Error(`timed out waiting for ${label} after 10s (the child was still running)`);
 }
 
-async function startOwner(fx: Fixture): Promise<ReturnType<typeof Bun.spawn>> {
-  const child = Bun.spawn([process.execPath, cliPath, "start"], {
-    cwd: fx.root,
-    env: fx.env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  children.push(child);
+async function startOwner(fx: Fixture): Promise<Spawned> {
+  const child = spawnCli(fx, ["start"]);
   const runtime = await waitFor(() => {
     if (!existsSync(fx.runtimePath)) return null;
     try {
       const value = JSON.parse(readFileSync(fx.runtimePath, "utf8")) as { pid?: number; port?: number };
-      return value.pid === child.pid && typeof value.port === "number" && value.port > 0 ? value : null;
+      return value.pid === child.process.pid && typeof value.port === "number" && value.port > 0 ? value : null;
     } catch {
       return null;
     }
-  }, "owner runtime record");
+  }, "owner runtime record", child);
   await waitFor(async () => {
     try {
       const response = await fetch(`http://127.0.0.1:${runtime.port}/healthz`, { signal: AbortSignal.timeout(500) });
       const body = await response.json() as { pid?: number };
-      return response.ok && body.pid === child.pid ? true : null;
+      return response.ok && body.pid === child.process.pid ? true : null;
     } catch {
       return null;
     }
-  }, "owner health");
-  return child;
+  }, "owner health", child);
+  return child.process;
 }
 
 afterEach(async () => {
   for (const child of children) {
-    if (child.exitCode === null) child.kill("SIGTERM");
+    if (child.process.exitCode === null) child.process.kill("SIGTERM");
   }
   while (children.length) {
     const child = children.pop()!;
-    if (child.exitCode === null) await child.exited;
+    if (child.process.exitCode === null) await child.process.exited;
   }
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true });
 });
@@ -227,21 +300,16 @@ describe("start and ensure journal ownership (#1230)", () => {
         const result = await runCli(fx, [command]);
         expect(result.exitCode).toBe(0);
       } else {
-        const child = Bun.spawn([process.execPath, cliPath, command], {
-          cwd: fx.root,
-          env: fx.env,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        children.push(child);
+        const child = spawnCli(fx, [command]);
         try {
           await waitFor(
             () => !existsSync(fx.journalPath) && existsSync(fx.configPath) && readFileSync(fx.configPath, "utf8") === original ? true : null,
             "dead-owner journal recovery",
+            child,
           );
         } finally {
-          child.kill("SIGTERM");
-          await child.exited;
+          child.process.kill("SIGTERM");
+          await child.process.exited;
         }
       }
 

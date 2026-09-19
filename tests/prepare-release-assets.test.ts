@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { nativeArtifactNames, validateNativeDirectory } from "../scripts/prepare-package";
+import { resolveTarCommand } from "../scripts/prepare-release-assets";
 
 const repo = join(import.meta.dir, "..");
 const helper = join(repo, "scripts", "prepare-release-assets.ts");
@@ -46,6 +47,16 @@ function command(command: string, args: string[], cwd?: string) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr}`);
   return result;
 }
+
+/**
+ * The fixture builds its archives with the same tar the helper under test spawns, resolved the same
+ * way. A bare "tar" here would be resolved against PATH, and on a Windows host whose PATH lists Git
+ * for Windows' usr\bin ahead of System32 that lands on GNU tar, which misreads the absolute archive
+ * path this fixture passes (C:\Users\...\x.tgz) as host:file remote-archive syntax and fails before
+ * reading the file. Pinning through the production resolver keeps the fixture honest on every PATH
+ * order, and off Windows it returns the same bare name, so nothing changes there.
+ */
+const tarCommand = resolveTarCommand();
 
 function writeManifest(nativeDir: string): void {
   const rows = nativeArtifactNames(version).map((name) => {
@@ -80,7 +91,7 @@ function refreshReport(fixture: Fixture): void {
 function createArchive(fixture: Fixture, members?: string[]): void {
   const args = ["-czf", fixture.archive];
   args.push("-C", fixture.packageRoot, ...(members ?? ["package"]));
-  command("tar", args);
+  command(tarCommand, args);
   refreshReport(fixture);
 }
 
@@ -291,7 +302,7 @@ describe("prepare-release-assets", () => {
 
     const extra = fixture();
     writeFileSync(join(extra.nativeDir, "extra"), "extra");
-    command("tar", ["-czf", extra.archive, "-C", extra.packageRoot, "package"]);
+    command(tarCommand, ["-czf", extra.archive, "-C", extra.packageRoot, "package"]);
     const bytes = readFileSync(extra.archive);
     const report = JSON.parse(readFileSync(extra.report, "utf8"))[0];
     writeFileSync(extra.report, JSON.stringify([{ ...report, size: bytes.length, shasum: sha(bytes, "sha1", "hex"), integrity: `sha512-${sha(bytes, "sha512", "base64")}` }]));

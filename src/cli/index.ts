@@ -443,7 +443,32 @@ async function handleStart(options: { block?: boolean } = {}) {
 }
 
 async function handleEnsure() {
-  const owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });
+  // Ensure is short lived, which makes it look like it does not need the
+  // guards. It needs them more than start does. The Codex shim runs `ocx
+  // ensure` on every codex invocation with BOTH streams discarded (see the sh,
+  // cmd and PowerShell shim bodies in src/codex/shim.ts), so an unguarded fault
+  // here is completely invisible: no stderr anyone sees, no crash.log entry,
+  // and an exit code the shim swallows before falling through to real Codex.
+  // Installing the guards here is what turns that silent fault into evidence.
+  // Idempotent, so it costs nothing when start already installed them.
+  installCrashGuards();
+  // Same exposure as handleStart: recovery here can reach reconcileJournalAsync,
+  // which restores Codex config through atomicWriteFileAsync, whose Windows
+  // harden step genuinely throws on a real ACL denial.
+  let owner: Awaited<ReturnType<typeof findProxyOwnerBeforeJournalRecovery>>;
+  try {
+    owner = await findProxyOwnerBeforeJournalRecovery({ probeConfiguredPort: true });
+  } catch (err) {
+    // A distinct kind from start's "start-journal-recovery": both commands make
+    // this same call and can fail the same way, and a shared kind would leave a
+    // crash.log entry unattributable to the command that produced it. That
+    // matters most for ensure, whose run leaves no other trace behind.
+    logStartupFailure("ensure-journal-recovery", err);
+    console.error(`❌ Could not recover Codex state before ensuring the proxy: ${err instanceof Error ? err.message : String(err)}`);
+    console.error("   Full detail (redacted) written to crash.log.");
+    process.exitCode = 1;
+    return;
+  }
   const config = loadConfig();
   if (!codexAutoStartEnabled(config)) {
     console.log("Codex autostart is disabled.");
