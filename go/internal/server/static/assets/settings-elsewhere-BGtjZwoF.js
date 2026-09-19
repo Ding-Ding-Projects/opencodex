@@ -1,0 +1,1 @@
+import{D as e,E as t}from"./index-BBqkR95K.js";function n(n){let r=[];for(let i of t())if(i.navKey!==n)for(let t of e(i))r.push({tkey:t.tkey,descKey:t.descKey,keywordKeys:t.keywordKeys,tabKey:i.navKey});return r}export{n as t};

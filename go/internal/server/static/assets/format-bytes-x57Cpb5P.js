@@ -1,0 +1,1 @@
+function e(e,t){if(e<1024)return`${e} B`;let n=[`KB`,`MB`,`GB`,`TB`],r=e,i=-1;do r/=1024,i++;while(r>=1024&&i<n.length-1);return`${r.toLocaleString(t,{maximumFractionDigits:1})} ${n[i]}`}export{e as t};

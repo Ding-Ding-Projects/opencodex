@@ -1,0 +1,1 @@
+import{N as e,j as t}from"./shared-BgBJtAHG.js";var n=e(t(),1),r=(0,n.createContext)(null);function i(){let e=(0,n.useContext)(r);if(!e)throw Error(`useSettingsDrafts must be used within SettingsDraftProvider`);return e}export{i as n,r as t};
