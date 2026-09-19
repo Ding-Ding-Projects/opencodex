@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, setCodexShimStateAtomicWriteIOForTests, uninstallCodexShim } from "../src/codex/shim";
+import { autoRestoreCodexShim, buildUnixCodexShim, buildWindowsCodexShim, buildWindowsPowerShellCodexShim, diagnoseCodexShim, findCodexOnPath, installCodexShim, isWindowsInteropDir, lastCodexDiscoveryError, refreshCodexShimRuntime, setCodexShimStateAtomicWriteIOForTests, uninstallCodexShim } from "../src/codex/shim";
 import { removeTempDir } from "./helpers/temp-dir";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
