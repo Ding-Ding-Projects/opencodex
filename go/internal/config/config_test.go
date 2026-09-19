@@ -822,3 +822,43 @@ func TestCodexAccountIdentityRulesStillApply(t *testing.T) {
 		t.Fatal("a blank account email was accepted")
 	}
 }
+
+// BackupInvalidConfig derives its output name from the caller's clock alone, so
+// two corruption events observed at the same instant resolve to the same name.
+// That copy is the only surviving record of the bad bytes once the CLI falls
+// back to defaults, so a later backup must never be allowed to overwrite an
+// earlier one. Freezing "now" pins the construction rather than racing the real
+// clock, mirroring tests/hunt-data-02.test.ts on the TypeScript side.
+func TestBackupInvalidConfigDoesNotOverwriteEarlierBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	frozen := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+
+	first := []byte(`{"providers": first corruption`)
+	if err := os.WriteFile(path, first, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstBackup, err := BackupInvalidConfig(path, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := []byte(`{"providers": second corruption`)
+	if err := os.WriteFile(path, second, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondBackup, err := BackupInvalidConfig(path, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if firstBackup == secondBackup {
+		t.Fatalf("both backups landed on %q, so the second destroyed the first", firstBackup)
+	}
+	if data, err := os.ReadFile(firstBackup); err != nil || !bytes.Equal(data, first) {
+		t.Fatalf("first backup = %q err=%v, want %q", data, err, first)
+	}
+	if data, err := os.ReadFile(secondBackup); err != nil || !bytes.Equal(data, second) {
+		t.Fatalf("second backup = %q err=%v, want %q", data, err, second)
+	}
+}

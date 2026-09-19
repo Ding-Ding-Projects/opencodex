@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -152,12 +154,52 @@ func validAccountRecord(record AccountRecord) bool {
 		record.LastCodexValidationStatus == AccountValidationFailed
 }
 
+// accountBackupSequence keeps invalid-store backup names unique within a
+// process.
+//
+// A millisecond timestamp is not a unique name: two corrupt writes to the same
+// store land in the same millisecond easily, and loadRecords calls this twice
+// on its own for a single decode failure. os.Rename silently replaces an
+// existing destination on both POSIX and Windows, so a repeated name moves the
+// newly corrupt file over the previous backup and the earlier evidence is gone.
+// Load discards this function's error, so nothing would ever report the loss.
+// The pid plus monotonic counter shape matches storage.WriteSatelliteBackup.
+var accountBackupSequence atomic.Uint64
+
+// accountBackupNameAttempts bounds the search for a free name, for the same
+// reason as the config recovery path: the counter only repeats across a process
+// restart, so exhausting a thousand names means something else owns them and a
+// clear error beats an unbounded loop.
+const accountBackupNameAttempts = 1000
+
 func (s *AccountStore) backupInvalid() error {
-	backup := fmt.Sprintf("%s.invalid-%d", s.path, s.now().UnixMilli())
-	if err := os.Rename(s.path, backup); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	prefix := fmt.Sprintf("%s.invalid-%d-%d-", s.path, s.now().UnixMilli(), os.Getpid())
+	for range accountBackupNameAttempts {
+		backup := prefix + strconv.FormatUint(accountBackupSequence.Add(1), 10)
+		// os.Rename has no "refuse to clobber" mode, so the destination is
+		// claimed first with an exclusive create. Winning that create is what
+		// proves the name is ours; the rename then replaces our own empty
+		// placeholder instead of somebody else's forensic copy.
+		handle, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		_ = handle.Close()
+		if err := os.Rename(s.path, backup); err != nil {
+			// The placeholder is empty, so leaving it behind would advertise a
+			// backup that holds no evidence whatsoever. Remove it and report.
+			_ = os.Remove(backup)
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("no unused Codex account store backup name for %s after %d attempts", s.path, accountBackupNameAttempts)
 }
 
 func (s *AccountStore) persist(records map[string]AccountRecord) error {

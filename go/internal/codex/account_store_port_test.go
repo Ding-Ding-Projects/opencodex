@@ -83,8 +83,13 @@ func TestAccountStoreInvalidJSONIsBackedUp(t *testing.T) {
 	if err != nil || len(credentials) != 0 {
 		t.Fatalf("load invalid = %v, %v", credentials, err)
 	}
-	if _, err := os.Stat(path + ".invalid-99"); err != nil {
-		t.Fatalf("invalid backup missing: %v", err)
+	// The backup name carries a pid and a per-process counter after the
+	// timestamp so a second corruption cannot rename over the first one's
+	// evidence, so the name is no longer the bare "path.invalid-99" this
+	// assertion used to pin. The guarantee under test is that a backup exists.
+	backups, err := filepath.Glob(path + ".invalid-*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("invalid backup missing: backups=%v err=%v", backups, err)
 	}
 }
 
@@ -136,5 +141,56 @@ func TestAccountStoreAdoptsFreshCredentialSharingGrant(t *testing.T) {
 	})})
 	if err != nil || token.AccessToken != "fresh" || token.Generation != 2 {
 		t.Fatalf("adopted token = %#v, %v", token, err)
+	}
+}
+
+// backupInvalid names its target from a millisecond timestamp alone and hands it
+// to os.Rename, which replaces an existing destination on every supported
+// platform. Two corruption events observed in the same millisecond therefore
+// used to leave a single file holding only the later bytes, silently discarding
+// the earlier evidence. Load discards the backup error, so the only way a lost
+// copy would ever surface is a test like this one. This is the account-store
+// mirror of TestBackupInvalidConfigDoesNotOverwriteEarlierBackup.
+func TestAccountStoreBackupDoesNotOverwriteEarlierBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "codex-accounts.json")
+	store := NewAccountStore(path)
+	// A frozen clock reproduces the same-millisecond case deterministically
+	// instead of depending on two real corruptions landing close enough.
+	store.now = func() time.Time { return time.UnixMilli(99) }
+
+	first := []byte(`{broken first corruption`)
+	if err := os.WriteFile(path, first, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if credentials, err := store.Load(); err != nil || len(credentials) != 0 {
+		t.Fatalf("first load = %v, %v", credentials, err)
+	}
+
+	second := []byte(`{broken second corruption`)
+	if err := os.WriteFile(path, second, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if credentials, err := store.Load(); err != nil || len(credentials) != 0 {
+		t.Fatalf("second load = %v, %v", credentials, err)
+	}
+
+	backups, err := filepath.Glob(path + ".invalid-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 2 {
+		t.Fatalf("want two distinct backups, got %v", backups)
+	}
+	preserved := map[string]bool{}
+	for _, backup := range backups {
+		data, err := os.ReadFile(backup)
+		if err != nil {
+			t.Fatalf("read %s: %v", backup, err)
+		}
+		preserved[string(data)] = true
+	}
+	if !preserved[string(first)] || !preserved[string(second)] {
+		t.Fatalf("both corruptions must survive, backups hold %v", preserved)
 	}
 }
