@@ -83,11 +83,44 @@ let cancelActiveRun: (() => void) | null = null;
 let runGeneration = 0;
 /** CODEX_HOME whose mutation slot this job holds (parent thread only). */
 let heldMutationHome: string | undefined;
+/**
+ * Ownership token for the slot recorded above, minted fresh for every run.
+ *
+ * `abortStorageCleanupPolicyJob` disowns a run without waiting for its worker to
+ * exit, so a newer run can legitimately reacquire the slot for its own work
+ * before the aborted run's `finally` ever gets to execute. That belated release
+ * would then free a slot it no longer owns while the newer worker is still
+ * touching the archive directory and the SQLite database, which is exactly what
+ * the coordinator's single-flight gate exists to prevent. Comparing this token
+ * before releasing makes a disowned run's cleanup a no-op, the same ownership
+ * check `proxy-start-lock.ts` performs before unlinking its own owner file. A
+ * symbol suffices because ownership never leaves this module.
+ */
+let heldMutationToken: symbol | undefined;
 
+function acquireMutationSlotOwnership(codexHome: string): symbol {
+  const token = Symbol("storage-cleanup-policy-mutation-slot");
+  heldMutationHome = codexHome;
+  heldMutationToken = token;
+  return token;
+}
+
+/**
+ * Unconditional release, for the paths that deliberately disown whatever run is
+ * in flight (process shutdown abort, test reset). These must free the slot even
+ * though the terminated worker has not settled yet, so a following run can start.
+ */
 function releaseHeldMutationSlot(): void {
   if (heldMutationHome === undefined) return;
   endStorageMutation(heldMutationHome);
   heldMutationHome = undefined;
+  heldMutationToken = undefined;
+}
+
+/** Release only while `token` still owns the slot; see `heldMutationToken`. */
+function releaseMutationSlotIfOwner(token: symbol): void {
+  if (heldMutationToken !== token) return;
+  releaseHeldMutationSlot();
 }
 
 export function setStorageCleanupPolicyJobLiveApply(
@@ -309,7 +342,7 @@ async function executeJob(opts: RequestPolicyRunOptions): Promise<void> {
     }
     return;
   }
-  heldMutationHome = codexHome;
+  const ownership = acquireMutationSlotOwnership(codexHome);
   try {
     const blockMs = testHooks?.blockMs;
     let result: PolicyRunResult;
@@ -338,7 +371,10 @@ async function executeJob(opts: RequestPolicyRunOptions): Promise<void> {
     if (generation !== runGeneration) return;
     applyFailed(err instanceof Error ? err.message : "worker_failed");
   } finally {
-    releaseHeldMutationSlot();
+    // Scoped to this run on purpose: `finally` also runs after the generation
+    // early-returns above, by which point an abort plus a newer accepted run may
+    // already hold the slot for still-in-flight work of their own.
+    releaseMutationSlotIfOwner(ownership);
   }
 }
 
