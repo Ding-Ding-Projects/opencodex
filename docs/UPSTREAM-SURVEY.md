@@ -1,5 +1,11 @@
 # Upstream survey: lidge-jun/opencodex
 
+> **Remeasured 2026-09-19.** Every count below is from the date it was written and has drifted. The
+> current figures, measured against a fresh `git fetch upstream --tags`: the fork is **8,338 commits**
+> behind, upstream has released through **v2.59.0**, and the next ladder rung `v2.10.1` costs
+> **284 conflicting paths** (1,363 upstream commits meeting 1,399 of the fork's). `ROADMAP.md` carries
+> the current ladder. The analysis in this document stands; only its numbers are historical.
+
 Status: first real look since the fork diverged. HANDOFF.md previously recorded this gap as
 "reported, not ported" — meaning even the *reporting* had not actually happened; the 2,979 figure
 was a guess restated across two doc-sync commits, not a measured one. This document is the
