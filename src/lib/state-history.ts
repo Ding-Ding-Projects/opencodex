@@ -36,7 +36,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../config";
 import { APP_LOG_DIR_NAME } from "./app-log-file";
@@ -126,6 +126,54 @@ interface GitResult {
   stdout: string;
 }
 
+/**
+ * Git variables that aim git at a DIFFERENT repository than `-C <dir>` names,
+ * or inject configuration into whichever one it finds. Every one of them is
+ * deleted from the child's environment.
+ *
+ * This is not theoretical tidiness. Git exports `GIT_DIR` to the processes it
+ * runs itself — a pre-push hook that runs the test suite, for one — and a
+ * child that inherits it obeys it: `git -C <dir> init` then reports success
+ * while creating nothing in `<dir>`, and the identity writes below land in the
+ * inherited repository's config instead. A checkout in this project was hit by
+ * exactly that, and came back with `user.name = opencodex state history` in
+ * its own `.git/config` and a commit authored under it.
+ *
+ * `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` and
+ * `GIT_CONFIG_PARAMETERS` do not redirect, but they inject config the same way
+ * `-c` does — url rewrites, credential helpers, hook paths — into a repository
+ * that is supposed to be reproducible machine bookkeeping. Container images
+ * routinely set them; this module's own contract ("whatever identity/hooks the
+ * user configured globally must not run here") only becomes true once they go.
+ *
+ * Deliberately NOT stripped: `PATH` and friends, which git needs to run at all.
+ */
+const REDIRECTING_GIT_VARS = [
+  "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+  "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+] as const;
+
+/** `GIT_CONFIG_KEY_0`, `GIT_CONFIG_VALUE_0`, ... — unbounded, so matched rather than listed. */
+const NUMBERED_GIT_CONFIG_VAR = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
+
+/**
+ * The environment every git child here runs with: this process's, minus
+ * everything in {@link REDIRECTING_GIT_VARS}, plus the no-prompt guarantee.
+ */
+function hermeticGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const name of REDIRECTING_GIT_VARS) delete env[name];
+  for (const name of Object.keys(env)) {
+    if (NUMBERED_GIT_CONFIG_VAR.test(name)) delete env[name];
+  }
+  // Nothing here may ever block on a terminal prompt.
+  env.GIT_TERMINAL_PROMPT = "0";
+  return env;
+}
+
 function runGit(dir: string, args: string[], timeoutMs = 15_000): Promise<GitResult> {
   return new Promise(resolve => {
     let child;
@@ -133,8 +181,8 @@ function runGit(dir: string, args: string[], timeoutMs = 15_000): Promise<GitRes
       child = spawn("git", ["-C", dir, ...args], {
         windowsHide: true,
         // Whatever identity/hooks the user configured globally must not run here,
-        // and nothing may ever prompt.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        // and nothing may ever prompt. See hermeticGitEnv.
+        env: hermeticGitEnv(),
         stdio: ["ignore", "pipe", "ignore"],
       });
     } catch {
@@ -220,6 +268,44 @@ function refreshRepoRules(dir: string): void {
   }
 }
 
+/**
+ * Path equality as the filesystem means it, not as two strings happen to spell
+ * it. `git rev-parse` answers with a resolved, forward-slashed path; `join`
+ * answers with whatever the caller passed. Those disagree over symlinks (the
+ * per-OS temp directory is one on macOS) and over separators on Windows, and a
+ * guard that reported a mismatch for either would disable the history on
+ * perfectly ordinary machines.
+ */
+function samePath(left: string, right: string): boolean {
+  const normalize = (path: string): string => {
+    let value = path;
+    // Not on disk is not a failure here: the literal path is then the best
+    // answer available, and the comparison still catches a real mismatch.
+    try { value = realpathSync(path); } catch { /* compare the literal path */ }
+    value = value.replace(/\\/g, "/").replace(/\/+$/, "");
+    return process.platform === "win32" ? value.toLowerCase() : value;
+  };
+  return normalize(left) === normalize(right);
+}
+
+/**
+ * Whether the repository git ACTUALLY resolved for `dir` is `dir`'s own.
+ *
+ * Containment, and the reason the identity writes below are safe. Asking git
+ * itself is the only honest way to know: discovery walks up to an ancestor
+ * repository when `dir` has none, an inherited environment can aim it
+ * somewhere else entirely (see {@link REDIRECTING_GIT_VARS}), and a `.git`
+ * file can point at a linked worktree whose config is the main repository's.
+ * In every one of those cases `git -C <dir> config user.name ...` edits
+ * someone else's repository, which is the defect this guards. Refusing costs
+ * a snapshot; not refusing rewrites a user's project.
+ */
+async function resolvesToOwnRepo(dir: string): Promise<boolean> {
+  const resolved = await runGit(dir, ["rev-parse", "--absolute-git-dir"]);
+  if (!resolved.ok || !resolved.stdout) return false;
+  return samePath(resolved.stdout, join(dir, ".git"));
+}
+
 async function ensureRepo(dir: string, allowInstall = true): Promise<boolean> {
   if (!existsSync(dir)) return false;
   if (!(await gitAvailable())) {
@@ -231,10 +317,19 @@ async function ensureRepo(dir: string, allowInstall = true): Promise<boolean> {
     if (!(await gitAvailable())) return false;
   }
   if (existsSync(join(dir, ".git"))) {
+    // Even an existing repo is confirmed before use: the caller goes on to
+    // `add` and `commit` through it, and a redirected git would stage this
+    // directory's files into someone else's index.
+    if (!(await resolvesToOwnRepo(dir))) return false;
     refreshRepoRules(dir);
     return true;
   }
   if (!(await runGit(dir, ["init", "--quiet"])).ok) return false;
+  // `init` reporting success is not proof that a repository now exists HERE —
+  // a redirected git re-initialises the repository it was aimed at and leaves
+  // this directory empty, still reporting 0. Everything below writes a fixed
+  // identity, so it only runs once git agrees the repository is this one.
+  if (!(await resolvesToOwnRepo(dir))) return false;
   try {
     writeFileSync(join(dir, ".gitignore"), GITIGNORE, "utf8");
     writeFileSync(join(dir, ".gitattributes"), GITATTRIBUTES, "utf8");
@@ -243,13 +338,15 @@ async function ensureRepo(dir: string, allowInstall = true): Promise<boolean> {
     return false;
   }
   // A repo-local identity so commits work regardless of the user's git setup,
-  // and without touching their global config.
-  await runGit(dir, ["config", "user.name", "opencodex state history"]);
-  await runGit(dir, ["config", "user.email", "state-history@localhost"]);
+  // and without touching their global config. `--local` is explicit rather
+  // than implied: it states which file is meant instead of leaving it to
+  // whatever repository discovery settled on.
+  await runGit(dir, ["config", "--local", "user.name", "opencodex state history"]);
+  await runGit(dir, ["config", "--local", "user.email", "state-history@localhost"]);
   // Belt to `.gitattributes`' braces. The attributes file is authoritative, but
   // a repo whose config also says so cannot be surprised by a future git that
   // reads them in a different order.
-  await runGit(dir, ["config", "core.autocrlf", "false"]);
+  await runGit(dir, ["config", "--local", "core.autocrlf", "false"]);
   return true;
 }
 
@@ -390,7 +487,10 @@ export function listStateHistoryEntries(limit = 50, configDir: string = getConfi
       `-${Math.max(1, Math.min(200, limit))}`,
       "--name-only",
       `--format=${REC}%H${SEP}%s${SEP}%cI`,
-    ], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+      // Same hermetic environment as every other git call here: an inherited
+      // GIT_DIR would otherwise list a different repository's commits and
+      // offer them as this machine's state history to restore from.
+    ], { encoding: "utf8", timeout: 10_000, windowsHide: true, env: hermeticGitEnv() });
     if (result.status !== 0 || !result.stdout.trim()) return [];
     return result.stdout.split(REC).flatMap(record => {
       if (!record.trim()) return [];
@@ -597,6 +697,8 @@ export function listStateHistory(limit = 20, configDir: string = getConfigDir())
       encoding: "utf8",
       timeout: 10_000,
       windowsHide: true,
+      // As above: read this machine's history, never an inherited one's.
+      env: hermeticGitEnv(),
     });
     return result.status === 0 && result.stdout.trim() ? result.stdout.trim().split("\n") : [];
   } catch {

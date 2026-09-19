@@ -65,7 +65,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import {
-  existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../config";
@@ -191,13 +191,62 @@ interface GitResult {
   stdout: string;
 }
 
+/**
+ * Git variables that aim git at a DIFFERENT repository than `-C <dir>` names,
+ * or inject configuration into whichever one it finds. Every one of them is
+ * deleted from the child's environment. Kept as its own copy here rather than
+ * shared with `state-history.ts`: the two stores are deliberate siblings that
+ * duplicate their small git plumbing, and a change to one must not silently
+ * change how the other repository is written.
+ *
+ * Git exports `GIT_DIR` to the processes it runs itself — a pre-push hook that
+ * runs the test suite, for one — and a child that inherits it obeys it: `git
+ * -C <dir> init` then reports success while creating nothing in `<dir>`, and
+ * the identity writes in {@link ensureRepo} land in the inherited repository's
+ * config instead. A checkout in this project was hit by exactly that.
+ *
+ * `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` and
+ * `GIT_CONFIG_PARAMETERS` do not redirect, but they inject config the same way
+ * `-c` does — url rewrites, credential helpers, hook paths. Container images
+ * routinely set them, and none of it belongs in a machine-written repository
+ * that is supposed to hold nothing but redacted metadata and ciphertext.
+ */
+const REDIRECTING_GIT_VARS = [
+  "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+  "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+] as const;
+
+/** `GIT_CONFIG_KEY_0`, `GIT_CONFIG_VALUE_0`, ... — unbounded, so matched rather than listed. */
+const NUMBERED_GIT_CONFIG_VAR = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
+
+/**
+ * The environment every git child here runs with: this process's, minus
+ * everything in {@link REDIRECTING_GIT_VARS}, plus the no-prompt guarantee.
+ *
+ * `extraEnv` is applied LAST, after the scrub, so a deliberate caller override
+ * still wins — `doPrune` sets GIT_AUTHOR_DATE/GIT_COMMITTER_DATE to preserve
+ * the original commit dates, and that has to survive.
+ */
+function hermeticGitEnv(extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const name of REDIRECTING_GIT_VARS) delete env[name];
+  for (const name of Object.keys(env)) {
+    if (NUMBERED_GIT_CONFIG_VAR.test(name)) delete env[name];
+  }
+  env.GIT_TERMINAL_PROMPT = "0";
+  return { ...env, ...extraEnv };
+}
+
 function runGit(dir: string, args: string[], timeoutMs = 15_000, extraEnv?: Record<string, string>): Promise<GitResult> {
   return new Promise(resolve => {
     let child;
     try {
       child = spawn("git", ["-C", dir, ...args], {
         windowsHide: true,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv },
+        env: hermeticGitEnv(extraEnv),
         stdio: ["ignore", "pipe", "ignore"],
       });
     } catch {
@@ -226,6 +275,45 @@ function refreshRepoRules(dir: string): void {
   }
 }
 
+/**
+ * Path equality as the filesystem means it, not as two strings happen to spell
+ * it. `git rev-parse` answers with a resolved, forward-slashed path; `join`
+ * answers with whatever the caller passed. Those disagree over symlinks (the
+ * per-OS temp directory is one on macOS) and over separators on Windows, and a
+ * guard that reported a mismatch for either would disable the history on
+ * perfectly ordinary machines.
+ */
+function samePath(left: string, right: string): boolean {
+  const normalize = (path: string): string => {
+    let value = path;
+    // Not on disk is not a failure here: the literal path is then the best
+    // answer available, and the comparison still catches a real mismatch.
+    try { value = realpathSync(path); } catch { /* compare the literal path */ }
+    value = value.replace(/\\/g, "/").replace(/\/+$/, "");
+    return process.platform === "win32" ? value.toLowerCase() : value;
+  };
+  return normalize(left) === normalize(right);
+}
+
+/**
+ * Whether the repository git ACTUALLY resolved for `dir` is `dir`'s own.
+ *
+ * Containment, and the reason the identity writes below are safe. Asking git
+ * itself is the only honest way to know: discovery walks up to an ancestor
+ * repository when `dir` has none, an inherited environment can aim it
+ * somewhere else entirely (see {@link REDIRECTING_GIT_VARS}), and a `.git`
+ * file can point at a linked worktree whose config is the main repository's.
+ * In every one of those cases `git -C <dir> config user.name ...` edits
+ * someone else's repository, which is the defect this guards. Refusing costs
+ * one recorded mutation, reported honestly as `commit-failed`; not refusing
+ * rewrites a user's project.
+ */
+async function resolvesToOwnRepo(dir: string): Promise<boolean> {
+  const resolved = await runGit(dir, ["rev-parse", "--absolute-git-dir"]);
+  if (!resolved.ok || !resolved.stdout) return false;
+  return samePath(resolved.stdout, join(dir, ".git"));
+}
+
 /** No auto-install of git — see the module header for why that is a deliberate, documented gap rather than an oversight. */
 async function ensureRepo(dir: string): Promise<boolean> {
   if (!existsSync(dir)) {
@@ -233,10 +321,19 @@ async function ensureRepo(dir: string): Promise<boolean> {
   }
   if (!(await gitAvailable())) return false;
   if (existsSync(join(dir, ".git"))) {
+    // Even an existing repo is confirmed before use: the caller goes on to
+    // `add` and `commit` through it, and a redirected git would stage this
+    // directory's files into someone else's index.
+    if (!(await resolvesToOwnRepo(dir))) return false;
     refreshRepoRules(dir);
     return true;
   }
   if (!(await runGit(dir, ["init", "--quiet"])).ok) return false;
+  // `init` reporting success is not proof that a repository now exists HERE —
+  // a redirected git re-initialises the repository it was aimed at and leaves
+  // this directory empty, still reporting 0. Everything below writes a fixed
+  // identity, so it only runs once git agrees the repository is this one.
+  if (!(await resolvesToOwnRepo(dir))) return false;
   try {
     writeFileSync(join(dir, ".gitignore"), GITIGNORE, "utf8");
     writeFileSync(join(dir, ".gitattributes"), GITATTRIBUTES, "utf8");
@@ -244,9 +341,11 @@ async function ensureRepo(dir: string): Promise<boolean> {
   } catch {
     return false;
   }
-  await runGit(dir, ["config", "user.name", "opencodex secret history"]);
-  await runGit(dir, ["config", "user.email", "secret-history@localhost"]);
-  await runGit(dir, ["config", "core.autocrlf", "false"]);
+  // `--local` is explicit rather than implied: it states which file is meant
+  // instead of leaving it to whatever repository discovery settled on.
+  await runGit(dir, ["config", "--local", "user.name", "opencodex secret history"]);
+  await runGit(dir, ["config", "--local", "user.email", "secret-history@localhost"]);
+  await runGit(dir, ["config", "--local", "core.autocrlf", "false"]);
   return true;
 }
 
@@ -367,15 +466,18 @@ export function listSecretHistoryEntries(limit = 50, configDir: string = getConf
   const dir = repoDir(configDir);
   if (!existsSync(join(dir, ".git"))) return [];
   try {
+    // Same hermetic environment as every other git call here: an inherited
+    // GIT_DIR would otherwise list a different repository's commits and offer
+    // them as this machine's mutation history to restore from.
     const log = spawnSync("git", ["-C", dir, "log", `-${Math.max(1, Math.min(500, limit))}`, "--format=%H"], {
-      encoding: "utf8", timeout: 15_000, windowsHide: true,
+      encoding: "utf8", timeout: 15_000, windowsHide: true, env: hermeticGitEnv(),
     });
     if (log.status !== 0 || !log.stdout.trim()) return [];
     const hashes = log.stdout.trim().split("\n");
     const out: SecretHistoryEntry[] = [];
     for (const hash of hashes) {
       const show = spawnSync("git", ["-C", dir, "show", `${hash}:${TRACKED_FILE}`], {
-        encoding: "utf8", timeout: 15_000, windowsHide: true,
+        encoding: "utf8", timeout: 15_000, windowsHide: true, env: hermeticGitEnv(),
       });
       if (show.status !== 0) continue;
       try {
