@@ -258,3 +258,30 @@ describe("ocx claude Windows launch (devlog 260715_cross_platform_audit/020)", (
     expect(claudeNotFoundHint(0, null, "win32")).toBeNull();
   });
 });
+
+// SEC-01 (Copilot admission security review, issue #10): the positional selection the
+// review found in six other call sites also lived here. buildClaudeEnv used
+// `config.apiKeys![0].key` as ANTHROPIC_AUTH_TOKEN, so a key created with purpose
+// "github-copilot-desktop" (scoped to that one integration) became Claude Code's own
+// admission credential whenever it happened to be the first key created.
+describe("SEC-01: buildClaudeEnv never adopts a purpose-scoped API key", () => {
+  const COPILOT_SECRET = "ocx_data_copilot_only_secret_must_stay_scoped";
+  const copilotKey = {
+    id: "copilot-key",
+    name: "GitHub Copilot Desktop",
+    key: COPILOT_SECRET,
+    createdAt: "2026-07-11",
+    purpose: "github-copilot-desktop" as const,
+  };
+  const genericKey = { id: "generic-key", name: "main", key: "sk-ocx-generic", createdAt: "2026-07-12" };
+
+  test("a purpose-only key list behaves like no key at all (subscription keeps the token unset)", () => {
+    const env = buildClaudeEnv(cfg({ apiKeys: [copilotKey] }), 10100, {}, {}, AUTH_PRESENT);
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  });
+
+  test("the generic key is chosen by purpose, not by position", () => {
+    const env = buildClaudeEnv(cfg({ apiKeys: [copilotKey, genericKey] }), 10100, {}, {}, AUTH_PRESENT);
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("sk-ocx-generic");
+  });
+});
