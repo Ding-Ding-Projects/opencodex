@@ -16,6 +16,7 @@ import { commandInvocation } from "../lib/win-exec";
 import { findLiveProxy } from "../server/proxy-liveness";
 import type { OcxConfig } from "../types";
 import { PROXY_MARKER, ownAdmissionTokens, defaultAuthDetectDeps, detectClaudeAuth, type AuthDetectDeps } from "../claude/auth-detect";
+import { selectGenericApiKey } from "../lib/data-plane-api-key";
 import { resolveClaudeAuthMode } from "../claude/auth-mode";
 import { directProxyEnv, proxyStartArgv } from "../lib/proxy-launch";
 import { waitForProxyIdentity } from "./proxy-readiness";
@@ -96,8 +97,9 @@ export function buildClaudeEnv(
   // the user's Claude login. Only inject a token when the proxy actually requires an
   // admission key; otherwise Claude Code keeps its own OAuth and sends it to us —
   // native claude models then pass through verbatim (see server/claude-messages.ts).
-  if ((config.apiKeys?.length ?? 0) > 0) {
-    setDefault("ANTHROPIC_AUTH_TOKEN", config.apiKeys![0].key);
+  const genericApiKey = selectGenericApiKey(config);
+  if (genericApiKey) {
+    setDefault("ANTHROPIC_AUTH_TOKEN", genericApiKey.key);
   }
   // Detection reads the SANITIZED launch env — the exact object spawned below — so the
   // resolver and the spawned process cannot disagree. It deliberately does NOT read the

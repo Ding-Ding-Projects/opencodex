@@ -7,6 +7,7 @@ import { PROXY_MARKER, defaultAuthDetectDeps, detectClaudeAuth, ownAdmissionToke
 import { resolveClaudeAuthMode } from "../claude/auth-mode";
 import type { OcxConfig } from "../types";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
+import { selectGenericApiKey } from "../lib/data-plane-api-key";
 
 /**
  * Does the opencodex dummy marker belong in the system environment?
@@ -47,8 +48,9 @@ function writeShellEnvFile(port: number, config: OcxConfig, modelEnv: Record<str
   // exported in their shell wins even though launchctl knows nothing about it.
   const conditional = (name: string, value: string) =>
     `[ -z "\${${name}+x}" ] && export ${name}=${shellValue(value)}`;
-  if (config.apiKeys?.length) {
-    lines.push(`export ANTHROPIC_AUTH_TOKEN=${shellValue(config.apiKeys[0].key)}`);
+  const genericApiKey = selectGenericApiKey(config);
+  if (genericApiKey) {
+    lines.push(`export ANTHROPIC_AUTH_TOKEN=${shellValue(genericApiKey.key)}`);
   } else if (systemEnvMarkerMode(config) === "proxy") {
     lines.push(conditional("ANTHROPIC_AUTH_TOKEN", PROXY_MARKER));
   }
@@ -273,8 +275,9 @@ export async function injectSystemEnv(port: number, config: OcxConfig): Promise<
   try {
     inject("ANTHROPIC_BASE_URL", ownedBaseUrl(port));
     inject("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1");
-    if (config.apiKeys?.length) {
-      inject("ANTHROPIC_AUTH_TOKEN", config.apiKeys[0].key);
+    const genericApiKey = selectGenericApiKey(config);
+    if (genericApiKey) {
+      inject("ANTHROPIC_AUTH_TOKEN", genericApiKey.key);
     } else if (systemEnvMarkerMode(config) === "proxy" && launchctlGetenv("ANTHROPIC_AUTH_TOKEN") === undefined) {
       inject("ANTHROPIC_AUTH_TOKEN", PROXY_MARKER);
     } else if (systemEnvMarkerMode(config) !== "proxy"
