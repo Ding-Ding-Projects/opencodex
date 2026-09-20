@@ -16,7 +16,13 @@
 import { describe, expect, test } from "bun:test";
 import { countLines } from "../scripts/count-lines";
 
-const counted = countLines();
+// `countLines()` fans its per-file `git show` calls out concurrently now (see count-lines.ts),
+// so this real-repository scan is an await instead of a synchronous call; it is otherwise the
+// same top-level, real-repository shape as before, and now finishes in seconds (about 5 seconds
+// for roughly 5,000 files on a fast Linux box) rather than the better part of a minute or more.
+// See tests/count-lines-attribution.test.ts for the small synthetic-fixture tests that pin exact
+// counts against known content instead of scanning the whole real repository.
+const counted = await countLines();
 
 describe("the shape of the count", () => {
   test("the rows sum to the reported total", () => {

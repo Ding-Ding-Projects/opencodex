@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { mapWithConcurrency } from "./concurrency";
 import { countLines } from "./count-lines";
 
 const execFileAsync = promisify(execFile);
@@ -361,6 +362,13 @@ export function sortAttributionRows<T extends AttributionRow>(rows: readonly T[]
   });
 }
 
+/**
+ * Re-exported from `./concurrency` so existing callers that imported the bounded fan-out helper
+ * from this module keep working unchanged. The implementation itself moved so `count-lines.ts`
+ * could use the exact same helper without a static import cycle (see `./concurrency`).
+ */
+export { mapWithConcurrency };
+
 export function batchPathsByUtf8Bytes(paths: readonly string[], maxBytes: number): string[][] {
   positiveLimit(maxBytes, maxBytes, "maxBytes");
   const encoder = new TextEncoder();
@@ -384,30 +392,21 @@ export function batchPathsByUtf8Bytes(paths: readonly string[], maxBytes: number
   return batches;
 }
 
-export async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  positiveLimit(concurrency, concurrency, "concurrency");
-  const results = new Array<R>(items.length);
-  let next = 0;
-  async function run(): Promise<void> {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      results[index] = await worker(items[index], index);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => run()));
-  return results;
-}
-
 interface CountedEntry {
   path: string;
   name: string;
   total: number;
   code: number;
+}
+
+export interface CountLinesWithAttributionOptions {
+  /**
+   * Repository root to count and attribute in. Defaults to this project's own root. A caller
+   * that passes a `precomputed` result from a `countLines()` run over some other repository must
+   * pass that repository's root here too: the blame step runs `git` in this root, so with the
+   * default it would try to resolve the counted revision inside this project instead.
+   */
+  root?: string;
 }
 
 /**
@@ -418,14 +417,19 @@ interface CountedEntry {
  */
 export async function countLinesWithAttribution(
   revision = "HEAD",
-  precomputed?: ReturnType<typeof countLines> & { entries?: CountedEntry[] },
+  precomputed?: Awaited<ReturnType<typeof countLines>> & { entries?: CountedEntry[] },
+  options: CountLinesWithAttributionOptions = {},
 ): Promise<LineAttributionReport> {
-  const counted = precomputed ?? (countLines(revision) as ReturnType<typeof countLines> & { entries?: CountedEntry[] });
+  const root = options.root ?? join(import.meta.dir, "..");
+  // `countLines()` fans its own per-file `git show` calls out through `mapWithConcurrency` (see
+  // count-lines.ts), so this awaits it rather than calling it as a synchronous function.
+  const counted = precomputed
+    ?? (await countLines(revision, { root }) as Awaited<ReturnType<typeof countLines>> & { entries?: CountedEntry[] });
   if (!counted.entries) {
     throw new Error("countLines() must expose tracked entries before attribution can run");
   }
   const attributed = await attributeTrackedLines({
-    root: join(import.meta.dir, ".."),
+    root,
     paths: counted.entries.map(entry => entry.path),
     revision: counted.revision,
     agentIdentities: KNOWN_AGENT_IDENTITIES,
