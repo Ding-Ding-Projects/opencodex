@@ -10,7 +10,7 @@
 - [x] Record every linked checkout, branch, tip, retention reason, and cleanup disposition in
   `HANDOFF.md`.
 - [x] Create and verify the external archive at
-  `C:\Users\cntow\OneDrive\OakKayBackups\opencodex\zips\opencodex-20260918T173351Z.7z`; record
+  `%USERPROFILE%\OneDrive\OakKayBackups\opencodex\zips\opencodex-20260918T173351Z.7z`; record
   its 42,579 entries, 1,257,524,224 bytes, 1,605,938,867 source bytes, and successful `7z t`
   result in `HANDOFF.md`.
 - [x] Verify `git ls-remote origin refs/heads/main` returned the dewed documentation tip

@@ -3,7 +3,7 @@
 ## Repository closeout - 2026-09-18, `main` at `80c8892fe`
 
 This closeout was limited to the primary checkout at
-`C:\Users\cntow\Documents\GitHub\opencodex` and its linked worktrees. The repository was
+`%USERPROFILE%\Documents\GitHub\opencodex` and its linked worktrees. The repository was
 fetched before inspection. The linked `main` checkout was clean and fast-forwarded from
 `9aeaddbec30c9bf6fbbfababd7581aba62c0d392` to `80c8892fe50f66201d31058fbb7b3d53c6948c58`,
 matching `origin/main`.
@@ -41,7 +41,7 @@ contained by `origin/main`.
 ### Archive and cleanup disposition
 
 An external archive was created and verified before considering cleanup:
-`C:\Users\cntow\OneDrive\OakKayBackups\opencodex\zips\opencodex-20260918T173351Z.7z`.
+`%USERPROFILE%\OneDrive\OakKayBackups\opencodex\zips\opencodex-20260918T173351Z.7z`.
 The Git-selected input inventory contained 42,069 unique paths. The archive contains 42,579 listed
 entries, has a size of 1,257,524,224 bytes, and covers 1,605,938,867 source bytes. `7z t` returned
 `Everything is Ok`. The failed earlier attempt at
