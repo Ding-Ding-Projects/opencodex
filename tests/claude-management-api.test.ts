@@ -7,7 +7,7 @@ import { loadConfig, saveConfig } from "../src/config";
 import { startServer } from "../src/server";
 import { buildClaudeEnv } from "../src/cli/claude";
 import * as systemEnv from "../src/server/system-env";
-import type { OcxConfig } from "../src/types";
+import type { DataPlaneApiKey, OcxConfig } from "../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
 import { removeTempDir } from "./helpers/temp-dir";
 
@@ -629,6 +629,81 @@ test("Claude Desktop profile GET, PUT and apply round-trip four-family assignmen
     server.stop(true);
   }
 });
+
+// SEC-01 (Copilot admission security review): a key created with purpose
+// "github-copilot-desktop" is an integration-scoped credential (issue #10) and must
+// never be written into the Claude Desktop third-party gateway config as the shared
+// inferenceGatewayApiKey. Covers agent-settings-routes.ts ~line 689 (POST
+// /api/claude-desktop/apply).
+test("POST /api/claude-desktop/apply never writes a purpose-scoped API key as the gateway key", async () => {
+  const COPILOT_SECRET = "ocx_data_copilot_only_secret_must_stay_scoped";
+  const config = loadConfig();
+  config.apiKeys = [{
+    id: "copilot-key",
+    name: "GitHub Copilot Desktop",
+    key: COPILOT_SECRET,
+    createdAt: "2026-07-11T00:00:00.000Z",
+    purpose: "github-copilot-desktop",
+  } satisfies DataPlaneApiKey];
+  saveConfig(config);
+
+  const server = startServer(0);
+  try {
+    const apply = await fetch(new URL("/api/claude-desktop/apply", server.url), { method: "POST" });
+    expect(apply.status).toBe(200);
+    const result = await apply.json() as { path: string; applied: boolean };
+    expect(result.applied).toBe(true);
+    const appliedConfig = JSON.parse(readFileSync(result.path, "utf8")) as { inferenceGatewayApiKey: string };
+    expect(appliedConfig.inferenceGatewayApiKey).not.toBe(COPILOT_SECRET);
+    expect(appliedConfig.inferenceGatewayApiKey).toBe("ocx");
+  } finally {
+    server.stop(true);
+  }
+});
+
+// SEC-01, same contract as above but through the auto-apply side effect (agent-settings-
+// routes.ts ~line 98, autoApplyDesktopBestEffort) that PUT /api/subagent-models triggers
+// once a desktopProfile already exists. Two sequential management round-trips (apply, then
+// the PUT) run close to this file's 30s default on this host, so this test gets its own
+// longer per-test budget (same "startServer + multi-PUT" flake class the file header notes)
+// rather than raising the shared default for every other test.
+test("PUT /api/subagent-models auto-apply never writes a purpose-scoped API key as the gateway key", async () => {
+  const COPILOT_SECRET = "ocx_data_copilot_only_secret_autoapply_must_stay_scoped";
+  const config = loadConfig();
+  config.apiKeys = [{
+    id: "copilot-key",
+    name: "GitHub Copilot Desktop",
+    key: COPILOT_SECRET,
+    createdAt: "2026-07-11T00:00:00.000Z",
+    purpose: "github-copilot-desktop",
+  } satisfies DataPlaneApiKey];
+  saveConfig(config);
+
+  const server = startServer(0);
+  try {
+    // Establish a desktopProfile first so autoApplyDesktopBestEffort's guard
+    // (`if (!config.claudeCode?.desktopProfile) return;`) actually proceeds.
+    const applied = await fetch(new URL("/api/claude-desktop/apply", server.url), { method: "POST" });
+    expect(applied.status).toBe(200);
+
+    const put = await fetch(new URL("/api/subagent-models", server.url), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ models: ["mock/test-model"] }),
+    });
+    expect(put.status).toBe(200);
+
+    const libraryDir = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR!;
+    const meta = JSON.parse(readFileSync(join(libraryDir, "_meta.json"), "utf8")) as { entries: Array<{ id: string; name: string }> };
+    const entry = meta.entries.find(e => e.name === "opencodex");
+    expect(entry).toBeDefined();
+    const written = readFileSync(join(libraryDir, `${entry!.id}.json`), "utf8");
+    expect(written).not.toContain(COPILOT_SECRET);
+    expect((JSON.parse(written) as { inferenceGatewayApiKey: string }).inferenceGatewayApiKey).toBe("ocx");
+  } finally {
+    server.stop(true);
+  }
+}, 45_000);
 
 test("Claude Desktop PUT rejects invalid JSON profile without mutating saved config", async () => {
   const server = startServer(0);

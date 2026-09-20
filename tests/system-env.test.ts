@@ -163,6 +163,35 @@ describe("system environment injection", () => {
     );
   });
 
+  // SEC-01 (Copilot admission security review): a key created with purpose
+  // "github-copilot-desktop" is an integration-scoped credential (issue #10) and must
+  // never be reused as ANTHROPIC_AUTH_TOKEN for a plain `claude` launch. Exercises BOTH
+  // call sites inside injectSystemEnv: its own launchctl inject (system-env.ts ~line 279)
+  // and writeShellEnvFile's export line (system-env.ts ~line 51), which it calls internally.
+  test("injectSystemEnv never leaks a purpose-scoped API key as ANTHROPIC_AUTH_TOKEN", async () => {
+    const COPILOT_SECRET = "ocx_data_copilot_only_secret_must_stay_scoped";
+    const config: OcxConfig = {
+      ...baseConfig,
+      apiKeys: [{
+        id: "copilot-key",
+        name: "GitHub Copilot Desktop",
+        key: COPILOT_SECRET,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        purpose: "github-copilot-desktop",
+      }],
+    };
+
+    expect(await injectSystemEnv(4567, config)).toEqual({ injected: true });
+
+    // The launchctl-inject call site must treat a purpose-only apiKeys list exactly
+    // like an empty one: never setenv ANTHROPIC_AUTH_TOKEN to the Copilot secret.
+    expect(launchctlCommands()).not.toContain(`launchctl setenv ANTHROPIC_AUTH_TOKEN ${COPILOT_SECRET}`);
+
+    // The shell-hook file (sourced by new Terminal.app shells) must not carry it either.
+    const shellEnvWrite = writeSpy.mock.calls.find(call => String(call[0]).includes("claude-env.sh"));
+    expect(String(shellEnvWrite?.[1])).not.toContain(COPILOT_SECRET);
+  });
+
   // Subscription switch-back cleanup (devlog 260720_claude_authmode_persist, audit R1 #1):
   // re-injecting without proxy mode must unset ONLY the opencodex-owned dummy token.
   function trackingWithToken(port = 4567, keys: string[] = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "ANTHROPIC_AUTH_TOKEN"]): string {

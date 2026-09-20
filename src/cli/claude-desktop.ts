@@ -13,6 +13,7 @@ import { writeDesktop3pConfig, type Desktop3pConfigMode, parseDesktop3pModeArgs 
 import { filterCatalogVisibleModels, visibleNativeSlugs } from "../codex/catalog";
 import { buildClaudeDesktopState, fetchAllModels } from "../server/management-api";
 import { findLiveProxy } from "../server/proxy-liveness";
+import { selectGenericApiKey } from "../lib/data-plane-api-key";
 
 function isFamily(value: string | undefined): value is DesktopFamily {
   return !!value && (DESKTOP_FAMILIES as readonly string[]).includes(value);
@@ -44,7 +45,7 @@ async function applyProfile(profile: DesktopProfile, mode: Desktop3pConfigMode):
     live?.port ?? config.port ?? 10100,
     [...visibleNativeSlugs(config)],
     routed,
-    config.apiKeys?.[0]?.key,
+    selectGenericApiKey(config)?.key,
     mode,
     state.profile,
   );
