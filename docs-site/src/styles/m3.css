@@ -940,3 +940,26 @@ main:has(.m3-lp) .content-panel { border: 0; padding-block: 0; }
  * - **"Skip to content"** — visually hidden until keyboard focus. Reached with
  *   Tab, activated with Enter, never tapped.
  */
+
+/* The wordmark is clipped, not shortened, below the sidebar breakpoint.
+   Measured at a 320px viewport: Starlight gives `.site-title` its own
+   `overflow: hidden` with `text-overflow: clip`, and this bar leaves it a 60px
+   box for a 106px word, so "opencodex" is cut mid-word with nothing to say it
+   was cut. A reader sees a brand name that looks misspelled rather than
+   truncated.
+
+   An ellipsis is the minimum honest treatment: the shortening becomes
+   deliberate and disclosed, and the full name stays in the accessible name and
+   the title attribute. It does not create room that the bar does not have.
+   Removing the truncation outright is a layout decision for this app bar, not a
+   style patch: the candidates are dropping the wordmark below ~360px and
+   letting the logo carry the link, or reclaiming space from the trailing
+   controls. Neither is made here. */
+@media (max-width: 49.99em) {
+  .ocx-appbar a.site-title {
+    text-overflow: ellipsis;
+  }
+  .ocx-appbar a.site-title > span {
+    text-overflow: ellipsis;
+  }
+}
