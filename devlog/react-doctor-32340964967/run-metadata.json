@@ -1,0 +1,10 @@
+{
+  "workflow": "React Doctor",
+  "runId": "32340964967",
+  "runAttempt": "1",
+  "sha": "e9f2c66fe62abb3c7818933b66803fa6c2376a26",
+  "jobStatus": "failure",
+  "runnerOs": "Windows",
+  "runnerArch": "X64",
+  "baseRef": "dev"
+}
