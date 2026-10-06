@@ -71,7 +71,7 @@ function resetOneElementStyle(prefs: Prefs, id: string): Prefs {
 export function resetAppearanceFrom(prefs: Prefs): Prefs {
   // Voices come through with the rest of the narration settings: see the note on
   // the matching reset in `theme/prefs.tsx`. `showEmojis` rides along for the
-  // same reason — it is a Language & voice setting, not an Appearance one, so a
+  // same reason, it is a Language & voice setting, not an Appearance one, so a
   // reset triggered from the Appearance screen must not reach over and silently
   // flip it.
   return {
@@ -113,7 +113,7 @@ function countPrefsChanges(applied: Prefs, draft: Prefs): number {
  *
  * `translate` rather than `t()`: this provider is mounted outside
  * `LanguageProvider`, which reads its context, so the hook cannot be called from
- * here — but the locale and funny levels that hook would resolve against are
+ * here, but the locale and funny levels that hook would resolve against are
  * this provider's own state, so resolving directly reaches the same strings by
  * the same path. Without it the log said `codexAutoStart:true`, which names a
  * wire field and a JSON literal rather than a setting and a value.
@@ -123,9 +123,9 @@ function changeSummary(change: AcceptedSettingsChange, locale: Locale, funny: Fu
   const after = change.after;
   const value = typeof after === "boolean"
     ? tr(after ? "startup.enabled" : "startup.disabled")
-    // An empty string is a real, chosen value here — "no cap" — so it renders as
+    // An empty string is a real, chosen value here, "no cap", so it renders as
     // the same em dash the Settings rows use for unset rather than as a blank.
-    : typeof after === "string" ? (after || "—") : JSON.stringify(after);
+    : typeof after === "string" ? (after || ",") : JSON.stringify(after);
   return tr("settings.revisionSummary", { label: tr(SETTINGS_FIELD_LABELS[change.field]), value });
 }
 
@@ -155,10 +155,10 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
   // See `scheduling/runtime.ts` for the engine and `scheduling/types.ts` for
   // exactly which fields a rule may set. `schedule.override` is applied only
   // where rendering actually happens (the token effect below, and locale/funny
-  // in `i18n/provider.tsx`) — never into `prefs` itself, so a scheduled rule
+  // in `i18n/provider.tsx`), never into `prefs` itself, so a scheduled rule
   // can never be captured by Save and never disturbs a draft the user is
   // mid-edit on. When the rule stops matching, `override` simply goes back to
-  // `null` and this effect re-runs against the untouched `prefs` — recovery is
+  // `null` and this effect re-runs against the untouched `prefs`, recovery is
   // automatic because nothing was ever overwritten.
   const schedule = useScheduleRuntime(apiBase);
   const effectivePrefs = useMemo(() => {
@@ -212,7 +212,7 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
   // Block body, not a concise one: `applyLayout` returns the resolved
   // `WindowClass`, and a concise arrow would hand that string back as the
   // effect's cleanup function. React only ever calls what an effect returns,
-  // so the string is not merely unused — it is a teardown that cannot run.
+  // so the string is not merely unused, it is a teardown that cannot run.
   useEffect(() => {
     applyLayout(document.documentElement, width);
   }, [width]);
@@ -304,13 +304,13 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
    * Persist the whole draft, and hand back what became of both halves of it.
    *
    * The return value exists because this provider sits above `LanguageProvider`
-   * and `NotificationsProvider` — both read its context — so it can reach
+   * and `NotificationsProvider`, both read its context, so it can reach
    * neither `t()` nor `notify()`. `useSettingsSave` runs inside both and turns
    * this into the notice; a caller that invokes `apply` bare still saves
    * correctly, but says nothing, which is the state a refused write must never
    * be left in.
    *
-   * `null` means nothing was attempted — a clean draft, or a save already in
+   * `null` means nothing was attempted, a clean draft, or a save already in
    * flight. It deliberately no longer means "nothing server-backed was written":
    * that conflated an empty result with an absent one, and browser-owned groups
    * are exactly the ones that produce no server work, so their failures were the
@@ -343,7 +343,11 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
         try {
           localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
           setAppliedPrefs(prefs);
-          recordRevision({ scope: "settings", label: "Appearance", summary: summary("appearance.revisionSummary"), before: JSON.stringify(appliedPrefs) });
+          // `nav.appearance` rather than a fresh key: it is already the nav
+          // entry this whole group lives under (see `BROWSER_GROUP_LABELS` in
+          // `pages/settings-shared.ts`, which names the same row the same
+          // way), so a relabelled tab moves this heading with it for free.
+          recordRevision({ scope: "settings", label: summary("nav.appearance"), summary: summary("appearance.revisionSummary"), before: JSON.stringify(appliedPrefs) });
         } catch (error) {
           // Keep the old baseline so the bar remains dirty and retryable.
           unpersisted("appearance", PREFS_KEY, error);
@@ -355,7 +359,11 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
           setAppliedLocale(locale);
           recordRevision({
             scope: "settings",
-            label: "Language",
+            // `lang.label` is the same short row name every other Language &
+            // voice surface already renders this catalog key as ("語言" in
+            // Cantonese). See the doc comment above `changeSummary` for why
+            // this has to be `translate()`/`summary()` rather than `t()`.
+            label: summary("lang.label"),
             // The locale's own endonym, not its code: `lang.revisionSummary`
             // has been sitting unused since the field-level writes moved here,
             // and a history line reading "set to bi" names neither a language
@@ -372,7 +380,7 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
         try {
           writeFunny(funny);
           setAppliedFunny(funny);
-          recordRevision({ scope: "settings", label: "Language", summary: summary("lang.funnyRevision"), before: JSON.stringify(appliedFunny) });
+          recordRevision({ scope: "settings", label: summary("lang.label"), summary: summary("lang.funnyRevision"), before: JSON.stringify(appliedFunny) });
         } catch (error) {
           unpersisted("funny", FUNNY_KEY, error);
         }
@@ -384,7 +392,10 @@ export function SettingsDraftProvider({ children, apiBase = import.meta.env.VITE
         for (const change of result.accepted) {
           recordRevision({
             scope: "settings",
-            label: "Settings",
+            // `nav.settings`, the same nav-rail name `pages/Settings.tsx`
+            // itself resolves through `elsewhereFor("nav.settings")`, for
+            // exactly the reason `nav.appearance` is reused above it.
+            label: summary("nav.settings"),
             summary: changeSummary(change, locale, funny),
             before: JSON.stringify(change.before),
           });

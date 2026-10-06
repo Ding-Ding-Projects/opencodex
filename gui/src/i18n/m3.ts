@@ -3,7 +3,7 @@
  *
  * Kept out of `en.ts` on purpose. The five translated dictionaries are typed
  * `Record<TKey, string>` so that a missing translation is a *compile* error for
- * the 1 500 product keys — a guarantee worth keeping. Adding this block there
+ * the 1 500 product keys, a guarantee worth keeping. Adding this block there
  * would have forced 130 placeholder strings into every locale to restore the
  * build, which converts that guarantee into noise.
  *
@@ -52,8 +52,8 @@ export const M3_EN = {
   "quickRestore.claude": "Restore Claude",
   // The visible label opens each accessible name verbatim, so speech input can
   // activate the control by the words a user can actually see on it.
-  "quickRestore.codexAria": "Restore Codex — hand back its native configuration, then stop the proxy",
-  "quickRestore.claudeAria": "Restore Claude — hand back its native configuration, then stop the proxy",
+  "quickRestore.codexAria": "Restore Codex, hand back its native configuration, then stop the proxy",
+  "quickRestore.claudeAria": "Restore Claude, hand back its native configuration, then stop the proxy",
   "quickRestore.toolCodex": "Codex",
   "quickRestore.toolClaude": "Claude",
   "quickRestore.confirmTitle": "Restore {tool} and stop the proxy",
@@ -69,7 +69,7 @@ export const M3_EN = {
   "quickRestore.doneBoth": "{tool} restored and the proxy stopped",
   "quickRestore.doneRestoreOnly": "{tool} restored",
   "quickRestore.stopFailedTitle": "The proxy did not stop",
-  "quickRestore.stopFailedBody": "{tool} is using its own configuration again, but OpenCodex is still running — starting or syncing it will route {tool} through the proxy again. Run `ocx stop` in a terminal, or use Stop on the dashboard.",
+  "quickRestore.stopFailedBody": "{tool} is using its own configuration again, but OpenCodex is still running, starting or syncing it will route {tool} through the proxy again. Run `ocx stop` in a terminal, or use Stop on the dashboard.",
   "quickRestore.restoreFailedTitle": "{tool} restore failed",
   "quickRestore.restoreFailedBody": "The proxy was left running so you can try again. `ocx restore` does the same job from a terminal.",
   "quickRestore.noAnswer": "Could not tell whether {tool} was restored",
@@ -86,16 +86,16 @@ export const M3_EN = {
   "network.pairRegenerate": "New code",
   "network.pairClose": "Done",
   "network.pairFailed": "Could not generate a pairing code",
-  "network.pairNeedsRestart": "Restart the proxy first (ocx stop && ocx start). Until then it is still listening on this machine only, so a phone would scan the code and fail to connect — and the code lasts five minutes.",
-  // Honest coverage. The level styles the copy where voice actually reads —
-  // headings, empty states, confirmations, errors — and every other string keeps
+  "network.pairNeedsRestart": "Restart the proxy first (ocx stop && ocx start). Until then it is still listening on this machine only, so a phone would scan the code and fail to connect, and the code lasts five minutes.",
+  // Honest coverage. The level styles the copy where voice actually reads ,
+  // headings, empty states, confirmations, errors, and every other string keeps
   // its neutral wording rather than being padded with five near-identical
   // variants of the word "Save".
   //
   // The category list is the disclosure the setting owes the user: nothing is
   // exempt, errors and destructive warnings included, so it says so here rather
   // than letting a level-5 warning be a surprise.
-  "lang.funnyCoverage": "The level restyles {en} English and {yue} Cantonese messages today — every category, including error, warning, destructive, security, financial and accessibility copy. Everything else keeps its neutral wording. The facts never change at any level: the same file, the same account, the same consequence, at 1 and at 5.",
+  "lang.funnyCoverage": "The level restyles {en} English and {yue} Cantonese messages today, every category, including error, warning, destructive, security, financial and accessibility copy. Everything else keeps its neutral wording. The facts never change at any level: the same file, the same account, the same consequence, at 1 and at 5.",
 
   "mobile.title": "opencodex remote",
   "mobile.chat": "Chat",
@@ -129,12 +129,12 @@ export const M3_EN = {
   "mobile.paired": "Paired",
   "mobile.pairedBody": "This device has its own key now, saved here so you will not scan again.",
   "mobile.pairFailed": "Pairing failed",
-  "mobile.pairFailed.expired": "That code had already expired. Codes last five minutes — generate a new one on the desktop and scan again.",
+  "mobile.pairFailed.expired": "That code had already expired. Codes last five minutes, generate a new one on the desktop and scan again.",
   "mobile.pairFailed.no-pairing": "The desktop is not offering a pairing code right now. Open Remote access there, choose Pair a phone, then scan.",
-  "mobile.pairFailed.mismatch": "That code was not accepted. It may already have been used — each one pairs a single device. Generate a new one and scan again.",
+  "mobile.pairFailed.mismatch": "That code was not accepted. It may already have been used, each one pairs a single device. Generate a new one and scan again.",
   "mobile.pairFailed.rate-limited": "Too many pairing attempts on this proxy. Wait a minute, then scan a fresh code.",
   "mobile.pairFailed.no-connection": "Could not reach the proxy to finish pairing. Check this device is on the same network, then try again.",
-  "mobile.pairFailed.sandbox": "The desktop is running in debug mode (OPENCODEX_DEBUG_SANDBOX), which never issues a key and never saves settings. Scanning again will not help — restart the desktop without that setting to pair for real.",
+  "mobile.pairFailed.sandbox": "The desktop is running in debug mode (OPENCODEX_DEBUG_SANDBOX), which never issues a key and never saves settings. Scanning again will not help, restart the desktop without that setting to pair for real.",
   "mobile.debugSandbox": "The desktop is in debug mode, so it will not issue a key and this device cannot pair. Restart the desktop without OPENCODEX_DEBUG_SANDBOX to pair for real.",
   "export.title": "Export {label}",
   "export.rows": "{count} record(s) available.",
@@ -142,14 +142,14 @@ export const M3_EN = {
   "export.formatsHint": "Pick one, or several to get an archive containing each.",
   "export.willLose": "What these formats cannot carry:",
   "export.archive": "Archive",
-  "export.archiveNone": "No archive — download the file itself",
+  "export.archiveNone": "No archive, download the file itself",
   "export.zip": "ZIP",
   "export.httpError": "The export failed with HTTP {status}.",
-  "export.sevenZipUnavailable": "7z — not available on this machine",
+  "export.sevenZipUnavailable": "7z, not available on this machine",
   "export.method": "Compression method",
   "export.level": "Compression level",
   "export.levelHint": "Higher compresses smaller and takes longer. Extraction needs comparable memory.",
-  "export.levelStore": "0 — store, no compression",
+  "export.levelStore": "0, store, no compression",
   "export.dictionary": "Dictionary size",
   "export.dictionaryHint": "Larger finds longer matches. Whoever extracts this needs about as much memory as you do.",
   "export.solid": "Solid archive",
@@ -176,7 +176,7 @@ export const M3_EN = {
   "bulk.clear": "Clear selection",
   "bulk.cancel": "Cancel",
   "bulk.deleteKeys": "Revoke selected",
-  "bulk.confirmDeleteKeys": "Revoke {count} key(s)? Anything using them stops working immediately. This cannot be undone from here — the keys are gone, not disabled.",
+  "bulk.confirmDeleteKeys": "Revoke {count} key(s)? Anything using them stops working immediately. This cannot be undone from here, the keys are gone, not disabled.",
   "bulk.doneSome": "{action}: {succeeded} succeeded, {failed} failed.",
   "bulk.doneAll": "{action}: {succeeded} succeeded.",
   "bulk.cancelled": "{action}: cancelled after {succeeded}. {remaining} not attempted.",
@@ -187,20 +187,20 @@ export const M3_EN = {
   "bulk.enableModels": "Enable selected",
   "bulk.disableModels": "Disable selected",
   "bulk.deleteModels": "Delete selected",
-  "bulk.confirmDeleteModels": "Delete {count} custom model(s) from {provider}? Only models you added yourself are deleted — discovered and built-in models are never touched. Anything routing to a deleted model falls back to its provider default.",
+  "bulk.confirmDeleteModels": "Delete {count} custom model(s) from {provider}? Only models you added yourself are deleted, discovered and built-in models are never touched. Anything routing to a deleted model falls back to its provider default.",
   "bulk.skip.notCustom": "not a custom model, so it cannot be deleted",
   "mobile.forget": "Forget this device",
   "mobile.forgetConfirm": "Delete the paired key from this browser? The proxy will refuse this device until you scan a new pairing code. The key itself stays listed on the desktop under API keys until you revoke it there.",
   "mobile.forgotten": "Key deleted from this device",
   "mobile.forgottenBody": "Pair again to keep using the remote. Revoke the old key from API keys on the desktop if nobody else should hold it.",
-  "mobile.keyRejectedBody": "The proxy refused this device's key. It was probably revoked or replaced on the desktop — scan a new pairing code from Remote access.",
+  "mobile.keyRejectedBody": "The proxy refused this device's key. It was probably revoked or replaced on the desktop, scan a new pairing code from Remote access.",
   "mobile.keyMissingBody": "The proxy needs a key and this device has none. Scan a pairing code from Remote access on the desktop.",
   "mobile.tokens": "{n} tokens",
   "mobile.httpStatus": "The proxy answered {status} with no detail.",
   "mobile.modelsFailed": "Could not reach the proxy to load models.",
   "mobile.retry": "Retry",
   // The settings search names the bottom bar as one of the things it can find,
-  // so the bar needs a name of its own — "opencodex remote" is what the whole
+  // so the bar needs a name of its own, "opencodex remote" is what the whole
   // screen is called, and searching for that to reach a three-way switch is not
   // a thing anyone would think to type.
   "mobile.panelNav": "Panel",
@@ -220,7 +220,7 @@ export const M3_EN = {
   "settings.groupAppearance": "Appearance",
   "settings.groupPrivacy": "Privacy & history",
   "settings.savedTitle": "Setting saved",
-  "settings.savedBody": "Recorded in the local history — restore it from Version history if this was a mistake.",
+  "settings.savedBody": "Recorded in the local history, restore it from Version history if this was a mistake.",
   "settings.saveFailed": "Could not save that setting",
   "settings.saveRefusedBody": "The server kept its own value for {names}. Your change is still staged, so you can adjust it and save again.",
   "settings.saveErrorBody": "{names} could not be written: {reason}. The change is still staged, so you can try again.",
@@ -230,7 +230,7 @@ export const M3_EN = {
   // halves are said, in that order, because a user looking at an interface that
   // visibly did change will not believe a notice that opens by denying it.
   "settings.saveUnpersistedTitle": "Applied, but not saved in this browser",
-  "settings.saveUnpersistedBody": "{names} changed straight away, but this browser refused to store it: {reason}. It will revert the next time this page loads. The change is still staged, so you can try saving again — or free up some browser storage, or leave private browsing, and then save.",
+  "settings.saveUnpersistedBody": "{names} changed straight away, but this browser refused to store it: {reason}. It will revert the next time this page loads. The change is still staged, so you can try saving again, or free up some browser storage, or leave private browsing, and then save.",
   "settings.revisionSummary": "{label} set to {value}",
   "settings.draftChanged": "{count} unapplied setting(s)",
   "settings.saveApply": "Save and apply",
@@ -252,10 +252,10 @@ export const M3_EN = {
   "onboard.stepOf": "Step {n} of {total}",
   "onboard.langTitle": "Pick a language",
   // First-run disclosure. The funny level is opt-in behaviour that reaches error
-  // and warning copy, so the user is told that here — before they meet a level-5
-  // delete confirmation — rather than only on the settings screen they may never
+  // and warning copy, so the user is told that here, before they meet a level-5
+  // delete confirmation, rather than only on the settings screen they may never
   // open. What it cannot change is said in the same breath.
-  "onboard.langSub": "English, Cantonese, or both side by side. Change it any time on Language & voice, along with a funny level per language — that styles every message, errors and destructive warnings included, and never the facts.",
+  "onboard.langSub": "English, Cantonese, or both side by side. Change it any time on Language & voice, along with a funny level per language, that styles every message, errors and destructive warnings included, and never the facts.",
   "onboard.providerTitle": "Connect a provider",
   "onboard.providerSub": "opencodex routes Codex and Claude Code to whatever you point it at. Sign in now, or do it later on Providers.",
   "onboard.providerSkip": "I'll do this later",
@@ -270,7 +270,7 @@ export const M3_EN = {
   "onboard.netThisMachine": "this machine",
   "onboard.netConnect": "Open",
   "onboard.netExpose": "Publish this one to my network",
-  "onboard.netExposeHint": "Off by default. Turning it on makes this proxy — and this dashboard — reachable by every other device on your network.",
+  "onboard.netExposeHint": "Off by default. Turning it on makes this proxy, and this dashboard, reachable by every other device on your network.",
   // Said before they type a password, not after the server refuses one:
   // publishing the proxy publishes the dashboard with it.
   "onboard.netExposeWarn": "This also publishes the dashboard, which can change providers, read logs and export your accounts. The password below is the only thing between the two. Only do this on a network you trust.",
@@ -278,7 +278,7 @@ export const M3_EN = {
   "onboard.netKeyPlaceholder": "A password other devices will use",
   "onboard.netKeyRule": "At least {n} characters. Do not reuse a password you use anywhere else.",
   "onboard.netExposeAction": "Publish and create a key",
-  "onboard.netAutoKeyHint": "One click. opencodex generates the key itself, so there is no password to invent here and none to type on your phone — pair it later by scanning a QR code from Remote access.",
+  "onboard.netAutoKeyHint": "One click. opencodex generates the key itself, so there is no password to invent here and none to type on your phone, pair it later by scanning a QR code from Remote access.",
   "onboard.netOwnKey": "Use a key I choose instead",
   "onboard.netOwnKeyAction": "Publish with my key",
   "onboard.netExposed": "Published to your network",
@@ -290,15 +290,15 @@ export const M3_EN = {
   "tabs.close": "Close {name}",
   "tabs.overflow": "All tabs",
   // The overflow menu lists only the tabs that did NOT fit, and its badge counts
-  // only those — so labelling it "All tabs" told the user five tabs were missing
+  // only those, so labelling it "All tabs" told the user five tabs were missing
   // from a list that was never claiming to hold them. Named for what it contains.
   "tabs.hidden": "Hidden tabs ({count})",
   "tabs.newTab": "New tab",
 
   // ---- menu keyboard shortcuts ----
   // The tooltip on the shortcut column every menu row carries when its command
-  // has a binding. `{keys}` is the platform's own notation — "Del", "Ctrl+Shift+F",
-  // "⌘⇧F" — and is never translated, because those are the legends printed on the
+  // has a binding. `{keys}` is the platform's own notation, "Del", "Ctrl+Shift+F",
+  // "⌘⇧F", and is never translated, because those are the legends printed on the
   // keys themselves and a reader hunting for a translated one will not find it.
   // The column is `aria-hidden`; the keys reach a screen reader through
   // `aria-keyshortcuts` instead, so nothing here is announced twice.
@@ -357,7 +357,7 @@ export const M3_EN = {
   "tabs.searchInGroup": "Tabs in {name}",
   "tabs.searchGroups": "Groups by name",
   "tabs.searchGroupsPlaceholder": "Text in the group name",
-  "tabs.noGroups": "No groups yet. Right-click a tab — or press and hold it — to start one.",
+  "tabs.noGroups": "No groups yet. Right-click a tab, or press and hold it, to start one.",
   "tabs.searchEverywhere": "Every open tab",
   "tabs.windowN": "Window {n}",
 
@@ -381,7 +381,7 @@ export const M3_EN = {
   "tabs.styleInherits": "inherits the theme",
   // The swatch only speaks hex. A token or a named colour is kept exactly as
   // typed in the field beside it; the swatch is showing a stand-in, not the value.
-  "tabs.styleSwatchFallback": "The swatch cannot show this value — the field beside it holds what is applied.",
+  "tabs.styleSwatchFallback": "The swatch cannot show this value, the field beside it holds what is applied.",
 
   // ---- tab groups ----
   // A group is named and counted in its accessible name, never identified by
@@ -392,7 +392,7 @@ export const M3_EN = {
   "tabs.group": "Group",
   "tabs.newGroup": "New group…",
   "tabs.removeFromGroup": "Remove from group",
-  // One menu entry, an ellipsis, and a picker behind it — never one entry per
+  // One menu entry, an ellipsis, and a picker behind it, never one entry per
   // group. `tabs.addTo` ("Add to {name}") used to live here for exactly that
   // forbidden shape and had no reader anywhere; it went with the picker landing.
   "tabs.moveToGroup": "Move… into group…",
@@ -402,7 +402,7 @@ export const M3_EN = {
   "tabs.movePickerBuilder": "Build a pattern to filter groups",
   "tabs.movePickerListAria": "Groups this tab can move into",
   "tabs.movePickerOptionAria": "Move into {name}, {count} tabs",
-  "tabs.movePickerCurrentAria": "{name}, {count} tabs — the group this tab is already in",
+  "tabs.movePickerCurrentAria": "{name}, {count} tabs, the group this tab is already in",
   "tabs.movePickerNoGroups": "No groups yet. Name one below and this tab starts it.",
   "tabs.movePickerCollapsed": "Collapsed",
   "tabs.movePickerCurrent": "Current",
@@ -476,7 +476,7 @@ export const M3_EN = {
   "debug.streamsAria": "Debug log streams",
   // The Capture switches are M3 switches: their state is a thumb position and an
   // `aria-checked`, with no word anywhere on the card. The settings search indexes
-  // what a control reads, so the two words it would have read have to exist —
+  // what a control reads, so the two words it would have read have to exist ,
   // otherwise a user who remembers switching usage extraction on can search for
   // "on" and be told this screen has no such setting.
   "debug.stateOn": "On",
@@ -496,7 +496,7 @@ export const M3_EN = {
   "appearance.resetRecorded": "Appearance reset to defaults",
   "appearance.revisionSummary": "Applied appearance settings",
   "appearance.seedTitle": "Seed colour",
-  "appearance.seedSub": "One colour derives the whole Material 3 palette. Any hex works — the eight below are curated starting points.",
+  "appearance.seedSub": "One colour derives the whole Material 3 palette. Any hex works, the eight below are curated starting points.",
   "appearance.seedPicker": "Pick a seed colour",
   "appearance.seedHex": "Seed colour hex value",
   "appearance.seedInvalid": "Enter a hex colour such as #2F6B4F",
@@ -508,7 +508,7 @@ export const M3_EN = {
   // existed and no @font-face was declared, so four of the five choices quietly
   // rendered as whatever the system had. The faces are bundled now; the sentence
   // says what is actually bundled, because the CJK coverage deliberately is not.
-  "appearance.typeSub": "Latin faces are bundled — the dashboard never fetches a font over the network. Chinese text uses your system's font.",
+  "appearance.typeSub": "Latin faces are bundled, the dashboard never fetches a font over the network. Chinese text uses your system's font.",
   "appearance.fontFamily": "Font family",
   "appearance.fontScale": "Text size",
   "appearance.fontWeight": "Text weight",
@@ -524,7 +524,7 @@ export const M3_EN = {
   // private nickname is a report nobody can act on. Saying both is what makes
   // the answer to "is this safe" readable without reading the source.
   "appearance.appNameTitle": "App name",
-  "appearance.appNameSub": "Change the name this app shows you. It is a label — nothing about where your settings live, how the app updates, or what it is called on disk moves with it.",
+  "appearance.appNameSub": "Change the name this app shows you. It is a label, nothing about where your settings live, how the app updates, or what it is called on disk moves with it.",
   "appearance.appNameLabel": "Display name",
   "appearance.appNameHint": "Up to {max} characters. Type {shipped} to go back to the shipped name.",
   "appearance.appNameSave": "Save name",
@@ -547,7 +547,7 @@ export const M3_EN = {
   // ---- app logo ----
   "appearance.logoTitle": "App logo",
   "appearance.logoSub": "Choose a shipped mark, one of a few built-in badges, or upload your own image.",
-  "appearance.logoPrivacyHint": "Your file never leaves this computer. It is decoded locally, resized to the sizes the app actually uses, and only the result is kept — the original is not stored.",
+  "appearance.logoPrivacyHint": "Your file never leaves this computer. It is decoded locally, resized to the sizes the app actually uses, and only the result is kept, the original is not stored.",
   "appearance.logoSearch": "Search logo presets",
   "appearance.logoNoMatch": "No preset matches that search.",
   "appearance.logoPresetsGroup": "Logo presets",
@@ -555,22 +555,31 @@ export const M3_EN = {
   "appearance.logoPresetCircle": "Circle badge",
   "appearance.logoPresetSquare": "Square badge",
   "appearance.logoPresetOutline": "Outline badge",
+  // Named for the `AppLogoState.sourceId === "custom"` case specifically ,
+  // see `theme/app-logo.ts`'s `summarizeSource`, which is the one place this
+  // renders: the Version history label for a just-uploaded logo.
+  "appearance.logoSourceCustom": "Custom upload",
   "appearance.logoCurrentBadge": "Active",
   "appearance.logoUploadLabel": "Upload a custom logo…",
   "appearance.logoReplaceLabel": "Replace custom logo…",
   "appearance.logoResetLabel": "Reset to shipped mark",
   "appearance.logoStateNone": "Using {name}. No custom logo uploaded.",
-  "appearance.logoStateActive": "Custom logo active — {width}×{height} {format}, {fit} fit.",
+  "appearance.logoStateActive": "Custom logo active, {width}×{height} {format}, {fit} fit.",
   "appearance.logoStateLoading": "Reading and checking the image…",
   "appearance.logoStateInvalid": "Could not use that file: {reason}",
   "appearance.logoStateConversionFailed": "Could not finish converting that image: {reason} Your current logo is unchanged.",
   "appearance.logoLoadedNotice": "Logo updated",
-  "appearance.logoLoadedNoticeBody": "Custom logo applied — {width}×{height}.",
+  "appearance.logoLoadedNoticeBody": "Custom logo applied, {width}×{height}.",
   "appearance.logoInvalidNotice": "Could not use that file",
   "appearance.logoConversionFailedNotice": "Conversion failed",
   "appearance.logoConversionFailedNoticeBody": "{reason} Your current logo was kept.",
   "appearance.logoPresetNotice": "Logo set to {name}",
   "appearance.logoResetNotice": "Logo reset to the shipped mark",
+  // The Version history summary for the same event `logoPresetNotice` toasts
+  // about, in `theme/app-logo.ts`'s `commit()`. A separate key rather than
+  // reusing that one: the revision's own `label` already says "App logo", so
+  // the summary line does not repeat it the way the toast title has to.
+  "appearance.logoRevisionSummary": "Set to {name}",
   "appearance.logoReasonEmptyFile": "The file is empty.",
   "appearance.logoReasonTooLarge": "The file is larger than {limit} MB.",
   "appearance.logoReasonUnsupportedFormat": "Only PNG and JPEG images are supported.",
@@ -665,10 +674,10 @@ export const M3_EN = {
   "narrator.unavailable": "This browser does not expose speech synthesis, so the narrator cannot run here.",
   "narrator.voice": "Narrator voice",
   "narrator.voiceSub": "Each narrated language picks its own voice, speed and pitch from what this computer has installed.",
-  "narrator.voiceFor": "Voice — {lang}",
+  "narrator.voiceFor": "Voice, {lang}",
   "narrator.voiceAuto": "Choose automatically",
-  "narrator.rate": "Speed — {lang}",
-  "narrator.pitch": "Pitch — {lang}",
+  "narrator.rate": "Speed, {lang}",
+  "narrator.pitch": "Pitch, {lang}",
   "narrator.rateShort": "Narrator speed",
   "narrator.pitchShort": "Narrator pitch",
   "narrator.voiceLoading": "Reading the voices installed on this computer…",
@@ -677,7 +686,7 @@ export const M3_EN = {
   "narrator.voiceChosen": "{name} will speak {lang}.",
   "narrator.voiceMissing": "{name} is not installed on this computer, so the platform is choosing for {lang} instead. Your choice is kept and returns when the voice does.",
   "narrator.voiceNetwork": "{name} is provided over the network and goes quiet when this computer is offline.",
-  "narrator.bothOrder": "Both languages are spoken one after the other, English first — never at the same time, and never mixed into one voice.",
+  "narrator.bothOrder": "Both languages are spoken one after the other, English first, never at the same time, and never mixed into one voice.",
   "narrator.edgeTitle": "Microsoft Edge online voices",
   "narrator.edgeEnable": "Use Microsoft Edge online voices",
   "narrator.edgeDisclosure": "Turning this on sends the text the narrator speaks to Microsoft, over the internet, every time it speaks. Nothing is sent while it is off. Your installed voices stay on this computer and need no network at all.",
@@ -696,30 +705,30 @@ export const M3_EN = {
 
   // ---- remote access & backup ----
   "network.hostTitle": "Network access",
-  "network.hostSub": "Reach this proxy and dashboard from other devices — the same controls as `ocx host`.",
+  "network.hostSub": "Reach this proxy and dashboard from other devices, the same controls as `ocx host`.",
   "network.exposed": "Reachable from other devices",
   "network.exposeWhatItDoes": "Turning this on publishes the proxy and this dashboard to every device on your network. A key is generated for you as part of enabling it.",
-  "network.restartPending": "Saved, but not in effect yet. The proxy is still listening where it was — restart it (ocx stop && ocx start) before another device can connect.",
-  "network.debugSandbox": "Debug mode (OPENCODEX_DEBUG_SANDBOX). Settings on this screen are not saved and no key will be issued — the controls work, but every change here is forgotten when the proxy stops. Logs, usage and other files are still written as usual. Restart without that setting to make changes stick.",
+  "network.restartPending": "Saved, but not in effect yet. The proxy is still listening where it was, restart it (ocx stop && ocx start) before another device can connect.",
+  "network.debugSandbox": "Debug mode (OPENCODEX_DEBUG_SANDBOX). Settings on this screen are not saved and no key will be issued, the controls work, but every change here is forgotten when the proxy stops. Logs, usage and other files are still written as usual. Restart without that setting to make changes stick.",
   "network.enableConfirm": "Expose the proxy to your network? Anyone on it who has a key can drive the proxy and every provider account behind it. Only do this on a network you trust. A restart applies the change.",
   "network.enabled": "Network access enabled",
   "network.disabled": "Network access disabled",
   "network.restartHint": "Restart the proxy to apply (ocx stop && ocx start).",
   "network.changeFailed": "Could not change network access",
   "network.urls": "Open from another device",
-  "network.keyShownOnce": "Data-plane key — shown once, store it now",
+  "network.keyShownOnce": "Data-plane key, shown once, store it now",
   "network.copy": "Copy",
   "network.copied": "Copied",
   "network.reveal": "Reveal",
   "network.hide": "Hide",
   "network.customKeyTitle": "Custom key",
-  "network.customKeyHint": "Choose your own key value (12+ characters, no spaces). It is stored in PLAINTEXT in config.json and included in exports — never reuse a password you use anywhere else.",
+  "network.customKeyHint": "Choose your own key value (12+ characters, no spaces). It is stored in PLAINTEXT in config.json and included in exports, never reuse a password you use anywhere else.",
   "network.customKeyPlaceholder": "your-memorable-key-value",
   "network.customKeyAdd": "Add custom key",
   "network.customKeyAdded": "Custom key stored",
   "network.customKeyFailed": "Could not store the custom key",
   "network.exportTitle": "Export everything",
-  "network.exportSub": "One file: config, Codex accounts with OAuth credentials, and the auth record — the same bundle as `ocx export`.",
+  "network.exportSub": "One file: config, Codex accounts with OAuth credentials, and the auth record, the same bundle as `ocx export`.",
   "network.exportWarning": "⚠️ The export contains PLAINTEXT SECRETS: provider API keys and OAuth access/refresh tokens. Anyone holding the file can use every account in it. Store it encrypted; delete it when done.",
   "network.exportConfirm": "Download the full state export? It contains every API key and OAuth token in plaintext.",
   "network.exportButton": "Download export",
@@ -738,14 +747,14 @@ export const M3_EN = {
   // snapshot restore that genuinely undoes a change.
   "history.localAction": "Note in history",
   "history.localNotedTitle": "Noted in the history",
-  "history.localNotedBody": "The local log records what changed — it cannot put the old value back. To undo it, restore a snapshot from below taken before the change.",
+  "history.localNotedBody": "The local log records what changed, it cannot put the old value back. To undo it, restore a snapshot from below taken before the change.",
   "history.localCannotRestore": "This entry is a record of a change, not a copy of the state before it. Snapshot entries can be restored.",
   "network.historySearch": "Search snapshots",
   "network.historyNoMatch": "No snapshot matches",
   "network.historyNoMatchBody": "Nothing in the history matches that search. Clear it to see every snapshot again.",
 
-  // The screen carries two independent search bars — one over the snapshot list, one
-  // over the screen's own settings — so each builder trigger says which field it
+  // The screen carries two independent search bars, one over the snapshot list, one
+  // over the screen's own settings, so each builder trigger says which field it
   // builds for. Two buttons both announced "Open regex builder" is a screen reader
   // reading the same name twice and meaning different fields.
   "network.settingsBuilder": "Build a pattern to search these settings",
@@ -758,15 +767,15 @@ export const M3_EN = {
   // nothing else, so none of the words someone searches for are on screen.
   "network.endpointWords": "hostname port endpoint address",
 
-  // One-click restore. The copy names what will happen in unambiguous words — which
-  // files move, that in-flight work finishes first, and that the proxy restarts —
+  // One-click restore. The copy names what will happen in unambiguous words, which
+  // files move, that in-flight work finishes first, and that the proxy restarts ,
   // because this is the one control that rewrites credentials on disk.
   "network.restore": "Restore",
   "network.restoreAria": "Restore the state from {label}",
   "network.restoreConfirm": "Restore config, accounts and credentials to this snapshot?\n\n{label}\n\nOpenCodex finishes any request still in flight, writes the files back, then restarts. Your current state is committed to the history first, so this restore can itself be undone.",
   "network.restoreBusySessions": "{count} request(s) still running",
   "network.restoreForceConfirm": "{count} request(s) are still running and did not finish in time. Restore anyway? Those requests will be cut off.",
-  "network.restored": "State restored — the proxy is restarting",
+  "network.restored": "State restored, the proxy is restarting",
   "network.restoredKept": "Kept (absent from that snapshot): {files}",
   "network.restoreFailed": "Restore failed",
 
@@ -778,7 +787,7 @@ export const M3_EN = {
   "pool.title": "{provider} account pool (experimental)",
   "pool.enabledDesc": "On 429, cools the account and fails over. New sessions rotate across the accounts that are not cooling.",
   "pool.disabledDesc": "Uses only the active {provider} account.",
-  "pool.experimentalWarning": "Experimental. A provider may treat automated multi-account rotation as abuse and restrict the accounts involved, and accounts inside one organization often share a quota — pooling those will not buy you anything. Leave this off unless you understand the risk for this provider.",
+  "pool.experimentalWarning": "Experimental. A provider may treat automated multi-account rotation as abuse and restrict the accounts involved, and accounts inside one organization often share a quota, pooling those will not buy you anything. Leave this off unless you understand the risk for this provider.",
   "pool.needTwoAccounts": "Add at least two {provider} accounts before enabling the pool.",
   "pool.loadFailed": "{provider} pool settings could not be loaded.",
   "pool.saveFailed": "{provider} pool settings could not be saved.",
@@ -804,7 +813,7 @@ export const M3_EN = {
   "launch.installOpenPage": "Open download page",
   // Shown instead of an install button when no official package exists for a
   // target. Saying why keeps it from reading as a broken button.
-  "launch.installManual": "No official package — opens the download page",
+  "launch.installManual": "No official package, opens the download page",
   "launch.installRestart": "Installed. Restart opencodex so it appears on PATH.",
   "launch.installLog": "Installer output",
   // The action on the one launch failure that has a fix. Opening a CLI needs a
@@ -842,7 +851,7 @@ export const M3_EN = {
   "window.close": "Close to tray",
   "window.exit": "Exit app",
   // Says what it does, at every funny level: finish, stop, close. No ambiguity about
-  // whether the proxy keeps running afterwards — that is the whole point of the button.
+  // whether the proxy keeps running afterwards, that is the whole point of the button.
   "window.exitConfirm": "Exit OpenCodex? Any request still in flight is finished first, then the proxy stops and the app closes. Codex and Grok are handed back to their own configs.",
   "window.exitBusyConfirm": "{count} request(s) are still running and did not finish in time. Exit anyway? Those requests will be cut off.",
   "window.exiting": "Finishing in-flight work, then closing…",
@@ -853,8 +862,8 @@ export const M3_EN = {
   // `window.confirm()`. The bodies are not here: each one already existed beside
   // the feature it guards, and duplicating them under a `confirm.*` name would be
   // two strings to keep in step. What the native dialog could not express was a
-  // title and a labelled button — "OK" on a dialog about dumping every credential
-  // in plaintext told the reader nothing — so only those are new.
+  // title and a labelled button, "OK" on a dialog about dumping every credential
+  // in plaintext told the reader nothing, so only those are new.
   "confirm.stopTitle": "Stop the proxy",
   "confirm.exitTitle": "Exit OpenCodex",
   "confirm.exitAction": "Exit",
@@ -866,7 +875,7 @@ export const M3_EN = {
   "confirm.exposeTitle": "Expose the proxy to your network",
   "confirm.exposeAction": "Expose",
   // The second wave: four more decisions the browser was still drawing, found by
-  // a wider grep than the first pass used. Same rule — the body already exists
+  // a wider grep than the first pass used. Same rule, the body already exists
   // beside the feature, only the headline and the labelled button are new.
   "confirm.removeAccountTitle": "Remove this account",
   "confirm.removeKeyTitle": "Remove this API key",
@@ -878,8 +887,8 @@ export const M3_EN = {
 
   // ---- prompts ----
   // Headline, field label and button for the awaitable text prompt. The native
-  // `prompt()` these replace had no field label at all — a screen reader
-  // announced the box as "edit, blank" — and threw outright inside Electron, so
+  // `prompt()` these replace had no field label at all, a screen reader
+  // announced the box as "edit, blank", and threw outright inside Electron, so
   // renaming a credential in the desktop app raised an exception rather than
   // asking anything.
   "prompt.aliasTitle": "Set a display name",
@@ -902,7 +911,7 @@ export const M3_EN = {
   "cost.range7d": "7 days",
   "cost.menuTitle": "Estimated cost range",
   "cost.aria": "Estimated API cost {amount} over {range}. Change range.",
-  "cost.title": "Estimated API cost ({range}) — click to change the range",
+  "cost.title": "Estimated API cost ({range}), click to change the range",
   "cost.filterLabel": "Filter ranges",
   "cost.filterBuilder": "Build a pattern to filter ranges",
 
@@ -921,7 +930,7 @@ export const M3_EN = {
   "viewport.trigger": "Preview size: {size}. Change the emulated width.",
   "viewport.note": "Emulates the shell's own breakpoints. Media queries and full-window overlays still follow the real window, so some details stay at this window's size.",
   "viewport.banner": "Previewing {size}",
-  "viewport.clamped": "Too narrow for {size} — the frame is drawn at {actual} px.",
+  "viewport.clamped": "Too narrow for {size}, the frame is drawn at {actual} px.",
   "viewport.exit": "Exit preview",
 
   // ---- cost basis (which accounting lane a figure came from) ----
@@ -932,9 +941,9 @@ export const M3_EN = {
   "cost.lane.directMeaning": "Billed to your API key at published list rates.",
   "cost.lane.equivalent": "API equivalent",
   "cost.lane.equivalentTag": "not billed",
-  "cost.lane.equivalentMeaning": "What this traffic would have cost on the API. Your subscription or OAuth plan covers it — nothing is charged and this is not a bill.",
-  "cost.lane.equivalentAria": "API-equivalent cost {amount} over {range}. Not billed — your subscription covers this traffic. Change range.",
-  "cost.lane.equivalentTitle": "API-equivalent cost ({range}) — not billed, your subscription covers this. Click to change the range.",
+  "cost.lane.equivalentMeaning": "What this traffic would have cost on the API. Your subscription or OAuth plan covers it, nothing is charged and this is not a bill.",
+  "cost.lane.equivalentAria": "API-equivalent cost {amount} over {range}. Not billed, your subscription covers this traffic. Change range.",
+  "cost.lane.equivalentTitle": "API-equivalent cost ({range}), not billed, your subscription covers this. Click to change the range.",
   "cost.lane.none": "No published price",
   "cost.lane.noneMeaning": "No published price schedule covers this traffic, so no figure can be shown. That is not the same as free.",
 
@@ -951,7 +960,7 @@ export const M3_EN = {
 
   // ---- emoji decoration ----
   "emoji.title": "Show emojis in dialogs and message boxes",
-  "emoji.sub": "Adds one small decorative mark beside a dialog's or notification's headline — never on a button, a label, or anything read aloud as its name. Off leaves the same words in place with no mark at all.",
+  "emoji.sub": "Adds one small decorative mark beside a dialog's or notification's headline, never on a button, a label, or anything read aloud as its name. Off leaves the same words in place with no mark at all.",
   "emoji.previewCaption": "How the four notification marks look right now:",
   "emoji.previewInfo": "Proxy port changed",
   "emoji.previewSuccess": "Export finished",
@@ -987,16 +996,16 @@ export const M3_EN = {
   "regex.matches": "Matches",
   "regex.matchCount": "Matches",
   "regex.matchCountValue": "{count} match(es)",
-  "regex.matchTruncated": "Stopped at the {cap}-match cap — refine the pattern to see the rest.",
+  "regex.matchTruncated": "Stopped at the {cap}-match cap, refine the pattern to see the rest.",
   "regex.noMatches": "No matches in the sample text.",
   "regex.colIndex": "Index",
   "regex.colMatch": "Match",
-  "regex.flagG": "global — find every match, not just the first",
+  "regex.flagG": "global, find every match, not just the first",
   "regex.flagI": "ignore case",
-  "regex.flagM": "multiline — ^ and $ match line boundaries",
-  "regex.flagS": "dotall — . also matches a newline",
+  "regex.flagM": "multiline, ^ and $ match line boundaries",
+  "regex.flagS": "dotall, . also matches a newline",
   "regex.flagU": "unicode",
-  "regex.flagY": "sticky — match only at lastIndex",
+  "regex.flagY": "sticky, match only at lastIndex",
   "regex.tokDigit": "any digit",
   "regex.tokWord": "any word character",
   "regex.tokSpace": "any whitespace",
@@ -1019,10 +1028,10 @@ export const M3_EN = {
 
   // ---- changelog ----
   "changelog.filterTitle": "Filter releases",
-  "changelog.filterSub": "Date range and text search compose — narrowing one keeps the other applied.",
+  "changelog.filterSub": "Date range and text search compose, narrowing one keeps the other applied.",
   "changelog.from": "From",
   "changelog.to": "To",
-  "changelog.badDate": "Not a valid date — the filter is ignored until it is.",
+  "changelog.badDate": "Not a valid date, the filter is ignored until it is.",
   "changelog.last7": "Last 7 days",
   "changelog.last30": "Last 30 days",
   "changelog.last90": "Last 90 days",
@@ -1038,7 +1047,7 @@ export const M3_EN = {
   "changelog.noResultsBody": "Widen the date range or clear the search to see more.",
 
   // ---- in-app documentation browser (pages/Docs.tsx) ----
-  "docs.subtitle": "Every feature article bundled with this build — no network required. Search titles, descriptions and article text; links between articles stay inside the app.",
+  "docs.subtitle": "Every feature article bundled with this build, no network required. Search titles, descriptions and article text; links between articles stay inside the app.",
   "docs.navAria": "Documentation articles",
   "docs.search": "Search documentation",
   "docs.openBuilder": "Open documentation regex builder",
@@ -1048,7 +1057,7 @@ export const M3_EN = {
   "docs.empty": "Pick an article",
   "docs.emptyBody": "Choose an article from the list to read it here.",
   "docs.linkNotFound": "Not in this offline copy",
-  "docs.linkNotFoundBody": "This build does not bundle “{href}”. It may be a page that renders interactive components the offline browser cannot reproduce — the full documentation site has it.",
+  "docs.linkNotFoundBody": "This build does not bundle “{href}”. It may be a page that renders interactive components the offline browser cannot reproduce, the full documentation site has it.",
   "docs.category.gettingStarted": "Getting started",
   "docs.category.guides": "Guides",
   "docs.category.reference": "Reference",
@@ -1113,7 +1122,7 @@ export const M3_EN = {
   // somebody translates it. These resolve with an English fallback, which is exactly
   // what lets a screen be ported before its translations exist.
   //
-  // settings.* is one shared row that six screens asked for independently — the
+  // settings.* is one shared row that six screens asked for independently, the
   // per-surface settings search that belongs on every surface where settings live.
   "common.settings": "Settings",
   "settings.search": "Search settings…",
@@ -1132,17 +1141,17 @@ export const M3_EN = {
   "regex.useHere": "Use in search",
   "regex.build": "Guided construction",
   "regex.tokLiteral": "literal text",
-  "regex.tokEscapedDot": "escaped dot — a literal .",
+  "regex.tokEscapedDot": "escaped dot, a literal .",
   "regex.tokBackslash": "a literal backslash",
   "regex.tokNegated": "any character except /",
-  "regex.tokUnicodeScript": "Unicode script — needs the u flag",
+  "regex.tokUnicodeScript": "Unicode script, needs the u flag",
   "regex.tokCapture": "capture group",
   "regex.tokLookahead": "lookahead",
   "regex.tokLazy": "one or more, lazy",
   "lang.subtitle": "Language mode, per-language funny level, spoken narration, and the dim sum surprise.",
   "lang.mode": "Language mode",
-  "lang.funnyEn": "Funny level — English",
-  "lang.funnyYue": "Funny level — 廣東話",
+  "lang.funnyEn": "Funny level, English",
+  "lang.funnyYue": "Funny level, 廣東話",
   // The pair, under one name. Both sliders are written under a single storage
   // key, so a notice about that write cannot borrow either row's own label
   // without naming half of what it is talking about.
@@ -1151,13 +1160,13 @@ export const M3_EN = {
   "lang.funnyLadder": "The same destructive warning at every level",
   "lang.funnyLevel": "Level {n}",
   "narrator.offTitle": "Narrator is off",
-  "narrator.offBody": "Turn it on first — it stays off until you ask for it.",
+  "narrator.offBody": "Turn it on first, it stays off until you ask for it.",
   "narrator.langBoth": "Both (serialized)",
   "dimsum.showNow": "Show one now",
   "lang.revisionSummary": "Interface language set to {name}",
   "lang.narratorRevision": "Narration settings changed",
   // ---- personal vocabulary ----
-  // A private, local find-and-replace glossary. Nothing here ships a mapping —
+  // A private, local find-and-replace glossary. Nothing here ships a mapping ,
   // every string below is generic copy about the feature, never a term or a
   // replacement, and none of it is ever true until a user supplies their own
   // file. See src/i18n/personal-vocabulary.ts for the schema and the boundary.
@@ -1207,7 +1216,7 @@ export const M3_EN = {
   // "status", so without this a user typing the obvious thing found nothing on a
   // screen whose whole top half is a status.
   "startup.overallStatus": "Overall status",
-  "startup.tray.uninstallConfirm": "Remove the login tray icon? The proxy keeps running — only the tray controller is removed, and restart protection is unaffected.",
+  "startup.tray.uninstallConfirm": "Remove the login tray icon? The proxy keeps running, only the tray controller is removed, and restart protection is unaffected.",
   "startup.tray.installedRecorded": "Installed the Windows login tray",
   "startup.tray.removedRecorded": "Removed the Windows login tray",
   "api.keyDeleted": "Deleted API key",
@@ -1224,19 +1233,19 @@ export const M3_EN = {
   "appearance.roleError": "error",
   "appearance.roleSurface": "surface",
   "appearance.font": "Interface font",
-  "appearance.elFont": "Font — {target}",
+  "appearance.elFont": "Font, {target}",
   "appearance.elColorCaption": "text / background",
   "appearance.elResetAll": "Reset all ({count})",
   "appearance.elResetDone": "Reset to defaults",
   "appearance.resetAllDone": "All per-element overrides reset",
   "appearance.previewHeadlineSample": "Headline small",
   "appearance.previewTitleSample": "Title medium",
-  "appearance.previewBodySample": "Body medium — the quick brown fox jumps over the lazy dog. 廣東話樣本文字，睇下字型同大小夠唔夠清楚。",
+  "appearance.previewBodySample": "Body medium, the quick brown fox jumps over the lazy dog. 廣東話樣本文字，睇下字型同大小夠唔夠清楚。",
   "regex.regexMode": "Regex mode",
   "pws.removeConfirmDetail": "Its configuration is deleted from this proxy's config file. Accounts and API keys stored for it are removed with it.",
   "prov.removeIrreversible": "This cannot be undone.",
   "prov.revisionJsonSaved": "Edited the raw provider config",
-  "prov.networkError": "Network error — is the proxy running?",
+  "prov.networkError": "Network error, is the proxy running?",
   "prov.updateFail": "Update failed.",
   "prov.revisionAdded": "Added the provider",
   "prov.revisionRemoved": "Deleted the provider",
@@ -1248,7 +1257,7 @@ export const M3_EN = {
   "usage.card.costHint": "list price",
   "usage.cost.laneHeading": "Cost basis",
   "usage.cost.laneDirectRow": "Direct API-key spend",
-  "usage.cost.laneEquivalentRow": "Subscription — API equivalent",
+  "usage.cost.laneEquivalentRow": "Subscription, API equivalent",
   "usage.cost.laneRequests": "{count} requests",
   "logs.detail.costBasis": "Cost basis",
   "usage.card.requestsHint": "{count} measured",
@@ -1260,9 +1269,9 @@ export const M3_EN = {
   "search.flags": "Regex flags",
   "search.flagsCompiled": "Compiling this search as /…/{flags}.",
   "search.flagsNone": "Compiling this search with no flags: case-sensitive, and . stops at a line break.",
-  "search.flagsStateful": "g and y are ignored here — this field tests every row on its own, and a sticky pattern would match only every other one.",
+  "search.flagsStateful": "g and y are ignored here, this field tests every row on its own, and a sticky pattern would match only every other one.",
   // ---- menu filter: the field every dropdown, combobox and context menu
-  // carries at its head, generic on purpose — only one of these is ever open
+  // carries at its head, generic on purpose, only one of these is ever open
   // at a time, so a shared wording never leaves two of them ambiguous. ----
   "menuFilter.searchLabel": "Filter this menu",
   "menuFilter.placeholder": "Type to filter",
@@ -1287,7 +1296,7 @@ export const M3_EN = {
   // one thing a delete confirmation must never do is ask someone to agree to an
   // unspecified amount of loss.
   "logs.file.title": "Log files",
-  "logs.file.where": "Written to {path} — open it in any text editor.",
+  "logs.file.where": "Written to {path}, open it in any text editor.",
   "logs.file.usage": "Request rows: {path}",
   "logs.file.retention": "Each log file is capped at {size} and {count} older files are kept, so the log folder never exceeds {total}.",
   "logs.file.footprint": "{rows} request rows · {lines} app log lines · {size} on disk",
@@ -1296,7 +1305,7 @@ export const M3_EN = {
   "logs.clearBody": "Deletes {rows} request rows and {lines} app log lines. The Logs table, the Debug tab and the Usage totals are all built from these files, so all three go back to empty.\n\nThey are committed to the local version history first, so you can put them back from Version history. That history never leaves this machine.",
   "logs.cleared": "Logs cleared",
   "logs.clearedBody": "Saved to version history as \"{label}\". Open Version history to put them back.",
-  "logs.clearedNoSnapshot": "The logs are cleared, but the version history could not be written — this one cannot be undone.",
+  "logs.clearedNoSnapshot": "The logs are cleared, but the version history could not be written, this one cannot be undone.",
   "logs.clearFailed": "Could not clear the logs",
   "logs.clearNothing": "There are no logs to clear.",
   "logs.revisionLabel": "Logs",
@@ -1317,15 +1326,15 @@ export const M3_EN = {
   "history.labelUpdated": "Label updated",
 
   // ---- log snapshots on the shared timeline ----
-  // A log snapshot restores differently from a credential snapshot — no drain,
-  // no restart — so it names itself rather than borrowing the other's button.
+  // A log snapshot restores differently from a credential snapshot, no drain,
+  // no restart, so it names itself rather than borrowing the other's button.
   "history.snapshotLogs": "Log files",
   "history.snapshotState": "Accounts & settings",
   "history.snapshotMixed": "Accounts, settings & logs",
   "history.restoreLogs": "Restore logs",
   "history.restoreLogsConfirm": "Put the logs back as they were at \"{label}\"?\n\nThe logs as they stand now are committed first, so this restore can itself be undone. No requests are interrupted and the proxy does not restart.",
   "history.logsRestored": "Logs restored",
-  "history.logsRestoredBody": "{count} file(s) written back, and recorded as a new revision — so you can undo this too.",
+  "history.logsRestoredBody": "{count} file(s) written back, and recorded as a new revision, so you can undo this too.",
   "history.logsRestoredKept": "Log files added since that revision were left in place: {files}",
   "history.logsRestoreFailed": "Could not restore the logs",
 
@@ -1337,7 +1346,7 @@ export const M3_EN = {
   // somebody translates it. These resolve with an English fallback, which is exactly
   // what lets a screen be ported before its translations exist.
   //
-  // settings.* is one shared row that six screens asked for independently — the
+  // settings.* is one shared row that six screens asked for independently, the
   // per-surface settings search that belongs on every surface where settings live.
   "changelog.downloaded": "changelog.md downloaded",
   "notif.noMatch": "No notifications match your search.",
@@ -1354,8 +1363,8 @@ export const M3_EN = {
   // The one search that answers for the whole app rather than for the screen a
   // user happens to be on: every page, and every setting the cross-page registry
   // already knows about (`shell/settings-registry.ts`). A row is either a real
-  // control — wired straight into the same draft the surface it belongs to
-  // writes — or an honest readout that says where the real editor lives, never a
+  // control, wired straight into the same draft the surface it belongs to
+  // writes, or an honest readout that says where the real editor lives, never a
   // switch that looks live and changes nothing.
   "commandPalette.title": "Command palette",
   "commandPalette.trigger": "Open command palette",
@@ -1366,13 +1375,13 @@ export const M3_EN = {
   "commandPalette.settingsGroup": "Settings",
   "commandPalette.kindPage": "Page",
   "commandPalette.goTo": "Go to {label}",
-  // Shown under a row whose real editor is a screen this cannot safely mirror —
+  // Shown under a row whose real editor is a screen this cannot safely mirror ,
   // its state is local to that screen's own component, not staged anywhere this
   // can reach. Selecting the row still opens and highlights it.
   "commandPalette.editOnPage": "Edited on {tab}. Open it to change this.",
   // Shown under a row whose value *could* be edited here, but the surface that
   // loads it has not been opened yet this session, so there is nothing live to
-  // show. Opening it once is enough — after that this row edits it directly.
+  // show. Opening it once is enough, after that this row edits it directly.
   "commandPalette.loadOnPage": "Not loaded yet. Open {tab} once, then this can be changed from here too.",
   "commandPalette.expand": "Expand to a full window",
   "commandPalette.collapse": "Collapse to a compact card",
@@ -1386,7 +1395,7 @@ export const M3_EN = {
   // pattern differently.
   // ---- the shared settings search (shell/SettingsSearch.tsx) ----
   // Two facts the per-surface rows used to leave unsaid. `otherTabHere` is the
-  // near miss — the setting is on this screen, one tab over — and is deliberately
+  // near miss, the setting is on this screen, one tab over, and is deliberately
   // worded differently from `settings.otherTab`, which sends the user to another
   // screen entirely; a single message for both told the user to go somewhere they
   // already were. `matchCount` carries its denominator because "3 matches" says
@@ -1451,7 +1460,7 @@ export const M3_EN = {
   // "Could not be read" and "has none" are different facts, and only the second
   // is a reason to stop offering axis sliders.
   "font.axesUnknown": "This font's axes could not be read, so none are offered. Grant access to installed fonts to read them.",
-  "font.axesNone": "This is a static font — it has no variable axes.",
+  "font.axesNone": "This is a static font, it has no variable axes.",
   "font.noteNotPrompted": "These families were measured, not listed. Grant access to see every font installed on this computer.",
   "font.noteUnsupported": "This browser cannot list installed fonts, so the families above were measured by rendering them. Any family name still works in the field below.",
   "font.noteDenied": "Access to installed fonts was declined, so the families above were measured instead. Any family name still works in the field below.",
@@ -1495,7 +1504,7 @@ export const M3_EN = {
   "type.sub": "Subscript",
   "type.color": "Text colour",
   "type.highlight": "Highlight",
-  "type.highlightHint": "Paints the whole box behind the element, not only the glyph runs — CSS has no text-only highlight outside a selection.",
+  "type.highlightHint": "Paints the whole box behind the element, not only the glyph runs, CSS has no text-only highlight outside a selection.",
   "type.outline": "Outline width",
   "type.outlineColor": "Outline colour",
   "type.shadowX": "Shadow across",
@@ -1525,7 +1534,7 @@ export const M3_EN = {
 
   // ---- per-element typography, on the Appearance screen ----
   "appearance.elTypeTitle": "Typography for {target}",
-  "appearance.elTypeSub": "Everything a word processor offers, applied to this one surface. Nothing here has a default — unset means it follows the theme.",
+  "appearance.elTypeSub": "Everything a word processor offers, applied to this one surface. Nothing here has a default, unset means it follows the theme.",
   "appearance.elTypeReset": "Reset typography for {target}",
   "appearance.elTypeSearch": "Search typography settings",
   "appearance.elTypeNoMatch": "No typography setting matches that search.",
@@ -1557,7 +1566,7 @@ export const M3_EN = {
   /**
    * ---- scheduled settings ----
    *
-   * Filed here rather than in `en.ts` on purpose — de/ko/zh/ja/ru resolve
+   * Filed here rather than in `en.ts` on purpose, de/ko/zh/ja/ru resolve
    * these through the fallback chain this file's own doc comment describes,
    * so a genuinely English-only rollout for those five locales does not force
    * placeholder translations into the build. Cantonese stays a baseline
@@ -1565,10 +1574,10 @@ export const M3_EN = {
    */
   "schedule.title": "Scheduled settings",
   "schedule.subtitle": "Automatically switch your language, theme, density, seed colour and fonts on a schedule.",
-  "schedule.timezoneNote": "Rules use this device's local timezone, {tz} (currently UTC{offset}). Daylight-saving changes are applied automatically — a rule keeps the same wall-clock time across a change.",
+  "schedule.timezoneNote": "Rules use this device's local timezone, {tz} (currently UTC{offset}). Daylight-saving changes are applied automatically, a rule keeps the same wall-clock time across a change.",
   "schedule.precedenceNote": "When more than one enabled rule matches the same moment, the rule with the highest priority number wins. If two rules share the same priority, the more recently created one wins.",
   "schedule.activeBanner": "“{label}” is overriding your settings right now.",
-  "schedule.noActiveOverride": "No scheduled rule is currently active — your saved settings are in effect.",
+  "schedule.noActiveOverride": "No scheduled rule is currently active, your saved settings are in effect.",
   "schedule.addRule": "Add rule",
   "schedule.emptyTitle": "No scheduled rules yet",
   "schedule.emptyBody": "Add a rule to switch your language, theme or appearance automatically at certain times.",
@@ -1604,10 +1613,10 @@ export const M3_EN = {
   "schedule.haEntityId": "Entity ID",
   "schedule.haEntityIdHint": "A binary_sensor or input_boolean entity, e.g. input_boolean.evening_mode. \"on\" applies the values below; anything else leaves your other settings in effect.",
   "schedule.haToken": "Long-lived access token",
-  "schedule.haTokenHint": "Stored only in this Windows account's credential vault — never in this app's settings file or in an export.",
+  "schedule.haTokenHint": "Stored only in this Windows account's credential vault, never in this app's settings file or in an export.",
   "schedule.haTokenPlaceholder": "Paste a new token to replace it",
   "schedule.haTokenConfigured": "A token is stored for this rule.",
-  "schedule.haTokenMissing": "No token stored yet — this rule cannot check Home Assistant until one is saved.",
+  "schedule.haTokenMissing": "No token stored yet, this rule cannot check Home Assistant until one is saved.",
   "schedule.haTokenSave": "Save token",
   "schedule.haTokenClear": "Remove stored token",
   "schedule.save": "Save rule",
@@ -1630,15 +1639,15 @@ export const M3_EN = {
   "schedule.notify.retry": "Retry now",
   // ---- toy locks (shell/locks.ts, LockWizard.tsx, UnlockPrompt.tsx) ----
   "nav.locks": "Toy locks",
-  "lock.disclosureToy": "This is just for fun — a self-imposed speed bump, not a security boundary, not encryption, and not protection from anyone else who has this computer.",
+  "lock.disclosureToy": "This is just for fun, a self-imposed speed bump, not a security boundary, not encryption, and not protection from anyone else who has this computer.",
   "lock.recoveryDesktop": "Forgot the password or lost the authenticator? Delete this app's data folder to reset every toy lock: {path}",
-  "lock.recoveryBrowser": "Forgot the password or lost the authenticator? Clear this site's local storage (in your browser's site settings) to reset every toy lock — that is where they all live.",
-  "lock.unlockedUntil": "Unlocked — {duration}",
+  "lock.recoveryBrowser": "Forgot the password or lost the authenticator? Clear this site's local storage (in your browser's site settings) to reset every toy lock, that is where they all live.",
+  "lock.unlockedUntil": "Unlocked, {duration}",
   "lock.lockAgain": "Lock again",
   "lock.lockedLabel": "{name} is locked",
-  "lock.wrongPassword": "That password did not match. This is a toy lock, so there is no penalty beyond waiting — see Forgotten your password? below if you would rather just reset it.",
+  "lock.wrongPassword": "That password did not match. This is a toy lock, so there is no penalty beyond waiting, see Forgotten your password? below if you would rather just reset it.",
   "lock.wrongCode": "That code did not match. Check your authenticator's clock and try the current code again.",
-  "lock.rateLimited": "Too many wrong tries — wait {seconds}s before trying again.",
+  "lock.rateLimited": "Too many wrong tries, wait {seconds}s before trying again.",
   "lock.unlocking": "Checking…",
   "lock.unlock": "Unlock",
   "lock.forgotten": "Forgotten your password?",
@@ -1651,23 +1660,23 @@ export const M3_EN = {
   "lock.wizard.stepCredential": "Credential",
   "lock.wizard.stepDuration": "Duration & disclosure",
   "lock.wizard.targetWhole": "This locks the whole \"{name}\" surface.",
-  "lock.wizard.targetProperty": "This locks only the \"{property}\" property of \"{name}\" — the rest of it stays open.",
+  "lock.wizard.targetProperty": "This locks only the \"{property}\" property of \"{name}\", the rest of it stays open.",
   "lock.wizard.method": "How do you want to unlock this?",
   "lock.wizard.methodPassword": "Password",
   "lock.wizard.methodTotp": "Authenticator code (TOTP)",
   "lock.wizard.password": "Password",
-  "lock.wizard.passwordHint": "At least {min} characters. Stored as a hash — never as the password itself.",
+  "lock.wizard.passwordHint": "At least {min} characters. Stored as a hash, never as the password itself.",
   "lock.wizard.confirmPassword": "Confirm password",
   "lock.wizard.passwordTooShort": "Needs at least {min} characters.",
   "lock.wizard.passwordMismatch": "The two passwords do not match yet.",
   "lock.wizard.passwordOk": "Looks good.",
-  "lock.wizard.totpIntro": "A fresh secret, generated on this device. Add it to your own authenticator app (manual entry, not a QR code — this wizard does not scan one), then type back the current code to confirm the pairing before this lock arms.",
+  "lock.wizard.totpIntro": "A fresh secret, generated on this device. Add it to your own authenticator app (manual entry, not a QR code, this wizard does not scan one), then type back the current code to confirm the pairing before this lock arms.",
   "lock.wizard.totpSecret": "Secret (enter this into your authenticator app)",
   "lock.wizard.totpConfirmCode": "Current code",
   "lock.wizard.totpConfirmHint": "Confirming with a real code first means a mistyped secret cannot lock you out of something you just set up.",
   "lock.wizard.totpVerify": "Confirm code",
   "lock.wizard.totpChecking": "Checking…",
-  "lock.wizard.totpConfirmed": "Confirmed — this secret is paired correctly.",
+  "lock.wizard.totpConfirmed": "Confirmed, this secret is paired correctly.",
   "lock.wizard.totpWrong": "That code did not match this secret. Double-check the entry in your authenticator app.",
   "lock.wizard.duration": "Unlock lasts",
   "lock.wizard.lockedOnLaunch": "Lock again every time the app starts",
@@ -1680,7 +1689,7 @@ export const M3_EN = {
   "lock.wizard.saveChange": "Save credential",
 
   // ---- the Locks list (pages/Locks.tsx) ----
-  "locks.pageLead": "Every toy lock you have created, in one searchable, bulk-manageable list. Each carries its own independent credential — unlocking one never unlocks another, and there is no master password anywhere in this app.",
+  "locks.pageLead": "Every toy lock you have created, in one searchable, bulk-manageable list. Each carries its own independent credential, unlocking one never unlocks another, and there is no master password anywhere in this app.",
   "locks.search": "Search locks",
   "locks.selectRow": "Select {name}",
   "locks.emptyTitle": "No toy locks yet",
@@ -1689,24 +1698,24 @@ export const M3_EN = {
   "locks.kind.element": "Element",
   "locks.kind.tab": "Tab",
   "locks.kind.group": "Group",
-  "locks.propertyLabel": "{name} — {property}",
+  "locks.propertyLabel": "{name}, {property}",
   "locks.createdAt": "Created {date}",
   "locks.changeCredential": "Change credential",
   "locks.remove": "Remove",
   "locks.removeConfirmTitle": "Remove this lock",
-  "locks.removeConfirmBody": "\"{name}\" becomes unlocked immediately and its credential is deleted. This does not undo any appearance changes — it only removes the lock.",
+  "locks.removeConfirmBody": "\"{name}\" becomes unlocked immediately and its credential is deleted. This does not undo any appearance changes, it only removes the lock.",
   "locks.removed": "Lock removed",
   "locks.bulkRemove": "Remove locks",
   "locks.bulkRemoveConfirm": "Remove {count} lock(s)? Each one unlocks immediately and its credential is deleted.",
   "locks.settingsDuration": "Unlock lasts",
   "locks.settingsLockedOnLaunch": "Lock again on launch",
   "locks.inventoryTitle": "What this build can lock",
-  "locks.inventoryBody": "Any element, card, button, field, chip, table, tab or group that the appearance editor (right-click → Edit appearance…) already reaches carries \"Lock this element…\" too, plus its own per-property locks for colour, background, font, corner radius, padding and size. Individual notification and menu items, and states/pseudo-states such as hover or focus, are not separately lockable in this build — see the handoff notes for the reasons and the exact list.",
+  "locks.inventoryBody": "Any element, card, button, field, chip, table, tab or group that the appearance editor (right-click → Edit appearance…) already reaches carries \"Lock this element…\" too, plus its own per-property locks for colour, background, font, corner radius, padding and size. Individual notification and menu items, and states/pseudo-states such as hover or focus, are not separately lockable in this build, see the handoff notes for the reasons and the exact list.",
 
   // ---- Support Tickets (shell/support-tickets.ts, SupportTickets.tsx) ----
   "support.title": "Support Tickets",
-  "support.intro": "A proper support desk, or at least a very convincing impression of one. File a ticket, get a ticket number, watch its status advance — and when it \"resolves\", the fix is the same one thing that always actually works.",
-  "support.disclosure": "Nothing here is sent anywhere. No ticket ever leaves this computer, no network request is made, no data is collected, and nobody is reading these — this is a purely local, offline routine.",
+  "support.intro": "A proper support desk, or at least a very convincing impression of one. File a ticket, get a ticket number, watch its status advance, and when it \"resolves\", the fix is the same one thing that always actually works.",
+  "support.disclosure": "Nothing here is sent anywhere. No ticket ever leaves this computer, no network request is made, no data is collected, and nobody is reading these, this is a purely local, offline routine.",
   "support.form.category": "Category",
   "support.category.lockedOut": "Locked out",
   "support.category.somethingElse": "Something else",
@@ -1726,18 +1735,18 @@ export const M3_EN = {
   "support.checkStatus": "Check status",
   "support.cannedResponse": "Thank you for contacting support. Your ticket has been received and assigned to the next available specialist. We take every report seriously and will follow up as our records require.",
   "support.resolution.title": "Resolution",
-  "support.resolution.body": "The fix is to delete this app's local data folder yourself — that clears every toy lock and every ticket at once, since they all live in the same place. Nothing here does the deleting for you; this button only opens the folder in your file manager so you can.",
+  "support.resolution.body": "The fix is to delete this app's local data folder yourself, that clears every toy lock and every ticket at once, since they all live in the same place. Nothing here does the deleting for you; this button only opens the folder in your file manager so you can.",
   "support.resolution.openFolder": "Open the data folder",
-  "support.resolution.openFolderFailed": "Could not open the folder automatically. The path is shown above — open it yourself in your file manager.",
+  "support.resolution.openFolderFailed": "Could not open the folder automatically. The path is shown above, open it yourself in your file manager.",
   "support.resolution.pathLabel": "Folder:",
   "support.resolution.copyPath": "Copy path",
-  "support.resolution.noBridge": "This build has no file manager to open here — see the recovery note above for the browser-storage equivalent.",
+  "support.resolution.noBridge": "This build has no file manager to open here, see the recovery note above for the browser-storage equivalent.",
   "support.list.title": "Your tickets",
   "support.list.empty": "No tickets yet.",
   "support.list.search": "Search tickets",
   "support.lockedOutContext": "Opened from the lock on \"{name}\".",
   // ---- built-in authenticator (pages/Authenticator.tsx) ----
-  "auth.subtitle": "Codes for accounts protected by two-factor authentication. Everything here stays on this machine — no account, no cloud sync, no network call.",
+  "auth.subtitle": "Codes for accounts protected by two-factor authentication. Everything here stays on this machine, no account, no cloud sync, no network call.",
   "auth.addEntry": "Add account",
   "auth.exportSecrets": "Export secrets…",
   "auth.search": "Search accounts",
@@ -1770,7 +1779,7 @@ export const M3_EN = {
   "auth.group.rename": "Rename group",
   "auth.group.delete": "Delete group",
   "auth.group.deleteConfirmTitle": "Delete this group?",
-  "auth.group.deleteConfirmBody": "The accounts inside stay — they just stop being grouped.",
+  "auth.group.deleteConfirmBody": "The accounts inside stay, they just stop being grouped.",
   "auth.group.moveInto": "Move… into group…",
   "auth.group.movePickerTitle": "Move into group",
   "auth.group.movePickerSearch": "Search groups",
@@ -1841,7 +1850,7 @@ export const M3_EN = {
 
   // ---- secrets export: the one route that writes real secrets, gated by super-confirm ----
   "auth.export.title": "Export every secret in the clear",
-  "auth.export.body": "This writes a file containing the real secret for every account below — anyone who reads it can generate valid codes for all of them. There is no way to make this safer, only handling it carefully.",
+  "auth.export.body": "This writes a file containing the real secret for every account below, anyone who reads it can generate valid codes for all of them. There is no way to make this safer, only handling it carefully.",
   "auth.export.warning": "This file contains usable codes for every account below, in plain text. Move it straight into a password manager and delete it from anywhere else.",
   "auth.export.key1": "I understand this file has every secret in plain text",
   "auth.export.key2": "I have somewhere safe to put it immediately",
@@ -1858,7 +1867,7 @@ export const M3_EN = {
   // ---- Secret & display-name history: docs/FEATURE-INVENTORY.md's
   // "Secret and display-name mutation history" contract. Every TOTP-entry
   // mutation and every display-name change lands here as a redacted,
-  // encrypted-where-sensitive commit in its own local git repository — see
+  // encrypted-where-sensitive commit in its own local git repository, see
   // src/lib/secret-history.ts. ----
   "secretHistory.openButton": "History…",
   "secretHistory.title": "Secret & display-name history",
@@ -1866,9 +1875,9 @@ export const M3_EN = {
   "secretHistory.opened": "Unlocked",
   "secretHistory.search": "Search history",
   "secretHistory.empty": "Nothing recorded yet",
-  "secretHistory.emptyBody": "The first account you add, change or remove — or the first time you rename this app — appears here.",
+  "secretHistory.emptyBody": "The first account you add, change or remove, or the first time you rename this app, appears here.",
   "secretHistory.diff": "What this entry recorded",
-  "secretHistory.noSnapshot": "This entry has no recoverable snapshot — the vault key was unavailable when it was written, so only its metadata was recorded.",
+  "secretHistory.noSnapshot": "This entry has no recoverable snapshot, the vault key was unavailable when it was written, so only its metadata was recorded.",
   "secretHistory.restore": "Restore this revision",
   "secretHistory.restored": "Restored",
   "secretHistory.export": "Export redacted history",
@@ -1878,7 +1887,7 @@ export const M3_EN = {
   "secretHistory.retentionForever": "Forever",
   "secretHistory.retentionCurrent": "Currently keeping the last {days} day(s). Older entries are pruned the moment this changes.",
   "secretHistory.retentionApply": "Apply",
-  "secretHistory.retentionApplied": "Retention applied — {pruned} old entr(y/ies) pruned.",
+  "secretHistory.retentionApplied": "Retention applied, {pruned} old entr(y/ies) pruned.",
   "secretHistory.reverifyPrompt": "Type your password or code again to {action}.",
   "secretHistory.reverifyConfirm": "Confirm",
   "secretHistory.recoveryNotice": "This change was made, but recording it in the history failed ({reason}). It will not appear in the list above.",
@@ -1902,12 +1911,12 @@ export const M3_EN = {
 
   // ---- School Mode: the universal, cross-app, rename-able, English-forcing
   // toggle. Its own copy is subject to the same forced-English rendering as
-  // everything else while it is active — see resolve.ts's translate(). ----
+  // everything else while it is active, see resolve.ts's translate(). ----
   "schoolMode.title": "School Mode",
-  "schoolMode.sub": "Forces English everywhere and turns off Cantonese, bilingual mode, both funny-level sliders, personal vocabulary and the dim sum surprise — in this app and every other app that shares this one switch, the moment it changes.",
+  "schoolMode.sub": "Forces English everywhere and turns off Cantonese, bilingual mode, both funny-level sliders, personal vocabulary and the dim sum surprise, in this app and every other app that shares this one switch, the moment it changes.",
   "schoolMode.shippedName": "School Mode",
   "schoolMode.needsCredentialTitle": "Set an unlock PIN or password first",
-  "schoolMode.needsCredential": "Set an unlock PIN or password below before turning {name} on — otherwise there is no way to turn it off again except by deleting the shared file.",
+  "schoolMode.needsCredential": "Set an unlock PIN or password below before turning {name} on, otherwise there is no way to turn it off again except by deleting the shared file.",
   "schoolMode.enabledNotice": "{name} is on",
   "schoolMode.enabledNoticeBody": "Every app sharing this switch is now showing English only.",
   "schoolMode.actionFailedTitle": "That did not work",
@@ -1933,7 +1942,7 @@ export const M3_EN = {
   "schoolMode.credentialChangeFailedTitle": "Could not change the credential",
   "schoolMode.credentialChangeFailedBody": "The current PIN or password did not match.",
   "schoolMode.renamePromptTitle": "Rename School Mode",
-  "schoolMode.renameHint": "Every surface — including this control's own label — will show only this name, and never the shipped “School Mode” name. Clear it to go back to the shipped name.",
+  "schoolMode.renameHint": "Every surface, including this control's own label, will show only this name, and never the shipped “School Mode” name. Clear it to go back to the shipped name.",
   "schoolMode.renamePromptLabel": "Display name",
   "schoolMode.renamePromptFieldHint": "Up to {max} characters. Leave blank to use the shipped name.",
   "schoolMode.renamedNotice": "Renamed to {name}",
@@ -1952,15 +1961,15 @@ export const M3_EN = {
   "schoolMode.changeCredentialLabel": "Change unlock PIN/password",
   "schoolMode.setCredentialLabel": "Set unlock PIN/password",
   "schoolMode.renameLabel": "Rename this mode",
-  "schoolMode.disclosure": "This is a user-experience toggle, not a security boundary — it will not stop anyone with access to this computer.",
-  "schoolMode.resetNote": "Reset it at any time — including a forgotten PIN — by deleting this folder:",
+  "schoolMode.disclosure": "This is a user-experience toggle, not a security boundary, it will not stop anyone with access to this computer.",
+  "schoolMode.resetNote": "Reset it at any time, including a forgotten PIN, by deleting this folder:",
   "schoolMode.languageForced": "Other languages return automatically once School Mode is turned off.",
   "schoolMode.credentialTitle": "Unlock PIN or password",
 
   // ---- PDF tools ----
   "nav.pdf": "PDF tools",
   "pdf.title": "PDF tools",
-  "pdf.subtitle": "Inspect, split, merge, extract, reorder, rotate pages and edit metadata — for real files already on this machine.",
+  "pdf.subtitle": "Inspect, split, merge, extract, reorder, rotate pages and edit metadata, for real files already on this machine.",
   "pdf.blockedTitle": "PDF tools disabled",
   "pdf.sourceLabel": "Source PDF (absolute path)",
   "pdf.sourceHint": "Browse for a PDF on this machine, or type its full path.",
@@ -1976,16 +1985,16 @@ export const M3_EN = {
   "pdf.op.rotate": "Rotate",
   "pdf.op.metadata": "Metadata",
   "pdf.capabilities.ok": "{count} page(s)",
-  "pdf.capabilities.signed": "This document carries a digital signature. Any edit below will invalidate it — pdf-lib has no signature-preservation support.",
+  "pdf.capabilities.signed": "This document carries a digital signature. Any edit below will invalidate it, pdf-lib has no signature-preservation support.",
   "pdf.capabilities.title": "Title: {title}",
   "pdf.capabilities.boundaryPrefix": "Refused ({boundary}):",
-  "pdf.acknowledgeSigned": "I understand this edit will invalidate the signature — proceed anyway",
+  "pdf.acknowledgeSigned": "I understand this edit will invalidate the signature, proceed anyway",
   "pdf.destinationLabel": "Destination (absolute path)",
   "pdf.destinationsLabel": "Destination paths, one per range, comma-separated",
   "pdf.rangesLabel": "Page ranges (e.g. 1-2,3-5)",
-  "pdf.sourcesLabel": "Source PDFs to merge, in order — comma-separated absolute paths",
-  "pdf.pagesLabel": "Pages to extract, in order (e.g. 3,1,2 — repeats allowed)",
-  "pdf.orderLabel": "New page order — every page exactly once (e.g. 3,1,2)",
+  "pdf.sourcesLabel": "Source PDFs to merge, in order, comma-separated absolute paths",
+  "pdf.pagesLabel": "Pages to extract, in order (e.g. 3,1,2, repeats allowed)",
+  "pdf.orderLabel": "New page order, every page exactly once (e.g. 3,1,2)",
   "pdf.rotationsLabel": "Rotations (page:degrees, e.g. 1:90,2:180)",
   "pdf.relativeLabel": "Add to the existing rotation instead of replacing it",
   "pdf.meta.title": "Title",
@@ -2027,7 +2036,7 @@ export const M3_EN = {
   // ---- universal file converter ----
   "nav.converter": "File converter",
   "converter.title": "File converter",
-  "converter.subtitle": "A categorized adapter catalogue for real files on this machine — byte-detected, never guessed from a filename.",
+  "converter.subtitle": "A categorized adapter catalogue for real files on this machine, byte-detected, never guessed from a filename.",
   "converter.blockedTitle": "File converter disabled",
   "converter.sourceLabel": "Source file (absolute path)",
   "converter.sourceHint": "Browse for a file on this machine, or type its full path.",
@@ -2035,7 +2044,7 @@ export const M3_EN = {
   "converter.detectAction": "Detect",
   "converter.detecting": "Detecting…",
   "converter.detectedFormat": "Detected: {label} ({category})",
-  "converter.detectedUnknown": "Could not classify this file from its bytes — {evidence}",
+  "converter.detectedUnknown": "Could not classify this file from its bytes, {evidence}",
   "converter.detectedBoundary": "Refused ({boundary}): {reason}",
   "converter.enabledBanner": "This format's adapter is bundled inside this install and works fully offline.",
   "converter.disabledBanner": "No bundled adapter for this format yet. Missing: {reason}",
@@ -2052,20 +2061,20 @@ export const M3_EN = {
   "converter.category.codeText": "Code / Text",
   "converter.category.binaryEncodings": "Binary Encodings",
   "converter.categorySearchLabel": "Search {category} formats",
-  "converter.status.enabled": "Bundled — works offline",
+  "converter.status.enabled": "Bundled, works offline",
   "converter.status.disabled": "Disabled",
   "converter.status.reasonPrefix": "Missing: ",
   "converter.formatRow.operations": "Operations: {ops}",
   "converter.emptyCategory": "No formats in this category match your search.",
   "converter.destinationLabel": "Destination (absolute path)",
-  "converter.destinationHintZip": "Where the archive's contents land. Must not already exist — extraction refuses to overwrite an existing file or directory.",
+  "converter.destinationHintZip": "Where the archive's contents land. Must not already exist, extraction refuses to overwrite an existing file or directory.",
   "converter.destinationPlaceholderZip": "C:\\Users\\you\\Documents\\extracted",
   "converter.extractAction": "Extract",
   "converter.extracting": "Extracting…",
   "converter.extractSuccess": "Extracted {count} item(s) to {destination}",
   "converter.targetFormatLabel": "Convert to",
   "converter.noStructuredTargets": "The catalogue does not list a conversion target for this format yet.",
-  "converter.destinationHintStructured": "Where the converted file is written, atomically — reread from disk and byte-compared before this reports success.",
+  "converter.destinationHintStructured": "Where the converted file is written, atomically, reread from disk and byte-compared before this reports success.",
   "converter.destinationPlaceholderStructured": "C:\\Users\\you\\Documents\\out.json",
   "converter.convertAction": "Convert",
   "converter.converting": "Converting…",
@@ -2077,7 +2086,7 @@ export const M3_EN = {
   "converter.result.boundary": "Refused ({boundary}): {error}",
   // ---- Converter batch queue ----
   "converter.queue.title": "Batch queue",
-  "converter.queue.subtitle": "Stage several conversions, review the real storage estimate, then run them with bounded concurrency — paused, resumed, cancelled, and retried without losing anything already done.",
+  "converter.queue.subtitle": "Stage several conversions, review the real storage estimate, then run them with bounded concurrency, paused, resumed, cancelled, and retried without losing anything already done.",
   "converter.queue.kindLabel": "Job kind",
   "converter.queue.kind.structured": "Structured data",
   "converter.queue.kind.zipExtract": "ZIP extract",
@@ -2086,11 +2095,11 @@ export const M3_EN = {
   "converter.queue.destinationHint": "Where the result is written, atomically.",
   "converter.queue.sourceFormatLabel": "From format",
   "converter.queue.rotateDegreesLabel": "Rotate every page by",
-  "converter.queue.rotateDegreesHint": "The real page count is learned by inspecting the source when the job runs — never guessed up front.",
+  "converter.queue.rotateDegreesHint": "The real page count is learned by inspecting the source when the job runs, never guessed up front.",
   "converter.queue.acknowledgeLossyLabel": "I understand this conversion loses information",
   "converter.queue.acknowledgeSignedLabel": "I understand rotating a signed PDF invalidates its signature",
   "converter.queue.overwriteLabel": "Overwrite an existing destination instead of skipping it",
-  "converter.queue.zipOverwriteNote": "ZIP extraction has no overwrite of its own — the service always refuses an existing destination directory. This job will still be admitted, but will honestly fail when it runs if the destination already exists.",
+  "converter.queue.zipOverwriteNote": "ZIP extraction has no overwrite of its own, the service always refuses an existing destination directory. This job will still be admitted, but will honestly fail when it runs if the destination already exists.",
   "converter.queue.addToBatch": "Add to batch",
   "converter.queue.removeDraft": "Remove from batch",
   "converter.queue.col.kind": "Kind",
@@ -2113,7 +2122,7 @@ export const M3_EN = {
   "converter.queue.enqueuedTitle": "Batch enqueued",
   "converter.queue.enqueuedBody": "{count} job(s) added to the queue.",
   "converter.queue.aggregateKnown": "Estimated {size} needed",
-  "converter.queue.aggregatePartial": "Estimated {size} needed (partial — not every source size is known)",
+  "converter.queue.aggregatePartial": "Estimated {size} needed (partial, not every source size is known)",
   "converter.queue.insufficientSpace": "Insufficient free disk space for at least one destination",
   "converter.queue.unknown": "Unknown",
   "converter.queue.sufficientYes": "Yes",
@@ -2124,8 +2133,8 @@ export const M3_EN = {
   "converter.queue.pauseAction": "Pause",
   "converter.queue.cancelAll": "Cancel all pending",
   "converter.queue.clearFinished": "Clear finished",
-  "converter.queue.pausedBanner": "The queue is paused — an item already converting still finishes, but nothing new is claimed.",
-  "converter.queue.partialBanner": "At least one item failed or was cancelled — a failed item never turns this green.",
+  "converter.queue.pausedBanner": "The queue is paused, an item already converting still finishes, but nothing new is claimed.",
+  "converter.queue.partialBanner": "At least one item failed or was cancelled, a failed item never turns this green.",
   "converter.queue.cancel": "Cancel",
   "converter.queue.retry": "Retry",
   "converter.queue.running": "Running…",
@@ -2151,7 +2160,7 @@ export const M3_EN = {
   "nav.ollama": "Ollama",
   "nav.downloads": "Downloads",
   "ollama.title": "Ollama",
-  "ollama.subtitle": "The local model runtime on this machine — health, installed models, capability metadata and a conservative hardware-fit estimate for each.",
+  "ollama.subtitle": "The local model runtime on this machine, health, installed models, capability metadata and a conservative hardware-fit estimate for each.",
   "ollama.health.checking": "Checking the local runtime…",
   "ollama.health.healthy": "Running",
   "ollama.health.missing": "Not installed",
@@ -2159,7 +2168,7 @@ export const M3_EN = {
   "ollama.health.stopped": "Not running",
   "ollama.health.stoppedGuidance": "Start the Ollama app, or run \"ollama serve\" from a terminal, then use Retry below.",
   "ollama.health.unhealthy": "Not answering correctly",
-  "ollama.health.unhealthyGuidance": "The runtime is reachable but did not answer as expected — it may be starting up, overloaded, or an incompatible version. Give it a moment and use Retry.",
+  "ollama.health.unhealthyGuidance": "The runtime is reachable but did not answer as expected, it may be starting up, overloaded, or an incompatible version. Give it a moment and use Retry.",
   "ollama.health.offline": "Could not be reached",
   "ollama.health.offlineGuidance": "A network-level error prevented reaching the local runtime. Use Retry once the issue is resolved.",
   "ollama.health.retry": "Retry",
@@ -2169,8 +2178,8 @@ export const M3_EN = {
   "ollama.hardware.ramUnknown": "System memory could not be detected",
   "ollama.hardware.disk": "Free disk space: {free}",
   "ollama.hardware.diskUnknown": "Free disk space could not be detected",
-  "ollama.hardware.gpu": "GPU: {name} — {vram} video memory (detected via {source})",
-  "ollama.hardware.gpuNone": "No GPU was detected — fit estimates assume CPU-only execution",
+  "ollama.hardware.gpu": "GPU: {name}, {vram} video memory (detected via {source})",
+  "ollama.hardware.gpuNone": "No GPU was detected, fit estimates assume CPU-only execution",
   "ollama.hardware.gpuVramUnknown": "unknown",
   "ollama.catalog.title": "Installed models",
   "ollama.catalog.refreshedAt": "Last checked {when}",
@@ -2217,12 +2226,12 @@ export const M3_EN = {
 
   // ---- browser-extension download capture ----
   "downloads.title": "Downloads",
-  "downloads.subtitle": "Captured by the opencodex browser extension — every transfer runs here, not in the browser.",
+  "downloads.subtitle": "Captured by the opencodex browser extension, every transfer runs here, not in the browser.",
   "downloads.refresh": "Refresh",
   "downloads.searchLabel": "Search downloads",
   "downloads.loading": "Loading downloads…",
   "downloads.empty": "No downloads yet",
-  "downloads.emptyHint": "Install the opencodex browser extension (see extension/README.md) and start a download — it will appear here.",
+  "downloads.emptyHint": "Install the opencodex browser extension (see extension/README.md) and start a download, it will appear here.",
   "downloads.noMatches": "No downloads match the current search.",
   "downloads.actionFailed": "That action failed",
   "downloads.pause": "Pause",
@@ -2249,9 +2258,9 @@ export const M3_EN = {
   "downloads.popup.close": "Close",
   "downloads.popup.gone": "This download no longer exists.",
   "ollama.pull.title": "Batch pull",
-  "ollama.pull.subtitle": "Queue several models to download at once — this means downloads only, never a purchase, an account, or a charge of any kind.",
+  "ollama.pull.subtitle": "Queue several models to download at once, this means downloads only, never a purchase, an account, or a charge of any kind.",
   "ollama.pull.tagsLabel": "Model tags to pull",
-  "ollama.pull.tagsHint": "One tag per line, or comma-separated — e.g. llama3.1:8b, phi3:mini",
+  "ollama.pull.tagsHint": "One tag per line, or comma-separated, e.g. llama3.1:8b, phi3:mini",
   "ollama.pull.tagsPlaceholder": "llama3.1:8b\nphi3:mini",
   "ollama.pull.forceLabel": "Re-pull even if already installed",
   "ollama.pull.concurrencyLabel": "How many at once",
@@ -2283,7 +2292,7 @@ export const M3_EN = {
   "ollama.pull.queueSummary": "{pulled} pulled · {skipped} skipped · {failed} failed · {cancelled} cancelled · {active} in progress",
   "ollama.pull.cancelAll": "Cancel all",
   "ollama.pull.clearFinished": "Clear finished",
-  "ollama.pull.partialBanner": "This batch finished with at least one failed or cancelled item — it is not reported as a clean success.",
+  "ollama.pull.partialBanner": "This batch finished with at least one failed or cancelled item, it is not reported as a clean success.",
   "ollama.pull.cancel": "Cancel",
   "ollama.pull.retry": "Retry",
   "ollama.pull.status.queued": "Queued",
@@ -2299,7 +2308,7 @@ export const M3_EN = {
 
   "nav.ollamaChat": "Ollama Chat",
   "ollamaChat.title": "Ollama chat",
-  "ollamaChat.subtitle": "A real streaming session against your locally installed models — nothing here reaches anywhere but this machine.",
+  "ollamaChat.subtitle": "A real streaming session against your locally installed models, nothing here reaches anywhere but this machine.",
   "ollamaChat.notHealthy": "The local runtime is not healthy right now",
   "ollamaChat.openManager": "Open the model manager",
   "ollamaChat.sessionsTitle": "Sessions",
@@ -2325,9 +2334,9 @@ export const M3_EN = {
   "ollamaChat.removeAttachment": "Remove {name}",
   "ollamaChat.composerLabel": "Message",
   "ollamaChat.messageTooLong": "Message exceeds the {limit} limit",
-  "ollamaChat.composerPlaceholder": "Type a message — Enter to send, Shift+Enter for a new line",
+  "ollamaChat.composerPlaceholder": "Type a message, Enter to send, Shift+Enter for a new line",
   "ollamaChat.attachAction": "Attach image",
-  "ollamaChat.attachDisabledReason": "\"{model}\" does not support image attachments — choose a vision-capable model",
+  "ollamaChat.attachDisabledReason": "\"{model}\" does not support image attachments, choose a vision-capable model",
   "ollamaChat.showVisionModels": "Show vision-capable models only",
   "ollamaChat.stop": "Stop",
   "ollamaChat.send": "Send",
@@ -2337,7 +2346,7 @@ export const M3_EN = {
   "ollamaChat.visionOnlyToggle": "Vision-capable only",
   "ollamaChat.systemPromptLabel": "System prompt",
   "ollamaChat.systemPromptHint": "Sent once, ahead of every message, to steer how this session's model replies.",
-  "ollamaChat.systemPromptPlaceholder": "Optional — e.g. \"Answer tersely, in Markdown.\"",
+  "ollamaChat.systemPromptPlaceholder": "Optional, e.g. \"Answer tersely, in Markdown.\"",
   "ollamaChat.parametersTitle": "Model parameters",
   "ollamaChat.parametersHint": "Ollama's own documented generation options. Values outside their range are clamped, and you are told when that happens.",
   "ollamaChat.param.temperature": "Temperature",
@@ -2351,13 +2360,13 @@ export const M3_EN = {
   "ollamaChat.resetDefaults": "Reset to defaults",
   "ollamaChat.save": "Save",
   "ollamaChat.saving": "Saving…",
-  "ollamaChat.settingsLockedWhileStreaming": "Settings cannot change while a reply is streaming — stop it first.",
+  "ollamaChat.settingsLockedWhileStreaming": "Settings cannot change while a reply is streaming, stop it first.",
   "ollamaChat.newSessionTitle": "Start a new chat",
   "ollamaChat.cancel": "Cancel",
   "ollamaChat.create": "Create",
   "ollamaChat.creating": "Creating…",
   "ollamaChat.titleLabel": "Title",
-  "ollamaChat.titleHint": "Optional — a session gets a timestamped title automatically otherwise.",
+  "ollamaChat.titleHint": "Optional, a session gets a timestamped title automatically otherwise.",
   "ollamaChat.titlePlaceholder": "e.g. \"Release notes draft\"",
   "ollamaChat.loadFailedTitle": "Could not load that session",
   "ollamaChat.sendFailedTitle": "Message failed to send",
@@ -2449,6 +2458,10 @@ export const M3_OVERRIDES: Partial<Record<Locale, Partial<Record<M3Key, string>>
     "remote.popupBlocked": "Der Browser hat den Tab für das entfernte Dashboard blockiert",
     "nav.appearance": "Darstellung",
     "nav.language": "Sprache & Stimme",
+    "nav.settings": "Einstellungen",
+    "appearance.logoTitle": "App-Logo",
+    "appearance.logoSourceCustom": "Benutzerdefinierter Upload",
+    "appearance.logoRevisionSummary": "Auf {name} gesetzt",
     "nav.regex": "Regex-Builder",
     "nav.changelog": "Änderungsprotokoll",
     "nav.history": "Versionsverlauf",
@@ -2487,6 +2500,10 @@ export const M3_OVERRIDES: Partial<Record<Locale, Partial<Record<M3Key, string>>
     "remote.popupBlocked": "브라우저가 원격 대시보드 탭을 차단했습니다",
     "nav.appearance": "모양",
     "nav.language": "언어 및 음성",
+    "nav.settings": "설정",
+    "appearance.logoTitle": "앱 로고",
+    "appearance.logoSourceCustom": "사용자 지정 업로드",
+    "appearance.logoRevisionSummary": "{name}(으)로 설정됨",
     "nav.regex": "정규식 빌더",
     "nav.changelog": "변경 내역",
     "nav.history": "버전 기록",
@@ -2525,6 +2542,10 @@ export const M3_OVERRIDES: Partial<Record<Locale, Partial<Record<M3Key, string>>
     "remote.popupBlocked": "浏览器阻止了远程仪表板标签页",
     "nav.appearance": "外观",
     "nav.language": "语言与语音",
+    "nav.settings": "设置",
+    "appearance.logoTitle": "应用徽标",
+    "appearance.logoSourceCustom": "自定义上传",
+    "appearance.logoRevisionSummary": "已设为{name}",
     "nav.regex": "正则表达式构建器",
     "nav.changelog": "更新日志",
     "nav.history": "版本历史",
@@ -2563,6 +2584,10 @@ export const M3_OVERRIDES: Partial<Record<Locale, Partial<Record<M3Key, string>>
     "remote.popupBlocked": "ブラウザーがリモートダッシュボードのタブをブロックしました",
     "nav.appearance": "外観",
     "nav.language": "言語と音声",
+    "nav.settings": "設定",
+    "appearance.logoTitle": "アプリロゴ",
+    "appearance.logoSourceCustom": "カスタムアップロード",
+    "appearance.logoRevisionSummary": "{name} に設定",
     "nav.regex": "正規表現ビルダー",
     "nav.changelog": "変更履歴",
     "nav.history": "バージョン履歴",
@@ -2601,6 +2626,10 @@ export const M3_OVERRIDES: Partial<Record<Locale, Partial<Record<M3Key, string>>
     "remote.popupBlocked": "Браузер заблокировал вкладку удалённой панели",
     "nav.appearance": "Оформление",
     "nav.language": "Язык и голос",
+    "nav.settings": "Настройки",
+    "appearance.logoTitle": "Логотип приложения",
+    "appearance.logoSourceCustom": "Пользовательская загрузка",
+    "appearance.logoRevisionSummary": "Установлено на {name}",
     "nav.regex": "Конструктор regex",
     "nav.changelog": "Список изменений",
     "nav.history": "История версий",
