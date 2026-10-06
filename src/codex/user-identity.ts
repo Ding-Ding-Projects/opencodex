@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
+import { resolveTrustedWindowsPowerShellExe } from "../lib/windows-elevation";
 import type {
   ResolveCodexCoordinatorDatabasePath,
   ResolveEffectiveUserIdentity,
@@ -42,10 +43,22 @@ function refuse(message: string, cause?: unknown): never {
 }
 
 function powershellValue(expression: string): string {
+  // The bare name "powershell.exe" would be resolved through the hosting process's
+  // PATH, which is caller-controlled: a stripped PATH makes this lookup fail and a
+  // hostile one gets to answer the identity question that keys every coordinator
+  // namespace. Pin the interpreter to the System32-contained absolute path instead,
+  // the same trusted resolution every other Windows spawn in the tree uses.
+  let exe: string;
+  try {
+    exe = resolveTrustedWindowsPowerShellExe();
+  } catch (cause) {
+    refuse("The trusted Windows PowerShell interpreter could not be resolved.", cause);
+  }
+
   let result: ReturnType<typeof Bun.spawnSync>;
   try {
     result = Bun.spawnSync([
-      "powershell.exe",
+      exe,
       "-NoLogo",
       "-NoProfile",
       "-NonInteractive",

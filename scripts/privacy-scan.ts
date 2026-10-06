@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { KNOWN_AGENT_IDENTITIES } from "./line-attribution";
+import { resolveTrustedWindowsPowerShellExe } from "../src/lib/windows-elevation";
 
 export type Finding = {
   file: string;
@@ -79,7 +80,6 @@ export type HistoricalDesignValidation = {
   findings: Finding[];
 };
 
-const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 const REPARSE_STATUS_CACHE = new Map<string, ReparsePointStatus>();
 
 function finding(file: string, kind: string, value: string): Finding {
@@ -151,6 +151,19 @@ function windowsReparsePointStatuses(paths: string[]): Map<string, ReparsePointS
     return statuses;
   }
   if (paths.length === 0) return statuses;
+  // Resolve the interpreter through the runtime's System32 containment check rather
+  // than keeping a second hardcoded copy of the path here. Resolution stays lazy (it
+  // is only meaningful on win32) and failure-tolerant: a host whose system directory
+  // cannot be trusted reports every candidate as "unavailable", which is exactly what
+  // a failed spawn already produces below, so the scanner never silently downgrades a
+  // reparse point to "clear".
+  let powershellExe: string;
+  try {
+    powershellExe = resolveTrustedWindowsPowerShellExe();
+  } catch {
+    for (const path of paths) statuses.set(path, "unavailable");
+    return statuses;
+  }
   const pathPayload = Buffer.from(JSON.stringify(paths), "utf8").toString("base64");
   const script = [
     `$paths = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pathPayload}')) | ConvertFrom-Json`,
@@ -163,7 +176,7 @@ function windowsReparsePointStatuses(paths: string[]): Map<string, ReparsePointS
   ].join(";");
   const encodedScript = Buffer.from(script, "utf16le").toString("base64");
   const result = spawnSync(
-    WINDOWS_POWERSHELL,
+    powershellExe,
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
     { encoding: "utf8", timeout: 10_000, windowsHide: true, maxBuffer: 4096 },
   );
