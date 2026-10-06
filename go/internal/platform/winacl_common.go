@@ -236,15 +236,27 @@ func runICACLS(args []string, timeout time.Duration) ACLCommandResult {
 }
 
 func resolveWindowsIdentity(username, domain string) (string, string, error) {
+	usingCurrentUser := false
 	if username == "" {
 		if current, err := user.Current(); err == nil {
 			username = current.Username
+			usingCurrentUser = true
 		}
 	}
 	if username == "" {
 		username = os.Getenv("USERNAME")
 	}
-	if domain == "" {
+	// user.Current() already returns a fully qualified "DOMAIN\name" (or
+	// "COMPUTERNAME\name") on Windows, so its domain half must come from
+	// splitting that SAME value below, not from a separately sourced
+	// USERDOMAIN. Backfilling here regardless of where username came from
+	// used to pair a live OS-queried username with a possibly stale or
+	// simply different USERDOMAIN; icacls then refused the resulting
+	// "<env domain>\<real username>" identity outright with ERROR_NONE_
+	// MAPPED (1332), because no such account exists anywhere to grant.
+	// USERDOMAIN still backfills the separate USERNAME env fallback below,
+	// where both halves genuinely come from the same (environment) source.
+	if domain == "" && !usingCurrentUser {
 		domain = os.Getenv("USERDOMAIN")
 	}
 	if separator := strings.LastIndexAny(username, `\/`); separator >= 0 {

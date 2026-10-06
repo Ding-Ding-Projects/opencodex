@@ -151,8 +151,9 @@ func shimRuntimeCandidates(options ResolveCodexRuntimeOptions) []string {
 }
 
 func pathRuntimeCandidates(options ResolveCodexRuntimeOptions) []string {
+	targetGOOS := runtimeGOOS(options)
 	separator := string(os.PathListSeparator)
-	if runtimeGOOS(options) == "windows" {
+	if targetGOOS == "windows" {
 		separator = ";"
 	}
 	result := []string{}
@@ -162,11 +163,20 @@ func pathRuntimeCandidates(options ResolveCodexRuntimeOptions) []string {
 			continue
 		}
 		names := []string{"codex"}
-		if runtimeGOOS(options) == "windows" {
+		if targetGOOS == "windows" {
 			names = []string{"codex.exe", "codex.cmd"}
 		}
 		for _, name := range names {
-			path := filepath.Join(directory, name)
+			// joinRuntimePath, not filepath.Join: this builds a candidate for
+			// targetGOOS, which options.GOOS lets a caller simulate as a
+			// platform OTHER than the one actually running this process.
+			// filepath.Join always uses the real host's separator regardless
+			// of that override, so a Linux-target simulation running on a
+			// real Windows host produced "\bin\codex" against a "/bin"
+			// PATH entry -- a path nothing in that simulation's Exists/Probe
+			// map would ever recognize, silently dropping every PATH
+			// candidate and leaving NewerAvailable permanently nil.
+			path := joinRuntimePath(targetGOOS, directory, name)
 			key := strings.ToLower(path)
 			if !seen[key] {
 				seen[key] = true
@@ -175,4 +185,21 @@ func pathRuntimeCandidates(options ResolveCodexRuntimeOptions) []string {
 		}
 	}
 	return result
+}
+
+// joinRuntimePath joins a PATH entry and a binary name using the separator
+// for goos, independent of the real host running this process. Unlike
+// filepath.Join it never cleans or reinterprets the directory, because a
+// caller simulating a target other than runtime.GOOS supplies directory
+// strings already in that target's own style (see pathRuntimeCandidates).
+func joinRuntimePath(goos, directory, name string) string {
+	separator := "/"
+	if goos == "windows" {
+		separator = `\`
+	}
+	directory = strings.TrimRight(directory, `/\`)
+	if directory == "" {
+		return name
+	}
+	return directory + separator + name
 }

@@ -44,9 +44,22 @@ func TestRootHelpConvergesOnOracleBytes(t *testing.T) {
 	// Commands whose help line legitimately does not exist yet. Each entry is
 	// removed by the work-phase that ports the command.
 	//
-	// Empty as of wp5 (050): every root help line the oracle prints now has a
-	// Go counterpart, so the comparison is a straight byte-for-byte match.
-	pending := map[string]string{}
+	// The oracle (src/cli/help.ts) has grown past wp5 (050): these six
+	// commands and the bare "codex" launcher exist there but have no
+	// cli.go commandSpecs entry in this port yet, confirmed by grepping
+	// internal/cli for each name. Every other oracle line, including the
+	// oracle's own duplicate "changelog"/"host"/"launch"/"terminal"/"export"
+	// entries (different wording each time -- not a Go bug to "fix"), now
+	// has to match byte-for-byte.
+	pending := map[string]string{
+		"narrator":    "narrator voices/speech are not ported (no cli.go commandSpecs entry)",
+		"schedule":    "scheduled-settings checks are not ported (no cli.go commandSpecs entry)",
+		"pdf":         "the PDF toolkit is not ported (no cli.go commandSpecs entry)",
+		"convert":     "the file converter catalogue is not ported (no cli.go commandSpecs entry)",
+		"memory-sync": "canonical agent memory sync is not ported (no cli.go commandSpecs entry)",
+		"school-mode": "the cross-app English-only toggle is not ported (no cli.go commandSpecs entry)",
+		"codex":       "the bare `ocx codex` launcher is not ported; only codex-shim exists",
+	}
 	isPending := func(line string) bool {
 		for name := range pending {
 			if strings.HasPrefix(line, "  ocx "+name+" ") {

@@ -72,6 +72,14 @@ func PrintHelp(writer io.Writer, command string) error {
 // rootHelp intentionally follows the TypeScript launcher's public help bytes.
 // Go-only administrative commands remain discoverable through `ocx help NAME`
 // without changing the compatibility surface shown by a bare `ocx --help`.
+//
+// Kept in sync with src/cli/help.ts by TestRootHelpConvergesOnOracleBytes,
+// which fails loudly (not silently) when the oracle grows a line this
+// constant does not have yet. Two entries below are not a copy-paste bug:
+// the oracle really does print "changelog", "host", "launch", "terminal" and
+// "export" twice, each time with different wording, and pending in
+// help_parity_test.go lists every oracle line this Go port cannot show yet
+// because the command itself is not implemented (see cli.go's commandSpecs).
 const rootHelp = `opencodex (ocx) — Universal provider proxy for Codex
 
 Usage:
@@ -83,7 +91,7 @@ Usage:
   ocx recover-history --legacy-openai
                                Explicitly recover pre-backup syncResumeHistory rows
   ocx uninstall               Remove service/shim/config and restore native Codex (alias: remove)
-  ocx service [sub]           Run as a background service (default: install/update/start)
+  ocx service [sub]           Run as a background service (default: install-if-absent/repair-if-installed)
   ocx codex-shim <sub>        Auto-start proxy when ` + "`codex`" + ` launches (install|status|uninstall|remove)
   ocx tray <sub>              Windows status tray (install|start|stop|status|uninstall)
   ocx ensure                  Ensure the proxy is running and Codex config/cache are current
@@ -96,6 +104,11 @@ Usage:
   ocx login <provider>        OAuth or API-key provider login
   ocx logout <provider>       Remove a stored OAuth login
   ocx gui                     Open the opencodex dashboard
+  ocx changelog [opts]        Show released versions and their changes
+  ocx export <sub>            Export dashboard data or a confirmed full-state backup
+  ocx host <sub>              Configure trusted-LAN remote access
+  ocx launch [target]         Open an installed agent CLI or desktop app
+  ocx terminal <sub>          Run a command through a local opencodex terminal session
   ocx update [--tag <tag>]    Update opencodex (keeps preview installs on @preview)
   ocx restart                  Stop and restart the proxy
   ocx v2 <sub>                multi_agent_v2 surface (status|on|off|mode|threads)
@@ -108,8 +121,15 @@ Usage:
   ocx observe <sub>           Logs, usage, storage, memory, and debug data
   ocx access <sub>            External API keys and endpoint information
   ocx grok <sub>              Grok Build model selection and apply
+  ocx changelog [opts]        Released versions and their changes
+  ocx host <sub>              Expose the proxy to other devices on your network
+  ocx launch [target]         Open an agent CLI or desktop app (Codex, Grok, Claude)
+  ocx terminal <sub>          Run a command in an opencodex terminal session (list|run)
+  ocx export <path> --yes     Full state backup — ordinary mode includes secrets; vault mode refuses incomplete backup
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export
+                              Network fields include bounded noProxy and opt-in static systemProxy;
+                              providerApiKeyVault refuses full-state export because vault ciphertext is omitted
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile
   ocx opencode [args...]      Launch opencode wired to the proxy (runtime provider config)

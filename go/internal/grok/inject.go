@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 )
 
 const (
@@ -424,7 +426,27 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return replaceFile(temporaryPath, path)
+	if err := replaceFile(temporaryPath, path); err != nil {
+		return err
+	}
+	if mode&0o077 == 0 {
+		// The requested mode has no group/other bits: the caller meant this
+		// file for the owner alone. Chmod cannot make that true on Windows --
+		// it only ever flips the DOS read-only attribute, so a writable file
+		// always reports back as 0666 regardless of the mode requested here
+		// (this is exactly the failure this closes: config.toml showing
+		// -rw-rw-rw- when the test wanted 0600). HardenSecretPath strips the
+		// broad Everyone/Users/Authenticated-Users ACEs via icacls on
+		// Windows and is a no-op everywhere else, the same real fix already
+		// used for the exported config backup (internal/cli/config_parity.go)
+		// and the service state file (internal/cli/service_ownership.go).
+		// Grok config can legitimately hold a non-loopback admission token
+		// (see the SkipNonLoopback message above), so this is not cosmetic.
+		if err := platform.HardenSecretPath(path, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func tomlString(value string) string {

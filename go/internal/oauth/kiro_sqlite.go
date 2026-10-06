@@ -18,6 +18,31 @@ var kiroRegistrationKeys = []string{"kirocli:odic:device-registration", "kirocli
 
 type kiroKVRow struct{ Key, Value string }
 
+// kiroSQLiteDSN turns an OS filesystem path into the sqlite: DSN
+// modernc.org/sqlite expects. Building it with url.URL{Path: path} directly
+// -- the previous approach here -- handed url.URL an OS-native path rather
+// than a URL path: on Windows, "C:\Users\...\data.sqlite3" isn't rooted at
+// "/", so url.URL.String() folded the drive letter into an empty-host
+// authority and percent-escaped every backslash, producing
+// "file://C:%5CUsers%5C...%5Cdata.sqlite3" -- a file the SQLite driver could
+// never open, so every query on it failed and readSQLite's error handling
+// (deliberately lenient, since a raced or malformed database should read as
+// "not found" rather than as a hard failure) reported that as found=false
+// with no error, masking the real cause completely.
+//
+// The fix converts to forward slashes first and, for a Windows drive-letter
+// path, adds the leading "/" SQLite's own URI filename convention documents
+// (sqlite.org/uri.html: "file:///C:/Documents%20and%20Settings/..."). A
+// POSIX path already starts with "/" and needs no such prefix; this is a
+// no-op for it and was never the platform where the bug reproduced.
+func kiroSQLiteDSN(path string) string {
+	slashed := filepath.ToSlash(path)
+	if len(slashed) >= 2 && slashed[1] == ':' {
+		slashed = "/" + slashed
+	}
+	return (&url.URL{Scheme: "file", Path: slashed, RawQuery: "mode=ro&_pragma=busy_timeout%285000%29"}).String()
+}
+
 func (f *KiroFlow) sqlitePaths() ([]string, error) {
 	env := f.Env
 	if env == nil {
@@ -68,7 +93,7 @@ func (f *KiroFlow) importSQLite() (KiroImportedCredential, bool, error) {
 }
 
 func (f *KiroFlow) readSQLite(path string) (KiroImportedCredential, bool, error) {
-	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&_pragma=busy_timeout%285000%29"}).String()
+	dsn := kiroSQLiteDSN(path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return KiroImportedCredential{}, false, fmt.Errorf("open Kiro CLI credential database: %w", err)

@@ -3,10 +3,42 @@ package grok
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// assertOwnerOnlyPermissions intentionally mirrors the identically named
+// helper in internal/cli/config_parity_test.go: os.Chmod cannot set real
+// POSIX permission bits on Windows (a writable file always reports back as
+// 0666/-rw-rw-rw- no matter what mode was requested), so a Windows pass
+// checks the real thing HardenSecretPath actually did instead -- that
+// icacls no longer finds any of the three broad SIDs it strips (Everyone,
+// Authenticated Users, BUILTIN\Users) on the path.
+func assertOwnerOnlyPermissions(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("config mode = %v; want 0600", info.Mode().Perm())
+		}
+		return
+	}
+	for _, sid := range []string{"*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545"} {
+		output, err := exec.Command("icacls.exe", path, "/findsid", sid).CombinedOutput()
+		if err != nil {
+			t.Fatalf("icacls /findsid %s on %s: %v\n%s", sid, path, err, output)
+		}
+		if strings.Contains(string(output), path) {
+			t.Fatalf("config left broad SID %s grantable on %s: %s", sid, path, output)
+		}
+	}
+}
 
 func TestStripRestoresOriginalBytes(t *testing.T) {
 	originals := map[string]string{
@@ -224,13 +256,7 @@ func TestBackupIsExclusiveAndConfigUsesPrivatePermissions(t *testing.T) {
 	if got := mustRead(t, backup); got != "backup-must-survive\n" {
 		t.Fatalf("backup was overwritten: %q", got)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("config mode = %v; want 0600", info.Mode().Perm())
-	}
+	assertOwnerOnlyPermissions(t, path)
 }
 
 func TestRepeatedCyclesAndUserTailDoNotDrift(t *testing.T) {

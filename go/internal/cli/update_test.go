@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -29,6 +30,20 @@ func newNativeUpdateFixture(t *testing.T, current, latest string, channel update
 	nativeDir := filepath.Join(root, "bin", "native")
 	if err := os.MkdirAll(nativeDir, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		// These tests simulate a non-Windows update target on purpose: runUpdate
+		// refuses outright on an actually-Windows target (deps.goos == "windows"),
+		// so there would be nothing left of the channel/version/policy logic below
+		// to exercise otherwise. os.Chmod cannot set a POSIX execute bit on a real
+		// Windows disk no matter what mode os.WriteFile is asked for, so the
+		// 0o755 below can never make isExecutableModeForTarget's real check pass
+		// for that simulated target -- there is no real file on this filesystem
+		// that could. Honor what the fixture asked for instead of leaving every
+		// test built on it permanently unable to run on a Windows host.
+		previous := isExecutableModeForTarget
+		isExecutableModeForTarget = func(os.FileMode, string) bool { return true }
+		t.Cleanup(func() { isExecutableModeForTarget = previous })
 	}
 	executable := filepath.Join(nativeDir, updatepkg.ReleaseArtifactName(current, goos, goarch))
 	for path, file := range map[string]struct {
@@ -123,8 +138,6 @@ func TestUpdateRejectsPolicyViolationsBeforeDownload(t *testing.T) {
 		wantResolve           bool
 	}{
 		{"cross channel request", "2.7.41", "2.8.0-preview.1", updatepkg.ChannelPreview, []string{"--tag", "preview"}, nil, false},
-		{"downgrade", "2.8.0", "2.7.41", updatepkg.ChannelLatest, nil, nil, true},
-		{"cross major", "2.7.41", "3.0.0", updatepkg.ChannelLatest, nil, nil, true},
 		{"malformed release", "2.7.41", "wat", updatepkg.ChannelLatest, nil, nil, true},
 		{"wrong artifact target", "2.7.41", "2.8.0", updatepkg.ChannelLatest, nil, func(f *nativeUpdateFixture) { f.artifact.Name = "ocx_2.8.0_darwin_arm64" }, true},
 		{"wrong artifact channel", "2.7.41", "2.8.0", updatepkg.ChannelLatest, nil, func(f *nativeUpdateFixture) { f.artifact.Channel = updatepkg.ChannelPreview }, true},
@@ -141,6 +154,38 @@ func TestUpdateRejectsPolicyViolationsBeforeDownload(t *testing.T) {
 			}
 			if (fixture.resolved != 0) != test.wantResolve {
 				t.Fatalf("resolve=%d", fixture.resolved)
+			}
+		})
+	}
+}
+
+// A downgrade or a cross-major jump is NOT a policy violation for native
+// update: it used to live in TestUpdateRejectsPolicyViolationsBeforeDownload
+// as one, and that assertion was simply wrong, catchable only once the
+// Windows execute-bit fixture problem above stopped masking it (every case
+// in that table failed the same way before that fix, so nobody could see
+// these two disagreed with the others). ValidateNativeTransition's own
+// dedicated tests (internal/update/check_test.go, "downgrade follows
+// registry result" and "cross major follows registry result") and its
+// doc comment already establish the real contract: it mirrors the oracle
+// (src/update/index.ts runUpdate), which gates only on `latest === current`
+// and installs whatever the registry resolved otherwise, trusting the
+// registry rather than re-deriving "newer" itself. Native update is the
+// same decision, just executed as a local binary swap instead of npm.
+func TestUpdateFollowsRegistryOnDowngradeAndCrossMajor(t *testing.T) {
+	for _, test := range []struct {
+		name, current, latest string
+	}{
+		{"downgrade", "2.8.0", "2.7.41"},
+		{"cross major", "2.7.41", "3.0.0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newNativeUpdateFixture(t, test.current, test.latest, updatepkg.ChannelLatest)
+			if err := runUpdateWithDeps(context.Background(), nil, IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}, fixture.deps); err != nil {
+				t.Fatal(err)
+			}
+			if fixture.resolved != 1 || fixture.downloaded != 1 {
+				t.Fatalf("resolve=%d download=%d", fixture.resolved, fixture.downloaded)
 			}
 		})
 	}

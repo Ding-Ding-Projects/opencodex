@@ -5,10 +5,55 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// assertOwnerOnlyPermissions checks that a file believed to hold unredacted
+// credentials is actually locked down for the current platform. POSIX mode
+// bits are meaningful proof on everything but Windows: there, os.Chmod can
+// only flip the DOS read-only attribute, so any writable file reports as
+// 0666/-rw-rw-rw- regardless of what mode was requested (this is exactly the
+// "export mode = -rw-rw-rw-, want 0600" failure this replaces). A Windows
+// pass instead asks icacls, the same tool internal/platform/winacl_common.go
+// uses to harden this file, whether any of the three broad SIDs it strips
+// (Everyone, Authenticated Users, BUILTIN\Users) still has an ACE on the
+// path -- the real question "can it be reached by more than the owner" this
+// test exists to answer.
+func assertOwnerOnlyPermissions(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("export mode = %v, want 0600 for a file holding credentials", info.Mode().Perm())
+		}
+		return
+	}
+	// Mirrors broadWindowsSIDs in internal/platform/winacl_common.go.
+	//
+	// icacls.exe <path> /findsid <sid> exits 0 whether or not it finds a
+	// match (verified empirically: "No files with a matching SID was
+	// found" is itself a clean exit) -- the signal is whether stdout names
+	// the path at all ("SID Found: <path>."), which is exactly how
+	// executeACLHardening in internal/platform/winacl_common.go confirms
+	// its own removal. A genuine command failure (icacls missing, path
+	// unreadable) is a real test failure, not a silent "SID absent".
+	for _, sid := range []string{"*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545"} {
+		output, err := exec.Command("icacls.exe", path, "/findsid", sid).CombinedOutput()
+		if err != nil {
+			t.Fatalf("icacls /findsid %s on %s: %v\n%s", sid, path, err, output)
+		}
+		if strings.Contains(string(output), path) {
+			t.Fatalf("export left broad SID %s grantable on %s: %s", sid, path, output)
+		}
+	}
+}
 
 // configHome points the CLI at a throwaway config directory and seeds it.
 func configHome(t *testing.T, contents string) string {
@@ -188,13 +233,7 @@ func TestConfigExportIsUnredactedAndOwnerOnly(t *testing.T) {
 	if !strings.Contains(string(written), "SUPERSECRET") {
 		t.Fatal("export must not redact; a masked backup cannot be restored")
 	}
-	info, err := os.Stat(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("export mode = %v, want 0600 for a file holding credentials", info.Mode().Perm())
-	}
+	assertOwnerOnlyPermissions(t, target)
 }
 
 func TestConfigExportToStdout(t *testing.T) {
@@ -325,13 +364,7 @@ func TestConfigExportTightensAnExistingPermissiveFile(t *testing.T) {
 	if _, err := runConfigParityWith(t, "", "export", target); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("export left mode %v on an existing file; credentials would stay readable", info.Mode().Perm())
-	}
+	assertOwnerOnlyPermissions(t, target)
 }
 
 // Object.hasOwn treats an array index as a real key, so the oracle resolves

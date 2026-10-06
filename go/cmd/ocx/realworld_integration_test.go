@@ -280,9 +280,22 @@ func TestBuiltBinaryHandlesDiskAndPortFailuresWithoutPanic(t *testing.T) {
 	if err := config.Save(filepath.Join(ocxHome, "config.json"), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	command = exec.Command(binary, "serve")
+	// The port must be pinned with an explicit --port, matching the oracle's
+	// hardPin distinction in chooseListenPort (src/cli/index.ts): only a hard
+	// pin disables the ephemeral-fallback path and produces the "unavailable"
+	// failure this test wants. Without --port, selectServePort treats cfg.Port
+	// as a soft preference (internal/cli/serve.go), so an occupied port is not
+	// a failure at all — ocx quietly hops to a free ephemeral port and serves
+	// forever, which is exactly what left this test blocking on
+	// CombinedOutput() until the package-wide test timeout fired.
+	commandCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	command = exec.CommandContext(commandCtx, binary, "serve", "--port", strconv.Itoa(port))
 	command.Env = isolatedEnvironment(ocxHome, codexHome, home)
 	output, err = command.CombinedOutput()
+	if commandCtx.Err() != nil {
+		t.Fatalf("occupied port: ocx serve did not exit within 15s (ctx err=%v); it should have failed fast instead of falling back or hanging: %s", commandCtx.Err(), output)
+	}
 	if err == nil || bytes.Contains(bytes.ToLower(output), []byte("panic:")) || !bytes.Contains(bytes.ToLower(output), []byte("unavailable")) {
 		t.Fatalf("occupied port err=%v output=%s", err, output)
 	}
